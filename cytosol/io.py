@@ -21,6 +21,9 @@ class Image:
     channels: list[str]
     voxel_size_um: dict[str, float | None]  # keys: 'Z', 'Y', 'X'; None if unknown
     metadata: dict = field(default_factory=dict)
+    # display color per channel as (r, g, b) in 0..1, taken from the file when
+    # it stores one; None where the file has no color for that channel
+    colors: list[tuple[float, float, float] | None] = field(default_factory=list)
 
 
 def _decode(value):
@@ -94,10 +97,16 @@ def read_tcf(path, modality: str = '3D', timepoint: int = 0) -> Image:
             names = sorted(k for k in grp.keys() if k.startswith('CH'))
             planes = []
             channels = []
+            colors = []
             for ch in names:
                 arr = grp[ch][frame][()].astype(np.float32)
                 planes.append(arr if arr.ndim == 3 else arr[None])
                 ca = _attrs(grp[ch])
+                colors.append(
+                    tuple(ca.get(f'Color{k}', 255) / 255.0 for k in 'RGB')
+                    if 'ColorR' in ca
+                    else None
+                )
                 channels.append(
                     f"{ch} ex{ca.get('Excitation', 0) * 1000:.0f}/"
                     f"em{ca.get('Emission', 0) * 1000:.0f}"
@@ -107,6 +116,7 @@ def read_tcf(path, modality: str = '3D', timepoint: int = 0) -> Image:
             arr = grp[frame][()].astype(np.float32) / TCF_RI_SCALE
             data = (arr if arr.ndim == 3 else arr[None])[None]
             channels = ['RI']
+            colors = [(1.0, 1.0, 1.0)]
         meta = {
             'format': 'TCF',
             'modality': modality,
@@ -114,7 +124,7 @@ def read_tcf(path, modality: str = '3D', timepoint: int = 0) -> Image:
             'device': _attrs(f['Info/Device']) if 'Info/Device' in f else {},
             'group': ga,
         }
-    return Image(data, channels, vx, meta)
+    return Image(data, channels, vx, meta, colors)
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +164,22 @@ def read_czi(path, scene: int | None = None) -> Image:
         'channel_info': x.attrs.get('channels'),
         'xml': xml,
     }
-    return Image(np.asarray(x.values), [str(c) for c in x.coords['C'].values], vx, meta)
+    names = [str(c) for c in x.coords['C'].values]
+    info = x.attrs.get('channels') or {}
+    colors = [_argb_to_rgb(info.get(n, {}).get('Color')) for n in names]
+    return Image(np.asarray(x.values), names, vx, meta, colors)
+
+
+def _argb_to_rgb(value):
+    """Convert a ZEN color string '#AARRGGBB' (or '#RRGGBB') to (r, g, b)."""
+    if not value or not str(value).startswith('#'):
+        return None
+    hexstr = str(value)[1:]
+    if len(hexstr) == 8:
+        hexstr = hexstr[2:]
+    if len(hexstr) != 6:
+        return None
+    return tuple(int(hexstr[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +193,7 @@ def read_oir(path) -> Image:
 
     with oirfile.OirFile(path) as oir:
         x = oir.asxarray()
+        oir_channels = list(oir.channels)
         meta = {
             'format': 'OIR',
             'datetime': oir.datetime,
@@ -189,7 +215,61 @@ def read_oir(path) -> Image:
     channels = [str(c) for c in x.coords['C'].values] if 'C' in x.coords else [
         f'CH{i + 1}' for i in range(x.sizes['C'])
     ]
-    return Image(np.asarray(x.values), channels, vx, meta)
+    luts = _oir_luts(path)
+    colors = []
+    for name in channels:
+        cands = [c for c in oir_channels if c.name == name]
+        # FluoView can list a channel name twice (e.g. once for a reference
+        # image); the acquisition channel is the one with a detection range
+        cands = [c for c in cands if c.start_wavelength is not None] or cands
+        colors.append(luts.get(cands[-1].id) if cands else None)
+    return Image(np.asarray(x.values), channels, vx, meta, colors)
+
+
+_OIR_LUT_COLORS = {
+    'gray': (1.0, 1.0, 1.0),
+    'grey': (1.0, 1.0, 1.0),
+    'red': (1.0, 0.0, 0.0),
+    'green': (0.0, 1.0, 0.0),
+    'blue': (0.0, 0.0, 1.0),
+    'cyan': (0.0, 1.0, 1.0),
+    'magenta': (1.0, 0.0, 1.0),
+    'yellow': (1.0, 1.0, 0.0),
+}
+
+
+def _oir_luts(path) -> dict:
+    """Map OIR channel id -> display color from the LUT blocks in the file.
+
+    FluoView stores each channel's LUT as an XML document preceded by that
+    channel's UUID; oirfile exposes the XML but not the UUID, so scan the raw
+    bytes. The color comes from the LUT name, falling back to which of the
+    red/green/blue components are switched on (contrast 1).
+    """
+    import re
+
+    raw = Path(path).read_bytes()
+    pattern = re.compile(
+        rb'([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})'
+        rb'.{0,16}?<\?xml[^>]*>\s*<lut:LUT',
+        re.S,
+    )
+    luts = {}
+    for m in pattern.finditer(raw):
+        end = raw.find(b'</lut:LUT>', m.end())
+        block = raw[m.end():end if end > 0 else m.end() + 4096]
+        block = re.sub(rb'<lut:data>.*?</lut:data>', b'', block, flags=re.S)
+        name = re.search(rb'<lut:name>([^<]*)', block)
+        color = _OIR_LUT_COLORS.get(name.group(1).decode().strip().lower()) if name else None
+        if color is None:
+            comps = []
+            for comp in (b'red', b'green', b'blue'):
+                c = re.search(rb'<lut:' + comp + rb'>.*?<lut:contrast>([^<]*)', block, re.S)
+                comps.append(1.0 if c and float(c.group(1)) > 0 else 0.0)
+            color = tuple(comps) if any(comps) else None
+        if color is not None:
+            luts[m.group(1).decode()] = color
+    return luts
 
 
 def read_image(path, **kwargs) -> Image:
