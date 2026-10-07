@@ -48,3 +48,27 @@ from cytosol.render import render
 render(read_image('cells.czi'), 'figures/', prefix='cells', scale_um=10,
        colors={'DAPI-T3': 'blue'})
 ```
+
+## Cytosol Viewer (desktop app)
+
+A GUI for working on a whole set of images at once:
+
+- Add TCF / CZI / OIR files with **파일 추가…** or by dragging files or folders
+  onto the window. A TCF becomes two entries, HT (RI) and FL.
+- **Per-channel LUT** with a live preview: show/hide, color, min/max (slider,
+  number or histogram), gamma, `Auto` (0.5–99.8 percentile) and `Min/Max`.
+- **Z**: MIP or any single slice.
+- **Crop** per image: press `Crop 그리기` and drag on the image. You can copy the
+  crop to every image with the same pixel size, and preview only the cropped area.
+- **Batch LUT**: `전체 이미지에 적용` on a channel copies its LUT to the same
+  channel of every loaded image (matched by channel name; by index only between
+  files of the same type and channel count). LUTs can be saved and loaded as JSON presets.
+- **Batch TIFF export** of every image, cropped:
+  - composite RGB with the LUTs and scale bar applied (8-bit, µm calibration),
+  - optional per-channel RGB,
+  - an ImageJ hyperstack of the original values for all Z, carrying the channel
+    LUTs, display ranges and µm calibration, ready for measurement in Fiji.
+
+Run from source: `python -m cytosol.app [files…]`
+
+Build the macOS app: `./build_mac.sh` → `dist/Cytosol Viewer.app`
