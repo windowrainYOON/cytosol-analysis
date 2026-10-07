@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGraphicsPathItem,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
     QGraphicsScene,
@@ -46,6 +47,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSplitter,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -58,6 +60,7 @@ from .lut import (
     save_preset,
 )
 from .render import add_scale_bar
+from .roi_panel import RoiPanel
 
 SUPPORTED = ('.tcf', '.czi', '.oir')
 SLIDER_STEPS = 1000
@@ -94,10 +97,35 @@ def load_items(path: Path) -> list[ImageItem]:
 # ---------------------------------------------------------------------------
 
 
+CELL_COLORS = [QColor(c) for c in (
+    '#ff5050', '#50c8ff', '#ffb428', '#78ff78', '#ff78ff', '#ffff50', '#50ffd2', '#c896ff',
+    '#ff9678', '#96b4ff',
+)]
+LASSO_COLORS = {'add': QColor(80, 255, 120), 'sub': QColor(255, 80, 80), 'new': QColor(80, 220, 255)}
+
+
+def polygon_path(*polys) -> QPainterPath:
+    path = QPainterPath()
+    for xy in polys:
+        if xy is None or len(xy) < 2:
+            continue
+        path.moveTo(QPointF(*xy[0]))
+        for x, y in xy[1:]:
+            path.lineTo(QPointF(x, y))
+        path.closeSubpath()
+    return path
+
+
 class Canvas(QGraphicsView):
-    """Image view: wheel to zoom, drag to pan, Crop mode to draw a rectangle."""
+    """Image view: wheel to zoom, drag to pan, Crop mode to draw a rectangle.
+
+    ROI tools: 'select' (click selects a cell, drag pans), 'add' / 'sub' / 'new'
+    (drag draws a freehand area). The right or middle button always pans.
+    """
 
     cropDrawn = Signal(float, float, float, float)
+    cellClicked = Signal(float, float)
+    lassoDrawn = Signal(str, object)
 
     def __init__(self):
         super().__init__()
@@ -118,9 +146,17 @@ class Canvas(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.crop_mode = False
+        self.roi_tool = 'select'
         self._origin = None
         self._region_items = []
+        self._cell_items = []
         self._fitted = False
+        self._lasso = None
+        self._lasso_item = QGraphicsPathItem()
+        self._lasso_item.setZValue(20)
+        self.scene().addItem(self._lasso_item)
+        self._pan_from = None
+        self._press_view = None
 
     def set_image(self, qimg: QImage, refit=False):
         self.pix.setPixmap(QPixmap.fromImage(qimg))
@@ -161,40 +197,149 @@ class Canvas(QGraphicsView):
                 self.scene().addItem(it)
                 self._region_items.append(it)
 
-    def set_crop_mode(self, on: bool):
-        self.crop_mode = on
+    def show_cells(self, shapes, selected=0):
+        """shapes: (label, cell_xy, nucleus_xy or None, status, (cx, cy)) per cell."""
+        for it in self._cell_items:
+            self.scene().removeItem(it)
+        self._cell_items = []
+        for label, xy, nxy, status, (cx, cy) in shapes:
+            sel = label == selected
+            col = QColor(255, 255, 0) if sel else CELL_COLORS[label % len(CELL_COLORS)]
+            pen = QPen(col)
+            pen.setCosmetic(True)
+            pen.setWidthF(3 if sel else 1.6)
+            if status != 'ok':
+                pen.setStyle(Qt.PenStyle.DashLine)
+            item = QGraphicsPathItem(polygon_path(xy))
+            item.setPen(pen)
+            if sel:
+                fill = QColor(col)
+                fill.setAlpha(45)
+                item.setBrush(fill)
+            item.setZValue(12)
+            items = [item]
+            if nxy is not None:
+                npen = QPen(QColor(255, 255, 255, 200 if sel else 140))
+                npen.setCosmetic(True)
+                npen.setWidthF(1.0)
+                npen.setStyle(Qt.PenStyle.DotLine)
+                n = QGraphicsPathItem(polygon_path(nxy))
+                n.setPen(npen)
+                n.setZValue(12)
+                items.append(n)
+            t = QGraphicsSimpleTextItem(str(label))
+            t.setBrush(col)
+            t.setFlag(QGraphicsSimpleTextItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            font = t.font()
+            font.setPointSize(12)
+            font.setBold(True)
+            t.setFont(font)
+            t.setPos(cx, cy)
+            t.setZValue(13)
+            items.append(t)
+            for it in items:
+                self.scene().addItem(it)
+                self._cell_items.append(it)
+
+    def _drawing(self):
+        return self.crop_mode or self.roi_tool in LASSO_COLORS
+
+    def _apply_mode(self):
+        drawing = self._drawing()
         self.setDragMode(
-            QGraphicsView.DragMode.NoDrag if on else QGraphicsView.DragMode.ScrollHandDrag
+            QGraphicsView.DragMode.NoDrag if drawing else QGraphicsView.DragMode.ScrollHandDrag
         )
         self.viewport().setCursor(
-            Qt.CursorShape.CrossCursor if on else Qt.CursorShape.OpenHandCursor
+            Qt.CursorShape.CrossCursor if drawing else Qt.CursorShape.OpenHandCursor
         )
+
+    def set_crop_mode(self, on: bool):
+        self.crop_mode = on
+        self._apply_mode()
+
+    def set_roi_tool(self, tool: str):
+        self.roi_tool = tool
+        self._apply_mode()
 
     def wheelEvent(self, event):
         factor = 1.25 if event.angleDelta().y() > 0 else 0.8
         self.scale(factor, factor)
 
     def mousePressEvent(self, event):
-        if self.crop_mode and event.button() == Qt.MouseButton.LeftButton:
-            self._origin = self.mapToScene(event.position().toPoint())
+        btn = event.button()
+        if btn in (Qt.MouseButton.RightButton, Qt.MouseButton.MiddleButton):
+            self._pan_from = event.position()
+            self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
+        pos = self.mapToScene(event.position().toPoint())
+        if self.crop_mode and btn == Qt.MouseButton.LeftButton:
+            self._origin = pos
             self.rect_item.setRect(QRectF(self._origin, self._origin))
             self.rect_item.show()
             return
+        if self.roi_tool in LASSO_COLORS and btn == Qt.MouseButton.LeftButton:
+            self._lasso = [(pos.x(), pos.y())]
+            col = LASSO_COLORS[self.roi_tool]
+            pen = QPen(col)
+            pen.setCosmetic(True)
+            pen.setWidthF(2)
+            fill = QColor(col)
+            fill.setAlpha(60)
+            self._lasso_item.setPen(pen)
+            self._lasso_item.setBrush(fill)
+            self._lasso_item.setPath(QPainterPath())
+            self._lasso_item.show()
+            return
+        if btn == Qt.MouseButton.LeftButton:
+            self._press_view = event.position()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self._pan_from is not None:
+            d = event.position() - self._pan_from
+            self._pan_from = event.position()
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - int(d.x()))
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - int(d.y()))
+            return
         if self.crop_mode and self._origin is not None:
             p = self.mapToScene(event.position().toPoint())
             self.rect_item.setRect(QRectF(self._origin, p).normalized())
             return
+        if self._lasso is not None:
+            p = self.mapToScene(event.position().toPoint())
+            self._lasso.append((p.x(), p.y()))
+            self._lasso_item.setPath(polygon_path(np.asarray(self._lasso)))
+            return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self._pan_from is not None:
+            self._pan_from = None
+            self._apply_mode()
+            return
         if self.crop_mode and self._origin is not None:
             r = self.rect_item.rect()
             self._origin = None
             self.cropDrawn.emit(r.left(), r.top(), r.right(), r.bottom())
             return
+        if self._lasso is not None:
+            pts = np.asarray(self._lasso, float)
+            self._lasso = None
+            self._lasso_item.hide()
+            # a click (no real area drawn) selects the cell under the cursor
+            span = pts.max(0) - pts.min(0)
+            scale = self.transform().m11() or 1.0
+            if len(pts) < 3 or max(span) * scale < 4:
+                self.cellClicked.emit(*pts[-1])
+            else:
+                self.lassoDrawn.emit(self.roi_tool, pts)
+            return
+        if self._press_view is not None:
+            moved = (event.position() - self._press_view).manhattanLength()
+            self._press_view = None
+            if moved < 4:
+                p = self.mapToScene(event.position().toPoint())
+                self.cellClicked.emit(p.x(), p.y())
         super().mouseReleaseEvent(event)
 
 
@@ -538,19 +683,26 @@ class MainWindow(QMainWindow):
         row.addWidget(exp_btn)
         el.addLayout(row)
 
-        right = QWidget()
-        rl = QVBoxLayout(right)
+        lut_tab = QWidget()
+        rl = QVBoxLayout(lut_tab)
         rl.addWidget(QLabel('채널 LUT'))
         rl.addWidget(scroll, 1)
         rl.addWidget(batch)
         rl.addWidget(exp)
-        right.setMinimumWidth(340)
+        self.roi_panel = RoiPanel(self)
+        roi_scroll = QScrollArea()
+        roi_scroll.setWidgetResizable(True)
+        roi_scroll.setWidget(self.roi_panel)
+        right = QTabWidget()
+        right.addTab(lut_tab, 'LUT · 내보내기')
+        right.addTab(roi_scroll, '세포질 ROI')
+        right.setMinimumWidth(380)
 
         split = QSplitter()
         split.addWidget(left)
         split.addWidget(center)
         split.addWidget(right)
-        split.setSizes([260, 800, 360])
+        split.setSizes([260, 800, 420])
         self.setCentralWidget(split)
 
         open_act = QAction('파일 열기…', self)
@@ -611,6 +763,8 @@ class MainWindow(QMainWindow):
         if not self.items:
             self.current = None
             self._build_panels()
+            self.roi_panel.bind(None)
+            self.roi_panel.draw_overlay(hidden=True)
             self.canvas.pix.setPixmap(QPixmap())
 
     def dragEnterEvent(self, event):
@@ -644,6 +798,7 @@ class MainWindow(QMainWindow):
         self.z_combo.setEnabled(it.nz > 1)
         self.z_combo.blockSignals(False)
         self._build_panels()
+        self.roi_panel.bind(it)
         self._refresh_crop_list(select=0)
         c, z, h, w = it.image.data.shape
         px = it.pixel_um
@@ -691,7 +846,10 @@ class MainWindow(QMainWindow):
             return
         sel = self._selected_crop()
         only = self.show_crop_btn.isChecked() and sel is not None
-        rgb = it.composite(it.crops[sel] if only else None)
+        if self.roi_panel.input_view.isChecked() and not only:
+            rgb = self.roi_panel.preview_rgb(it)
+        else:
+            rgb = it.composite(it.crops[sel] if only else None)
         if self.scalebar_chk.isChecked() and it.pixel_um:
             rgb, _ = add_scale_bar(
                 rgb, it.pixel_um, self.scale_um.value() or None, self.scale_pos.currentText()
@@ -700,6 +858,7 @@ class MainWindow(QMainWindow):
         if refit and not only:
             self.canvas.fit()
         self.canvas.show_crops([] if only else it.crops, sel)
+        self.roi_panel.draw_overlay(hidden=only)
 
     # ---- crop -----------------------------------------------------------
 

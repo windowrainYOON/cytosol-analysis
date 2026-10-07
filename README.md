@@ -72,6 +72,43 @@ A GUI for working on a whole set of images at once:
   - an ImageJ hyperstack of the original values for all Z, carrying the channel
     LUTs, display ranges and µm calibration, ready for measurement in Fiji.
 
+### 세포질 ROI tab (cell / cytosol ROIs)
+
+1. **채널 역할**: pick the nucleus channel (or `없음` when there is none) and the
+   background-signal channel, i.e. the dim channel that fills the cytoplasm when
+   its LUT is pushed very bright.
+2. **ROI 검출**: the background channel is saturated at `배경 포화값`
+   (`자동` = median of the smoothed channel; tick `검출용 합성 이미지 보기` to see
+   exactly what the detector sees and lower the value until each cell is one solid
+   blob), merged with the nuclei, and split into cells by a watershed seeded from
+   each in-focus nucleus, so every cell gets one nucleus. Touching nuclei are split
+   first. Without a nucleus channel, cells are split along the dark cell-cell
+   borders instead (as in the mito-tracking project's `cell_roi.py`).
+   Cells cut by the image frame are, by default, cut again along a new border
+   `안쪽 경계 여백` inside the frame, so no ROI runs along the frame
+   (`제외` drops them, `그대로 두기` keeps them as they are). `모든 이미지` runs the
+   same settings on every loaded image, matching channels by name.
+3. **확인 · 수정**: click a cell to select it (or pick it in the list). With
+   `더하기 (A)` / `빼기 (S)` drag a freehand area to add it to or remove it from
+   the selected cell; `새 세포 (N)` turns the drawn area into a new cell.
+   `Delete` deletes the selected cell, `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo,
+   right-button drag pans in any tool. A cell is always one filled piece
+   (ImageJ polygon ROIs cannot have holes), so cut from its border.
+4. **ImageJ ROI 파일**: `ROI 저장…` writes a RoiSet `.zip` (ROI Manager › Open)
+   or, when saved as `.roi`, one `.roi` file per ROI. Per cell: `cellNNN`
+   (whole cell polygon), `nucNNN` (nucleus polygon) and `cytoNNN` (cell minus
+   nucleus, a composite ROI). `ROI 불러오기…` reads `.zip` / `.roi` files back
+   for editing. `모든 이미지 ROI 저장` writes one RoiSet per image plus
+   `cell_rois.csv` with cell, nucleus and cytosol areas.
+
+From Python:
+
+```python
+from cytosol.cellroi import segment_cells, RoiParams
+rois = segment_cells(bg_plane, nucleus_plane, pixel_um, RoiParams(edge_mode='trim'))
+rois.save('cells_RoiSet.zip')
+```
+
 Run from source: `python -m cytosol.app [files…]`
 
 Build the macOS app: `./build_mac.sh` → `dist/Cytosol Viewer.app`
