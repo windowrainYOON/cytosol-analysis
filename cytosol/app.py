@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsRectItem,
     QGraphicsScene,
+    QGraphicsSimpleTextItem,
     QGraphicsView,
     QGroupBox,
     QHBoxLayout,
@@ -118,6 +119,7 @@ class Canvas(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.crop_mode = False
         self._origin = None
+        self._region_items = []
         self._fitted = False
 
     def set_image(self, qimg: QImage, refit=False):
@@ -131,13 +133,33 @@ class Canvas(QGraphicsView):
             self.fitInView(self.pix, Qt.AspectRatioMode.KeepAspectRatio)
             self._fitted = True
 
-    def show_crop(self, crop):
-        if crop is None:
-            self.rect_item.hide()
-        else:
-            x0, y0, x1, y1 = crop
-            self.rect_item.setRect(QRectF(x0, y0, x1 - x0, y1 - y0))
-            self.rect_item.show()
+    def show_crops(self, crops, selected=None):
+        """Draw every crop region with its number; highlight the selected one."""
+        for it in self._region_items:
+            self.scene().removeItem(it)
+        self._region_items = []
+        self.rect_item.hide()
+        for k, (x0, y0, x1, y1) in enumerate(crops):
+            sel = k == selected
+            pen = QPen(QColor(255, 220, 0) if sel else QColor(0, 220, 255))
+            pen.setCosmetic(True)
+            pen.setWidth(3 if sel else 2)
+            pen.setStyle(Qt.PenStyle.SolidLine if sel else Qt.PenStyle.DashLine)
+            r = QGraphicsRectItem(QRectF(x0, y0, x1 - x0, y1 - y0))
+            r.setPen(pen)
+            r.setZValue(10)
+            t = QGraphicsSimpleTextItem(str(k + 1))
+            t.setBrush(pen.color())
+            t.setFlag(QGraphicsSimpleTextItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            font = t.font()
+            font.setPointSize(14)
+            font.setBold(True)
+            t.setFont(font)
+            t.setPos(x0 + 2, y0 + 2)
+            t.setZValue(11)
+            for it in (r, t):
+                self.scene().addItem(it)
+                self._region_items.append(it)
 
     def set_crop_mode(self, on: bool):
         self.crop_mode = on
@@ -398,20 +420,38 @@ class MainWindow(QMainWindow):
         ll.addWidget(add_btn)
         ll.addWidget(rm_btn)
 
+        # left, below files: crop regions of the current image
+        self.crop_list = QListWidget()
+        self.crop_list.setMaximumHeight(160)
+        self.crop_list.currentRowChanged.connect(lambda _: self.update_preview(refit=True))
+        self.crop_btn = QPushButton('Crop 추가 (드래그)')
+        self.crop_btn.setCheckable(True)
+        del_crop = QPushButton('선택 삭제')
+        del_crop.clicked.connect(self.delete_crop)
+        clear_crop = QPushButton('전체 삭제')
+        clear_crop.clicked.connect(self.clear_crops)
+        crop_all = QPushButton('같은 크기 이미지에 복사')
+        crop_all.setToolTip('이 이미지의 crop 영역들을 크기가 같은 다른 이미지에 복사')
+        crop_all.clicked.connect(self.crop_to_all)
+        crop_box = QGroupBox('Crop 영역 (각각 따로 저장)')
+        cbl = QVBoxLayout(crop_box)
+        cbl.addWidget(self.crop_btn)
+        cbl.addWidget(self.crop_list)
+        row = QHBoxLayout()
+        row.addWidget(del_crop)
+        row.addWidget(clear_crop)
+        cbl.addLayout(row)
+        cbl.addWidget(crop_all)
+        ll.addWidget(crop_box)
+
         # center: canvas + view controls
         self.canvas = Canvas()
         self.canvas.cropDrawn.connect(self._crop_drawn)
         self.z_combo = QComboBox()
         self.z_combo.currentIndexChanged.connect(self._z_changed)
-        self.crop_btn = QPushButton('Crop 그리기')
-        self.crop_btn.setCheckable(True)
         self.crop_btn.toggled.connect(self.canvas.set_crop_mode)
-        self.show_crop_btn = QCheckBox('Crop 결과만 보기')
+        self.show_crop_btn = QCheckBox('선택한 Crop만 보기')
         self.show_crop_btn.toggled.connect(lambda _: self.update_preview(refit=True))
-        clear_crop = QPushButton('Crop 해제')
-        clear_crop.clicked.connect(self.clear_crop)
-        crop_all = QPushButton('Crop 영역을 같은 크기 이미지에 적용')
-        crop_all.clicked.connect(self.crop_to_all)
         fit_btn = QPushButton('화면 맞춤')
         fit_btn.clicked.connect(self.canvas.fit)
         self.scalebar_chk = QCheckBox('Scale bar')
@@ -430,9 +470,6 @@ class MainWindow(QMainWindow):
         bar1 = QHBoxLayout()
         bar1.addWidget(QLabel('Z'))
         bar1.addWidget(self.z_combo)
-        bar1.addWidget(self.crop_btn)
-        bar1.addWidget(clear_crop)
-        bar1.addWidget(crop_all)
         bar1.addWidget(self.show_crop_btn)
         bar1.addStretch()
         bar1.addWidget(fit_btn)
@@ -474,17 +511,32 @@ class MainWindow(QMainWindow):
         row.addWidget(load_p)
         bl.addLayout(row)
 
+        self.exp_full = QCheckBox('전체 이미지')
+        self.exp_full.setChecked(True)
+        self.exp_crops = QCheckBox('Crop 영역 각각')
+        self.exp_crops.setChecked(True)
         self.exp_composite = QCheckBox('합성 RGB (LUT 적용)')
         self.exp_composite.setChecked(True)
         self.exp_channels = QCheckBox('채널별 RGB')
         self.exp_raw = QCheckBox('원본값 스택 (ImageJ, 모든 Z)')
         self.exp_raw.setChecked(True)
-        exp_btn = QPushButton('전체 이미지 TIFF로 저장…')
+        exp_btn = QPushButton('모든 이미지 TIFF로 저장…')
         exp_btn.clicked.connect(self.export_all)
+        exp_one = QPushButton('현재 이미지만 저장…')
+        exp_one.clicked.connect(self.export_current)
         exp = QGroupBox('TIFF 일괄 저장')
         el = QVBoxLayout(exp)
-        for w in (self.exp_composite, self.exp_channels, self.exp_raw, exp_btn):
+        row = QHBoxLayout()
+        row.addWidget(QLabel('범위:'))
+        row.addWidget(self.exp_full)
+        row.addWidget(self.exp_crops)
+        el.addLayout(row)
+        for w in (self.exp_composite, self.exp_channels, self.exp_raw):
             el.addWidget(w)
+        row = QHBoxLayout()
+        row.addWidget(exp_one)
+        row.addWidget(exp_btn)
+        el.addLayout(row)
 
         right = QWidget()
         rl = QVBoxLayout(right)
@@ -592,6 +644,7 @@ class MainWindow(QMainWindow):
         self.z_combo.setEnabled(it.nz > 1)
         self.z_combo.blockSignals(False)
         self._build_panels()
+        self._refresh_crop_list(select=0)
         c, z, h, w = it.image.data.shape
         px = it.pixel_um
         self.info.setText(
@@ -625,49 +678,78 @@ class MainWindow(QMainWindow):
 
     # ---- preview --------------------------------------------------------
 
+    def _selected_crop(self):
+        it = self.current
+        row = self.crop_list.currentRow()
+        if it is None or row < 0 or row >= len(it.crops):
+            return None
+        return row
+
     def update_preview(self, refit=False):
         it = self.current
         if it is None:
             return
-        cropped = self.show_crop_btn.isChecked() and it.crop is not None
-        rgb = it.composite(cropped=cropped)
+        sel = self._selected_crop()
+        only = self.show_crop_btn.isChecked() and sel is not None
+        rgb = it.composite(it.crops[sel] if only else None)
         if self.scalebar_chk.isChecked() and it.pixel_um:
             rgb, _ = add_scale_bar(
                 rgb, it.pixel_um, self.scale_um.value() or None, self.scale_pos.currentText()
             )
-        self.canvas.set_image(to_qimage(rgb), refit=refit)
-        self.canvas.show_crop(None if cropped else it.crop)
+        self.canvas.set_image(to_qimage(rgb), refit=refit and only)
+        if refit and not only:
+            self.canvas.fit()
+        self.canvas.show_crops([] if only else it.crops, sel)
 
     # ---- crop -----------------------------------------------------------
+
+    def _refresh_crop_list(self, select=None):
+        it = self.current
+        self.crop_list.blockSignals(True)
+        self.crop_list.clear()
+        if it is not None:
+            for k, (x0, y0, x1, y1) in enumerate(it.crops, 1):
+                self.crop_list.addItem(f'{k}: x {x0}–{x1}, y {y0}–{y1}  ({x1 - x0}×{y1 - y0})')
+            if it.crops:
+                row = len(it.crops) - 1 if select is None else select
+                self.crop_list.setCurrentRow(max(0, min(row, len(it.crops) - 1)))
+        self.crop_list.blockSignals(False)
 
     def _crop_drawn(self, x0, y0, x1, y1):
         if self.current is None:
             return
-        self.current.set_crop(x0, y0, x1, y1)
+        region = self.current.add_crop(x0, y0, x1, y1)
         self.crop_btn.setChecked(False)
-        c = self.current.crop
-        self.statusBar().showMessage(
-            f'Crop: x {c[0]}–{c[2]}, y {c[1]}–{c[3]} ({c[2] - c[0]}×{c[3] - c[1]} px)'
-            if c else 'Crop 해제'
-        )
+        self._refresh_crop_list()
+        if region:
+            self.statusBar().showMessage(f'Crop {len(self.current.crops)} 추가')
         self.update_preview()
 
-    def clear_crop(self):
+    def delete_crop(self):
+        sel = self._selected_crop()
+        if sel is None:
+            return
+        self.current.crops.pop(sel)
+        self._refresh_crop_list(select=sel)
+        self.update_preview(refit=True)
+
+    def clear_crops(self):
         if self.current is not None:
-            self.current.crop = None
+            self.current.crops.clear()
+            self._refresh_crop_list()
             self.update_preview(refit=True)
 
     def crop_to_all(self):
         it = self.current
-        if it is None or it.crop is None:
+        if it is None or not it.crops:
             return
         shape = it.image.data.shape[-2:]
         n = 0
         for other in self.items:
             if other is not it and other.image.data.shape[-2:] == shape:
-                other.crop = it.crop
+                other.crops = list(it.crops)
                 n += 1
-        self.statusBar().showMessage(f'Crop 영역을 이미지 {n}개에 적용했습니다.')
+        self.statusBar().showMessage(f'Crop 영역 {len(it.crops)}개를 이미지 {n}개에 복사했습니다.')
 
     # ---- batch LUT ------------------------------------------------------
 
@@ -705,13 +787,22 @@ class MainWindow(QMainWindow):
 
     # ---- export ---------------------------------------------------------
 
+    def export_current(self):
+        if self.current is not None:
+            self._export([self.current])
+
     def export_all(self):
-        if not self.items:
+        self._export(self.items)
+
+    def _export(self, items):
+        if not items:
             return
         out = QFileDialog.getExistingDirectory(self, '저장할 폴더 선택')
         if not out:
             return
         kwargs = dict(
+            full=self.exp_full.isChecked(),
+            crops=self.exp_crops.isChecked(),
             composite=self.exp_composite.isChecked(),
             per_channel=self.exp_channels.isChecked(),
             raw_stack=self.exp_raw.isChecked(),
@@ -719,10 +810,10 @@ class MainWindow(QMainWindow):
             scale_um=self.scale_um.value() or None,
             scale_position=self.scale_pos.currentText(),
         )
-        prog = QProgressDialog('저장 중…', '취소', 0, len(self.items), self)
+        prog = QProgressDialog('저장 중…', '취소', 0, len(items), self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
         files, errors = [], []
-        for i, it in enumerate(self.items):
+        for i, it in enumerate(items):
             if prog.wasCanceled():
                 break
             prog.setLabelText(f'저장 중: {it.label}')
@@ -733,7 +824,7 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 errors.append(f'{it.label}: {exc}')
                 traceback.print_exc()
-        prog.setValue(len(self.items))
+        prog.setValue(len(items))
         msg = f'TIFF {len(files)}개를 저장했습니다.\n{out}'
         if errors:
             msg += '\n\n실패:\n' + '\n'.join(errors)

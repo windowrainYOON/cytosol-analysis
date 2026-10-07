@@ -64,7 +64,9 @@ class ImageItem:
     label: str
     z: str | int = 'mip'
     luts: list[ChannelLUT] = field(default_factory=list)
-    crop: tuple[int, int, int, int] | None = None  # (x0, y0, x1, y1), exclusive end
+    # crop regions as (x0, y0, x1, y1) in pixels, exclusive end; each one is
+    # exported as its own image
+    crops: list[tuple[int, int, int, int]] = field(default_factory=list)
     _planes: np.ndarray | None = field(default=None, repr=False)
     _planes_z: object = field(default=None, repr=False)
 
@@ -105,24 +107,28 @@ class ImageItem:
     def auto_lut(self, index: int, low=0.5, high=99.8):
         self.luts[index].vmin, self.luts[index].vmax = auto_range(self.planes()[index], low, high)
 
-    def cropped_planes(self) -> np.ndarray:
+    def region_planes(self, region=None) -> np.ndarray:
+        """(C, Y, X) planes of the current z inside region (None = whole image)."""
         p = self.planes()
-        if self.crop is None:
+        if region is None:
             return p
-        x0, y0, x1, y1 = self.crop
+        x0, y0, x1, y1 = region
         return p[:, y0:y1, x0:x1]
 
-    def cropped_stack(self) -> np.ndarray:
-        """Raw (C, Z, Y, X) data inside the crop, all z."""
+    def region_stack(self, region=None) -> np.ndarray:
+        """Raw (C, Z, Y, X) data inside region, all z."""
         d = self.image.data
-        if self.crop is None:
+        if region is None:
             return d
-        x0, y0, x1, y1 = self.crop
+        x0, y0, x1, y1 = region
         return d[:, :, y0:y1, x0:x1]
 
-    def composite(self, cropped=True, channels=None) -> np.ndarray:
-        """(Y, X, 3) float RGB of visible channels with their LUTs."""
-        planes = self.cropped_planes() if cropped else self.planes()
+    def composite(self, region=None, channels=None) -> np.ndarray:
+        """(Y, X, 3) float RGB with the LUTs applied.
+
+        channels: indices to include; None means every visible channel.
+        """
+        planes = self.region_planes(region)
         rgb = np.zeros(planes.shape[1:] + (3,), np.float32)
         for i, (plane, lut) in enumerate(zip(planes, self.luts)):
             if channels is not None and i not in channels:
@@ -132,11 +138,19 @@ class ImageItem:
             rgb += lut.apply(plane)[..., None] * np.asarray(lut.color, np.float32)
         return np.clip(rgb, 0.0, 1.0)
 
-    def set_crop(self, x0, y0, x1, y1):
+    def clip_region(self, x0, y0, x1, y1):
+        """Clamp a rectangle to the image; None if it is smaller than 2 px."""
         h, w = self.image.data.shape[-2:]
-        x0, x1 = sorted((int(np.clip(x0, 0, w)), int(np.clip(x1, 0, w))))
-        y0, y1 = sorted((int(np.clip(y0, 0, h)), int(np.clip(y1, 0, h))))
-        self.crop = None if (x1 - x0 < 2 or y1 - y0 < 2) else (x0, y0, x1, y1)
+        x0, x1 = sorted((int(np.clip(round(x0), 0, w)), int(np.clip(round(x1), 0, w))))
+        y0, y1 = sorted((int(np.clip(round(y0), 0, h)), int(np.clip(round(y1), 0, h))))
+        return None if (x1 - x0 < 2 or y1 - y0 < 2) else (x0, y0, x1, y1)
+
+    def add_crop(self, x0, y0, x1, y1):
+        """Add a crop region; returns it, or None if too small."""
+        region = self.clip_region(x0, y0, x1, y1)
+        if region is not None:
+            self.crops.append(region)
+        return region
 
 
 def match_channel(item: ImageItem, name: str, index: int, like: ImageItem | None = None):
@@ -227,6 +241,8 @@ def _imagej_luts(item: ImageItem) -> list[np.ndarray]:
 def export_item(
     item: ImageItem,
     out_dir,
+    full=True,
+    crops=True,
     composite=True,
     per_channel=False,
     raw_stack=True,
@@ -236,17 +252,35 @@ def export_item(
 ) -> list[str]:
     """Write TIFFs for one image; returns the written paths.
 
-    composite:   RGB 8-bit TIFF of visible channels as displayed (LUT applied).
-    per_channel: one RGB 8-bit TIFF per channel in its color.
-    raw_stack:   ImageJ hyperstack of the cropped raw data (all z, original
-                 values) with channel LUTs, display ranges and µm calibration,
-                 for quantification in Fiji.
+    full:  export the whole image  -> <name>_full_*.tif
+    crops: export each crop region -> <name>_crop1_*.tif, <name>_crop2_*.tif, ...
+    For each of those regions:
+      composite:   RGB 8-bit TIFF of visible channels with the LUTs applied.
+      per_channel: one RGB 8-bit TIFF per channel in its color.
+      raw_stack:   ImageJ hyperstack of the original values (all z) carrying
+                   the channel LUTs, display ranges and µm calibration.
     """
-    import tifffile
-
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = _safe(Path(item.label).stem if item.label == item.path.name else item.label)
+    regions = []
+    if full:
+        regions.append(('full', None))
+    if crops:
+        regions += [(f'crop{k}', r) for k, r in enumerate(item.crops, 1)]
+    written = []
+    for tag, region in regions:
+        written += _export_region(
+            item, region, out_dir / f'{stem}_{tag}', composite, per_channel, raw_stack,
+            scale_bar, scale_um, scale_position,
+        )
+    return written
+
+
+def _export_region(item, region, base: Path, composite, per_channel, raw_stack,
+                   scale_bar, scale_um, scale_position) -> list[str]:
+    import tifffile
+
     px = item.pixel_um
     res = (1.0 / px, 1.0 / px) if px else None
     meta_common = {'unit': 'um'} if px else {}
@@ -255,7 +289,7 @@ def export_item(
     def write_rgb(rgb, name):
         if scale_bar and px:
             rgb, _ = add_scale_bar(rgb, px, scale_um, scale_position)
-        path = out_dir / f'{stem}_{name}.tif'
+        path = Path(f'{base}_{name}.tif')
         tifffile.imwrite(
             path, (np.clip(rgb, 0, 1) * 255).astype(np.uint8), photometric='rgb',
             resolution=res, metadata=meta_common or None, imagej=bool(px),
@@ -263,12 +297,12 @@ def export_item(
         written.append(str(path))
 
     if composite:
-        write_rgb(item.composite(), 'composite')
+        write_rgb(item.composite(region), 'composite')
     if per_channel:
         for i, name in enumerate(item.channels):
-            write_rgb(item.composite(channels=[i]), f'C{i}_{_safe(name)}')
+            write_rgb(item.composite(region, channels=[i]), f'C{i}_{_safe(name)}')
     if raw_stack:
-        stack = item.cropped_stack()  # C, Z, Y, X
+        stack = item.region_stack(region)  # C, Z, Y, X
         data = np.ascontiguousarray(np.moveaxis(stack, 0, 1))  # Z, C, Y, X
         if data.dtype == np.float64:
             data = data.astype(np.float32)
@@ -283,7 +317,7 @@ def export_item(
         vz = item.image.voxel_size_um.get('Z')
         if vz:
             meta['spacing'] = vz
-        path = out_dir / f'{stem}_raw.tif'
+        path = Path(f'{base}_raw.tif')
         tifffile.imwrite(path, data, imagej=True, resolution=res, metadata=meta)
         written.append(str(path))
     return written

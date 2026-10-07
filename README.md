@@ -58,13 +58,16 @@ A GUI for working on a whole set of images at once:
 - **Per-channel LUT** with a live preview: show/hide, color, min/max (slider,
   number or histogram), gamma, `Auto` (0.5–99.8 percentile) and `Min/Max`.
 - **Z**: MIP or any single slice.
-- **Crop** per image: press `Crop 그리기` and drag on the image. You can copy the
-  crop to every image with the same pixel size, and preview only the cropped area.
+- **Crop** regions per image: press `Crop 추가 (드래그)` and drag on the image;
+  repeat for more regions. Each region is listed, numbered on the image, can be
+  previewed alone, deleted, or copied to every image with the same pixel size.
 - **Batch LUT**: `전체 이미지에 적용` on a channel copies its LUT to the same
   channel of every loaded image (matched by channel name; by index only between
   files of the same type and channel count). LUTs can be saved and loaded as JSON presets.
-- **Batch TIFF export** of every image, cropped:
-  - composite RGB with the LUTs and scale bar applied (8-bit, µm calibration),
+- **Batch TIFF export** (`모든 이미지` or `현재 이미지만`), with the current LUTs
+  applied. Scope: the whole image (`<name>_full_*`) and/or every crop region as
+  its own files (`<name>_crop1_*`, `<name>_crop2_*`, …). For each:
+  - composite RGB with the LUTs and scale bar (8-bit, µm calibration),
   - optional per-channel RGB,
   - an ImageJ hyperstack of the original values for all Z, carrying the channel
     LUTs, display ranges and µm calibration, ready for measurement in Fiji.
@@ -72,3 +75,5 @@ A GUI for working on a whole set of images at once:
 Run from source: `python -m cytosol.app [files…]`
 
 Build the macOS app: `./build_mac.sh` → `dist/Cytosol Viewer.app`
+(set `PYTHON=/path/to/python3.10+` if the system python3 is older).
+Package it: `./make_dmg.sh` → `~/Desktop/CytosolViewer.dmg`.
