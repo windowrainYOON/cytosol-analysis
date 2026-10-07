@@ -67,6 +67,10 @@ class ImageItem:
     # crop regions as (x0, y0, x1, y1) in pixels, exclusive end; each one is
     # exported as its own image
     crops: list[tuple[int, int, int, int]] = field(default_factory=list)
+    # cell ROIs (cytosol.cellroi.CellRois) and the channel roles used for them:
+    # {'nuc': channel index or None, 'bg': channel index}
+    cells: object = None
+    roi_roles: dict = field(default_factory=dict)
     _planes: np.ndarray | None = field(default=None, repr=False)
     _planes_z: object = field(default=None, repr=False)
 

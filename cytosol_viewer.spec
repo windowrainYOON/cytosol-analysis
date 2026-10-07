@@ -1,18 +1,20 @@
 # PyInstaller spec for Cytosol Viewer.  Build with ./build_mac.sh
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hiddenimports = (
     collect_submodules('imagecodecs')
     + collect_submodules('czifile')
     + collect_submodules('oirfile')
-    + ['h5py', 'tifffile', 'xarray']
+    + collect_submodules('skimage')
+    + ['h5py', 'tifffile', 'xarray', 'roifile']
 )
+datas = collect_data_files('skimage')
 
 a = Analysis(
     ['cytosol_viewer.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=datas,
     hiddenimports=hiddenimports,
     excludes=['tkinter', 'PyQt5', 'PyQt6', 'IPython', 'pytest'],
     noarchive=False,
