@@ -69,6 +69,18 @@ def run(out_dir) -> int:
         from .lut import export_item
         return len(export_item(item, out / 'export', per_channel=True))
 
+    def time_series_export():
+        from .io import Image
+        from .lut import ImageItem, export_item
+        from .render import TimeStampStyle
+        frames = np.stack([item.image.data] * 3).astype(np.float32)
+        image = Image(frames[0], list(item.channels), dict(item.image.voxel_size_um),
+                      times=[0.0, 60.0, 120.0], loader=lambda t: frames[t])
+        ts = ImageItem(path=Path('selftest_t.tif'), image=image, label='selftest_t')
+        ts.reset_luts()
+        files = export_item(ts, out / 'export_t', time=TimeStampStyle(bar=True))
+        return f'{len(files)} files, t restored to {ts.t}'
+
     def cell_rois():
         from .cellroi import segment_cells
         planes = item.planes()
@@ -98,6 +110,7 @@ def run(out_dir) -> int:
     step('readers import', readers)
     step('HDF5 non-ASCII path', hdf5_unicode_path)
     step('TIFF export', tiff_export)
+    step('time-series export', time_series_export)
     step('cell ROIs + RoiSet.zip', cell_rois)
     step('figure export', figure)
     step('main window', window)

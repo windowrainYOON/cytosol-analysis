@@ -6,6 +6,7 @@ in pixels is exactly ``length_um / pixel_size_um``.
 
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
@@ -131,9 +132,12 @@ def add_scale_bar(
     thickness_px: int | None = None,
     margin_px: int | None = None,
     font_px: int | None = None,
+    gap_px: int | None = None,
 ) -> tuple[np.ndarray, float]:
     """Draw a scale bar onto an (Y, X, 3) float RGB image.
 
+    thickness_px, margin_px (from the image edge), font_px and gap_px (between
+    bar and text) default to sizes relative to the image.
     Returns the new image and the bar length in µm actually drawn.
     """
     from PIL import Image as PILImage
@@ -162,7 +166,7 @@ def add_scale_bar(
         text = _format_um(length_um, has_mu)
         tw = draw.textlength(text, font=font)
         tx = x0 + (bar_px - tw) / 2
-        gap = max(2, thickness_px // 2)
+        gap = max(2, thickness_px // 2) if gap_px is None else gap_px
         if bottom:
             ty = y0 - gap - font_px
         else:
@@ -170,6 +174,134 @@ def add_scale_bar(
         draw.text((tx, ty), text, fill=fill, font=font)
 
     return np.asarray(img, np.float32) / 255.0, length_um
+
+
+# ---------------------------------------------------------------------------
+# marker styles (scale bar and time stamp) shared by the preview and exports
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ScaleBarStyle:
+    """How the size marker (scale bar) is drawn. None = automatic size."""
+
+    enabled: bool = True
+    length_um: float | None = None
+    position: str = 'lower right'
+    label: bool = True
+    font_px: int | None = None
+    thickness_px: int | None = None
+    margin_px: int | None = None
+    gap_px: int | None = None
+    color: tuple = (1.0, 1.0, 1.0)
+
+    def draw(self, rgb: np.ndarray, pixel_um: float | None) -> np.ndarray:
+        if not self.enabled or not pixel_um:
+            return rgb
+        rgb, _ = add_scale_bar(
+            rgb, pixel_um, self.length_um, self.position, self.color, self.label,
+            self.thickness_px, self.margin_px, self.font_px, self.gap_px,
+        )
+        return rgb
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+TIME_UNITS = ('auto', 's', 'min', 'h', 'hh:mm:ss', 'mm:ss', 'frame')
+
+
+@dataclass
+class TimeStampStyle:
+    """How the time-series marker is drawn.
+
+    Text: prefix + elapsed time in ``unit`` (``auto`` picks s, min or h from
+    the length of the series). Optional progress bar: a track bar_length_pct
+    of the image width long whose filled part grows with elapsed time.
+    """
+
+    enabled: bool = True
+    position: str = 'upper left'
+    label: bool = True
+    unit: str = 'auto'
+    decimals: int = 0
+    prefix: str = ''
+    offset_s: float = 0.0  # added to every time (e.g. a negative pre-treatment time)
+    font_px: int | None = None
+    margin_px: int | None = None
+    color: tuple = (1.0, 1.0, 1.0)
+    bar: bool = False
+    bar_length_pct: float = 25.0
+    bar_thickness_px: int | None = None
+    gap_px: int | None = None
+
+    def text(self, t_s: float, total_s: float = 0.0, index: int = 0) -> str:
+        unit = self.unit
+        if unit == 'frame':
+            return f'{self.prefix}{index + 1}'
+        t = t_s + self.offset_s
+        if unit in ('hh:mm:ss', 'mm:ss'):
+            sign = '-' if t < 0 else ''
+            sec = int(round(abs(t)))
+            h, m, sc = sec // 3600, sec % 3600 // 60, sec % 60
+            body = f'{h:02d}:{m:02d}:{sc:02d}' if unit == 'hh:mm:ss' else f'{h * 60 + m:02d}:{sc:02d}'
+            return f'{self.prefix}{sign}{body}'
+        if unit == 'auto':
+            span = max(abs(total_s), abs(t))
+            unit = 's' if span < 120 else ('min' if span < 36000 else 'h')
+        value = t / {'s': 1.0, 'min': 60.0, 'h': 3600.0}[unit]
+        return f'{self.prefix}{value:.{max(0, int(self.decimals))}f} {unit}'
+
+    def draw(self, rgb: np.ndarray, times: list[float], index: int) -> np.ndarray:
+        if not self.enabled or not times or (not self.label and not self.bar):
+            return rgb
+        index = int(np.clip(index, 0, len(times) - 1))
+        total = times[-1] - times[0]
+        frac = (times[index] - times[0]) / total if total > 0 else 0.0
+        return add_time_stamp(rgb, self.text(times[index], total, index), self, frac)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def add_time_stamp(rgb: np.ndarray, text: str, style: TimeStampStyle,
+                   fraction: float = 0.0) -> np.ndarray:
+    """Draw a time stamp (text and/or progress bar) in a corner of an RGB image."""
+    from PIL import Image as PILImage
+    from PIL import ImageDraw
+
+    h, w = rgb.shape[:2]
+    font_px = style.font_px or max(10, round(h * 0.04))
+    margin = style.margin_px if style.margin_px is not None else max(4, round(w * 0.03))
+    thick = style.bar_thickness_px or max(2, round(h * 0.012))
+    gap = style.gap_px if style.gap_px is not None else max(2, thick // 2)
+    fill = tuple(int(round(c * 255)) for c in parse_color(style.color))
+    img = PILImage.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
+    draw = ImageDraw.Draw(img)
+    font, _ = _font(font_px)
+    right = 'right' in style.position
+    bottom = 'lower' in style.position or 'bottom' in style.position
+
+    bar_w = int(round(w * style.bar_length_pct / 100)) if style.bar else 0
+    text_w = draw.textlength(text, font=font) if style.label else 0
+    block_w = max(bar_w, text_w)
+    block_h = (font_px if style.label else 0) + (thick if style.bar else 0)
+    if style.label and style.bar:
+        block_h += gap
+    x0 = w - margin - block_w if right else margin
+    y0 = h - margin - block_h if bottom else margin
+    y = y0
+    if style.label:
+        tx = x0 + (block_w - text_w if right else 0)
+        draw.text((tx, y), text, fill=fill, font=font)
+        y += font_px + (gap if style.bar else 0)
+    if style.bar and bar_w > 0:
+        bx = x0 + (block_w - bar_w if right else 0)
+        draw.rectangle([bx, y, bx + bar_w - 1, y + thick - 1], outline=fill)
+        filled = int(round(bar_w * float(np.clip(fraction, 0, 1))))
+        if filled > 0:
+            draw.rectangle([bx, y, bx + filled - 1, y + thick - 1], fill=fill)
+    return np.asarray(img, np.float32) / 255.0
 
 
 def add_label(rgb: np.ndarray, text: str, color=(1.0, 1.0, 1.0), font_px=None,

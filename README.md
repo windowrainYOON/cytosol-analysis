@@ -54,7 +54,22 @@ render(read_image('cells.czi'), 'figures/', prefix='cells', scale_um=10,
 A GUI for working on a whole set of images at once:
 
 - Add TCF / CZI / OIR files with **파일 추가…** or by dragging files or folders
-  onto the window. A TCF becomes two entries, HT (RI) and FL.
+  onto the window. A TCF becomes one entry with HT and FL aligned on the HT
+  grid (channels `RI`, `CH0…`): FL is resampled by pixel size around the shared
+  image center plus a small automatic registration (at most 2 µm), and in Z
+  from `3DFL/OffsetZ` (the center of the FL stack measured from the bottom of
+  the HT volume). Turn off **TCF: HT와 FL을 정렬해 한 이미지로** to get HT and
+  FL as two entries instead (`read_image(path, aligned=True)` from Python).
+- **Time series** (TCF, CZI, OIR with a T axis, together with Z): a **T** slider
+  under the image; each timepoint is read from the file when selected. Export
+  writes every timepoint (RGB TIFFs become T-frame stacks with the time stamp
+  on each frame, the raw stack a TZCYX hyperstack) unless
+  **타임시리즈는 모든 시점 저장** is off.
+- **마커 tab**: size marker (scale bar) and time-series marker (time stamp).
+  Each has on/off, text on/off, font size, marker length/thickness, text-marker
+  gap, edge margin, position and color; the time stamp also has the unit
+  (auto, s, min, h, hh:mm:ss, mm:ss, frame), decimals, prefix, a time offset
+  and an optional progress bar. Used by the preview and every TIFF export.
 - **Per-channel LUT** with a live preview: show/hide, color, min/max (slider,
   number or histogram), gamma, `Auto` (0.5–99.8 percentile) and `Min/Max`.
 - **Z**: MIP or any single slice.

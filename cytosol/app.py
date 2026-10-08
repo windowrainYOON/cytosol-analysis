@@ -61,7 +61,7 @@ from .lut import (
     load_preset,
     save_preset,
 )
-from .render import add_scale_bar
+from .marker_panel import MarkerPanel
 from .roi_panel import RoiPanel, write_csv
 
 SUPPORTED = ('.tcf', '.czi', '.oir')
@@ -78,9 +78,11 @@ def qcolor(rgb) -> QColor:
     return QColor.fromRgbF(*[float(c) for c in rgb])
 
 
-def load_items(path: Path) -> list[ImageItem]:
-    """TCF files give two entries (HT and FL); other formats give one."""
+def load_items(path: Path, align_tcf: bool = True) -> list[ImageItem]:
+    """One entry per file. With align_tcf off, a TCF gives two (HT and FL)."""
     if path.suffix.lower() == '.tcf':
+        if align_tcf:
+            return [ImageItem.load(path, label=path.stem, aligned=True)]
         from .io import tcf_metadata
 
         mods = tcf_metadata(path)['modalities']
@@ -564,6 +566,13 @@ class MainWindow(QMainWindow):
         ll = QVBoxLayout(left)
         ll.addWidget(QLabel('이미지 (TCF / CZI / OIR, 끌어다 놓기 가능)'))
         ll.addWidget(self.file_list)
+        self.align_tcf = QCheckBox('TCF: HT와 FL을 정렬해 한 이미지로')
+        self.align_tcf.setChecked(True)
+        self.align_tcf.setToolTip(
+            'FL을 HT 픽셀 격자에 맞춰 리샘플링합니다 (XY: 픽셀 크기와 자동 미세 보정, '
+            'Z: 3DFL OffsetZ). 끄면 HT와 FL이 따로 열립니다. 새로 추가하는 파일부터 적용됩니다.'
+        )
+        ll.addWidget(self.align_tcf)
         ll.addWidget(add_btn)
         ll.addWidget(rm_btn)
 
@@ -605,17 +614,14 @@ class MainWindow(QMainWindow):
         self.show_crop_btn.toggled.connect(lambda _: self.update_preview(refit=True))
         fit_btn = QPushButton('화면 맞춤')
         fit_btn.clicked.connect(self.canvas.fit)
-        self.scalebar_chk = QCheckBox('Scale bar')
-        self.scalebar_chk.setChecked(True)
-        self.scalebar_chk.toggled.connect(lambda _: self.update_preview())
-        self.scale_um = QDoubleSpinBox()
-        self.scale_um.setRange(0, 10000)
-        self.scale_um.setSpecialValueText('자동')
-        self.scale_um.setSuffix(' µm')
-        self.scale_um.valueChanged.connect(lambda _: self.update_preview())
-        self.scale_pos = QComboBox()
-        self.scale_pos.addItems(['lower right', 'lower left', 'upper right', 'upper left'])
-        self.scale_pos.currentIndexChanged.connect(lambda _: self.update_preview())
+        self.t_slider = QSlider(Qt.Orientation.Horizontal)
+        self.t_slider.setTracking(False)  # load a timepoint on release, not while dragging
+        self.t_slider.valueChanged.connect(self._t_changed)
+        self.t_slider.sliderMoved.connect(self._t_preview_label)
+        self.t_label = QLabel()
+        self.t_label.setMinimumWidth(130)
+        self.markers = MarkerPanel()
+        self.markers.changed.connect(self.update_preview)
         self.info = QLabel()
 
         bar1 = QHBoxLayout()
@@ -624,16 +630,20 @@ class MainWindow(QMainWindow):
         bar1.addWidget(self.show_crop_btn)
         bar1.addStretch()
         bar1.addWidget(fit_btn)
+        self.t_row = QWidget()
+        tl = QHBoxLayout(self.t_row)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.addWidget(QLabel('T'))
+        tl.addWidget(self.t_slider, 1)
+        tl.addWidget(self.t_label)
         bar2 = QHBoxLayout()
-        bar2.addWidget(self.scalebar_chk)
-        bar2.addWidget(self.scale_um)
-        bar2.addWidget(self.scale_pos)
         bar2.addStretch()
         bar2.addWidget(self.info)
         center = QWidget()
         cl = QVBoxLayout(center)
         cl.addLayout(bar1)
         cl.addWidget(self.canvas, 1)
+        cl.addWidget(self.t_row)
         cl.addLayout(bar2)
 
         # right: channel panels + batch + export
@@ -671,6 +681,8 @@ class MainWindow(QMainWindow):
         self.exp_channels = QCheckBox('채널별 RGB')
         self.exp_raw = QCheckBox('원본값 스택 (ImageJ, 모든 Z)')
         self.exp_raw.setChecked(True)
+        self.exp_all_t = QCheckBox('타임시리즈는 모든 시점 저장 (끄면 현재 시점만)')
+        self.exp_all_t.setChecked(True)
         self.exp_per_image = QCheckBox('이미지별 폴더에 나눠 저장')
         self.exp_per_image.setChecked(True)
         self.exp_per_image.setToolTip('폴더 안에 이미지마다 하위 폴더를 만들어 그 이미지의 파일을 넣습니다.')
@@ -685,7 +697,8 @@ class MainWindow(QMainWindow):
         row.addWidget(self.exp_full)
         row.addWidget(self.exp_crops)
         el.addLayout(row)
-        for w in (self.exp_composite, self.exp_channels, self.exp_raw, self.exp_per_image):
+        for w in (self.exp_composite, self.exp_channels, self.exp_raw, self.exp_all_t,
+                  self.exp_per_image):
             el.addWidget(w)
         row = QHBoxLayout()
         row.addWidget(exp_one)
@@ -711,6 +724,10 @@ class MainWindow(QMainWindow):
         right = QTabWidget()
         right.addTab(lut_tab, 'LUT · 내보내기')
         right.addTab(roi_scroll, '세포질 ROI')
+        marker_scroll = QScrollArea()
+        marker_scroll.setWidgetResizable(True)
+        marker_scroll.setWidget(self.markers)
+        right.addTab(marker_scroll, '마커')
         right.setMinimumWidth(380)
 
         split = QSplitter()
@@ -763,7 +780,7 @@ class MainWindow(QMainWindow):
             prog.setValue(i)
             QApplication.processEvents()
             try:
-                for item in load_items(p):
+                for item in load_items(p, self.align_tcf.isChecked()):
                     self.items.append(item)
                     entry = QListWidgetItem(item.label)
                     entry.setToolTip(str(item.path))
@@ -824,13 +841,19 @@ class MainWindow(QMainWindow):
         self.z_combo.setCurrentIndex(max(idx, 0))
         self.z_combo.setEnabled(it.nz > 1)
         self.z_combo.blockSignals(False)
+        self.t_slider.blockSignals(True)
+        self.t_slider.setRange(0, max(it.nt - 1, 0))
+        self.t_slider.setValue(it.t)
+        self.t_slider.blockSignals(False)
+        self.t_row.setVisible(it.nt > 1)
+        self._t_preview_label(it.t)
         self._build_panels()
         self.roi_panel.bind(it)
         self._refresh_crop_list(select=0)
         c, z, h, w = it.image.data.shape
         px = it.pixel_um
         self.info.setText(
-            f'{w}×{h} px, Z {z}, C {c}'
+            f'{w}×{h} px, Z {z}, C {c}' + (f', T {it.nt}' if it.nt > 1 else '')
             + (f', {px:.4f} µm/px' if px else ', 픽셀 크기 없음')
         )
         self.update_preview(refit=True)
@@ -849,6 +872,33 @@ class MainWindow(QMainWindow):
             panel.applyAll.connect(self.apply_channel_to_all)
             self.channel_box.insertWidget(self.channel_box.count() - 1, panel)
             self.panels.append(panel)
+
+    def _t_preview_label(self, t):
+        it = self.current
+        if it is None or it.nt < 2:
+            self.t_label.setText('')
+            return
+        times = it.image.times
+        t = max(0, min(int(t), it.nt - 1))
+        text = self.markers.time_style().text(times[t], times[-1] - times[0], t)
+        self.t_label.setText(f'{t + 1}/{it.nt}  ({text.strip()})')
+
+    def _t_changed(self, t):
+        it = self.current
+        if it is None or t == it.t:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            it.set_t(t)
+        except Exception as exc:
+            traceback.print_exc()
+            QMessageBox.warning(self, '시점 불러오기 실패', str(exc))
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._t_preview_label(it.t)
+        for p in self.panels:
+            p.bind(it)
+        self.update_preview()
 
     def _z_changed(self, _):
         if self.current is None:
@@ -877,10 +927,8 @@ class MainWindow(QMainWindow):
             rgb = self.roi_panel.preview_rgb(it)
         else:
             rgb = it.composite(it.crops[sel] if only else None)
-        if self.scalebar_chk.isChecked() and it.pixel_um:
-            rgb, _ = add_scale_bar(
-                rgb, it.pixel_um, self.scale_um.value() or None, self.scale_pos.currentText()
-            )
+        rgb = it.decorate(rgb, self.markers.scale_style(), self.markers.time_style())
+        self._t_preview_label(it.t)
         self.canvas.set_image(to_qimage(rgb), refit=refit and only)
         if refit and not only:
             self.canvas.fit()
@@ -1000,9 +1048,9 @@ class MainWindow(QMainWindow):
             composite=self.exp_composite.isChecked(),
             per_channel=self.exp_channels.isChecked(),
             raw_stack=self.exp_raw.isChecked(),
-            scale_bar=self.scalebar_chk.isChecked(),
-            scale_um=self.scale_um.value() or None,
-            scale_position=self.scale_pos.currentText(),
+            scale=self.markers.scale_style(),
+            time=self.markers.time_style(),
+            all_times=self.exp_all_t.isChecked(),
         )
 
     def _export(self, items):

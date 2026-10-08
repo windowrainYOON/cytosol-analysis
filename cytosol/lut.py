@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from .io import Image
-from .render import add_scale_bar, channel_colors, project
+from .render import ScaleBarStyle, TimeStampStyle, channel_colors, project
 
 
 @dataclass
@@ -93,15 +93,37 @@ class ImageItem:
         return self.image.data.shape[1]
 
     @property
+    def nt(self) -> int:
+        return self.image.nt
+
+    @property
+    def t(self) -> int:
+        return self.image.t
+
+    def set_t(self, t: int):
+        """Switch to another timepoint (loads it from the file if needed)."""
+        self.image.load_time(t)
+
+    @property
     def pixel_um(self) -> float | None:
         return self.image.voxel_size_um.get('X')
 
     def planes(self) -> np.ndarray:
-        """(C, Y, X) for the current z selection (cached)."""
-        if self._planes is None or self._planes_z != self.z:
+        """(C, Y, X) for the current z and timepoint (cached)."""
+        key = (self.z, self.image.t)
+        if self._planes is None or self._planes_z != key:
             self._planes = project(self.image, self.z).astype(np.float32)
-            self._planes_z = self.z
+            self._planes_z = key
         return self._planes
+
+    def decorate(self, rgb, scale: ScaleBarStyle | None = None,
+                 time: TimeStampStyle | None = None, t: int | None = None) -> np.ndarray:
+        """Burn the scale bar and (for time series) the time stamp into an RGB image."""
+        if scale is not None:
+            rgb = scale.draw(rgb, self.pixel_um)
+        if time is not None and self.nt > 1:
+            rgb = time.draw(rgb, self.image.times, self.t if t is None else t)
+        return rgb
 
     def reset_luts(self):
         colors = channel_colors(self.image)
@@ -255,9 +277,9 @@ def export_item(
     composite=True,
     per_channel=False,
     raw_stack=True,
-    scale_bar=True,
-    scale_um: float | None = None,
-    scale_position='lower right',
+    scale: ScaleBarStyle | None = None,
+    time: TimeStampStyle | None = None,
+    all_times: bool = True,
 ) -> list[str]:
     """Write TIFFs for one image; returns the written paths.
 
@@ -268,55 +290,84 @@ def export_item(
       per_channel: one RGB 8-bit TIFF per channel in its color.
       raw_stack:   ImageJ hyperstack of the original values (all z) carrying
                    the channel LUTs, display ranges and µm calibration.
+    scale / time: scale bar and time stamp burned into the RGB TIFFs
+    (default: automatic scale bar, time stamp in the upper left).
+    all_times: for a time series, write every timepoint (RGB TIFFs become
+    T-frame stacks, the raw stack a TZCYX hyperstack); otherwise only the
+    current one.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    scale = ScaleBarStyle() if scale is None else scale
+    time = TimeStampStyle() if time is None else time
     stem = item_stem(item)
     regions = []
     if full:
         regions.append(('full', None))
     if crops:
         regions += [(f'crop{k}', r) for k, r in enumerate(item.crops, 1)]
+    times = list(range(item.nt)) if all_times and item.nt > 1 else [item.t]
     written = []
     for tag, region in regions:
         written += _export_region(
             item, region, out_dir / f'{stem}_{tag}', composite, per_channel, raw_stack,
-            scale_bar, scale_um, scale_position,
+            scale, time, times,
         )
     return written
 
 
 def _export_region(item, region, base: Path, composite, per_channel, raw_stack,
-                   scale_bar, scale_um, scale_position) -> list[str]:
+                   scale, time, times) -> list[str]:
     import tifffile
 
     px = item.pixel_um
     res = (1.0 / px, 1.0 / px) if px else None
     meta_common = {'unit': 'um'} if px else {}
     written = []
+    start_t = item.t
+    series = len(times) > 1
+    interval = None
+    if series:
+        dt = np.diff([item.image.times[t] for t in times])
+        interval = float(np.median(dt)) if len(dt) and np.median(dt) > 0 else None
 
-    def write_rgb(rgb, name):
-        if scale_bar and px:
-            rgb, _ = add_scale_bar(rgb, px, scale_um, scale_position)
+    def frames(fn):
+        """Yield fn() at every exported timepoint, restoring the current one after."""
+        try:
+            for t in times:
+                item.set_t(t)
+                yield fn(t)
+        finally:
+            item.set_t(start_t)
+
+    def write_rgb(make, name):
         path = Path(f'{base}_{name}.tif')
+        rgb_meta = dict(meta_common)
+        if series:
+            rgb_meta['axes'] = 'TYXS'
+            if interval:
+                rgb_meta['finterval'] = interval
+        pages = list(frames(
+            lambda t: (np.clip(item.decorate(make(), scale, time, t), 0, 1) * 255).astype(np.uint8)
+        ))
+        data = np.stack(pages) if series else pages[0]
         tifffile.imwrite(
-            path, (np.clip(rgb, 0, 1) * 255).astype(np.uint8), photometric='rgb',
-            resolution=res, metadata=meta_common or None, imagej=bool(px),
+            path, data, photometric='rgb', resolution=res,
+            metadata=rgb_meta or None, imagej=bool(px) or series,
         )
         written.append(str(path))
 
     if composite:
-        write_rgb(item.composite(region), 'composite')
+        write_rgb(lambda: item.composite(region), 'composite')
     if per_channel:
         for i, name in enumerate(item.channels):
-            write_rgb(item.composite(region, channels=[i]), f'C{i}_{_safe(name)}')
+            write_rgb(lambda i=i: item.composite(region, channels=[i]), f'C{i}_{_safe(name)}')
     if raw_stack:
-        stack = item.region_stack(region)  # C, Z, Y, X
-        data = np.ascontiguousarray(np.moveaxis(stack, 0, 1))  # Z, C, Y, X
-        if data.dtype == np.float64:
-            data = data.astype(np.float32)
+        first = item.region_stack(region)  # C, Z, Y, X of the current timepoint
+        dtype = np.float32 if first.dtype == np.float64 else first.dtype
+        c, z, h, w = first.shape
         meta = {
-            'axes': 'ZCYX',
+            'axes': 'TZCYX' if series else 'ZCYX',
             'mode': 'composite',
             'LUTs': _imagej_luts(item),
             'Ranges': tuple(v for lut in item.luts for v in (lut.vmin, lut.vmax)),
@@ -326,8 +377,19 @@ def _export_region(item, region, base: Path, composite, per_channel, raw_stack,
         vz = item.image.voxel_size_um.get('Z')
         if vz:
             meta['spacing'] = vz
+        if interval:
+            meta['finterval'] = interval
         path = Path(f'{base}_raw.tif')
-        tifffile.imwrite(path, data, imagej=True, resolution=res, metadata=meta)
+
+        def planes():
+            for stack in frames(lambda t: item.region_stack(region)):
+                for zi in range(z):
+                    for ci in range(c):
+                        yield np.ascontiguousarray(stack[ci, zi], dtype=dtype)
+
+        shape = ((len(times),) if series else ()) + (z, c, h, w)
+        tifffile.imwrite(path, planes(), shape=shape, dtype=dtype, imagej=True,
+                         resolution=res, metadata=meta)
         written.append(str(path))
     return written
 
