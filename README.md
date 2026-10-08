@@ -4,15 +4,24 @@ Microscopy image-based cytosol ROI determination and analysis.
 
 ## Reading raw files
 
-`cytosol.io.read_image(path)` opens Tomocube `.TCF`, Zeiss `.czi` and
-Olympus/Evident `.oir` files and returns an `Image` with `data` shaped
-`(C, Z, Y, X)`, channel names, voxel size in micrometers and the raw metadata.
+`cytosol.io.read_image(path)` opens Tomocube `.TCF`, Zeiss `.czi`,
+Olympus/Evident `.oir` and `.tif`/`.tiff` files and returns an `Image` with
+`data` shaped `(C, Z, Y, X)`, channel names, voxel size in micrometers, the raw
+metadata and `ranges`: per channel the value range the file can hold (0 to
+the detector maximum), read from the metadata.
 
 | Format | Reader | Notes |
 |---|---|---|
 | TCF (HDF5) | `h5py` | `modality='3D'` (default) or `'2DMIP'` gives refractive index (stored uint16 / 10000); `'3DFL'` / `'2DFLMIP'` gives fluorescence per channel. HT and FL have different XY pixel sizes and Z ranges (`Data/3DFL` `OffsetZ`). |
 | CZI | `czifile` | `scene=` selects a scene in multi-scene files. |
 | OIR | `oirfile` | |
+| TIFF | `tifffile` | ImageJ hyperstacks and OME-TIFF keep T/Z/C, pixel size, channel names and colors (ImageJ LUTs, OME `Color`). A plain multi-page TIFF is a Z stack; an RGB TIFF gives channels R/G/B. |
+
+Value range per format: CZI `ComponentBitCount`, OIR bits per sample,
+OME-TIFF `SignificantBits` (else the TIFF `BitsPerSample` / stored integer
+type), TCF fluorescence the stored integer type (uint8/uint16), and TCF RI the
+`RIMin`–`RIMax` recorded in the file. Float TIFFs without metadata use 0 to
+the data maximum.
 
 ```
 pip install -r requirements.txt
@@ -53,7 +62,7 @@ render(read_image('cells.czi'), 'figures/', prefix='cells', scale_um=10,
 
 A GUI for working on a whole set of images at once:
 
-- Add TCF / CZI / OIR files with **파일 추가…** or by dragging files or folders
+- Add TCF / CZI / OIR / TIFF files with **파일 추가…** or by dragging files or folders
   onto the window. A TCF becomes one entry with HT and FL aligned on the HT
   grid (channels `RI`, `CH0…`): FL is resampled by pixel size around the shared
   image center plus a small automatic registration (at most 2 µm), and in Z
@@ -71,7 +80,11 @@ A GUI for working on a whole set of images at once:
   (auto, s, min, h, hh:mm:ss, mm:ss, frame), decimals, prefix, a time offset
   and an optional progress bar. Used by the preview and every TIFF export.
 - **Per-channel LUT** with a live preview: show/hide, color, min/max (slider,
-  number or histogram), gamma, `Auto` (0.5–99.8 percentile) and `Min/Max`.
+  number or histogram), gamma, `Auto` (0.5–99.8 percentile) and `Min/Max`
+  (the current image's data min–max). The sliders and histogram span the
+  file's value range from its metadata (e.g. 0–4095 for 12-bit, 0–255 for
+  8-bit), shown under the histogram; the starting min/max is still the
+  automatic percentile range.
 - **Z**: MIP or any single slice.
 - **Crop** regions per image: press `Crop 추가 (드래그)` and drag on the image;
   repeat for more regions. Each region is listed, numbered on the image, can be

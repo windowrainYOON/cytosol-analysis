@@ -1,8 +1,10 @@
-"""Readers for Tomocube TCF, Zeiss CZI and Olympus OIR microscopy files.
+"""Readers for Tomocube TCF, Zeiss CZI, Olympus OIR and TIFF microscopy files.
 
 Every reader returns an :class:`Image` holding the pixel arrays as numpy
 arrays with axes ``(C, Z, Y, X)`` (singleton axes kept) plus a flat metadata
-dictionary with voxel sizes in micrometers.
+dictionary with voxel sizes in micrometers, and per channel the value range
+the file can hold (0 to the detector's maximum, e.g. 4095 for 12-bit data),
+read from the file's metadata.
 """
 
 from __future__ import annotations
@@ -31,6 +33,11 @@ class Image:
     times: list[float] = field(default_factory=lambda: [0.0])
     t: int = 0
     loader: Callable[[int], np.ndarray] | None = field(default=None, repr=False)
+    # value range per channel as (min, max) from the file metadata (bit depth,
+    # stored type, or the RI range of a TCF), with a short note on where it
+    # came from ('12-bit', 'uint16', ...); None where the file says nothing
+    ranges: list[tuple[float, float] | None] = field(default_factory=list)
+    range_notes: list[str] = field(default_factory=list)
 
     @property
     def nt(self) -> int:
@@ -57,6 +64,33 @@ def _decode(value):
 
 def _attrs(obj) -> dict:
     return {k: _decode(v) for k, v in obj.attrs.items()}
+
+
+def _bits_range(bits) -> tuple[tuple[float, float], str] | None:
+    """(0, 2**bits - 1) and its note for an integer bit depth."""
+    try:
+        bits = int(bits)
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= bits <= 32:
+        return None
+    return (0.0, float(2 ** bits - 1)), f'{bits}-bit'
+
+
+def _dtype_range(dtype) -> tuple[tuple[float, float], str] | None:
+    """Full range of an integer dtype (uint8 -> 0..255); None for floats."""
+    dtype = np.dtype(dtype)
+    if dtype.kind not in 'ui':
+        return None
+    info = np.iinfo(dtype)
+    return (float(min(info.min, 0)), float(info.max)), str(dtype)
+
+
+def _set_ranges(image: 'Image', ranges) -> 'Image':
+    """Store a list of _bits_range/_dtype_range results (or None) on the image."""
+    image.ranges = [r[0] if r else None for r in ranges]
+    image.range_notes = [r[1] if r else '' for r in ranges]
+    return image
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +162,24 @@ def _tcf_fl_info(grp):
     return names, colors, _frames(first), _frame_times(first)
 
 
+def _tcf_ranges(grp, modality: str) -> list:
+    """Per channel value range of a TCF modality group.
+
+    HT: the RIMin..RIMax the file records (RI is not a detector count, so 0 is
+    meaningless there). FL: the full range of the stored integer type.
+    """
+    if 'FL' not in modality:
+        ga = _attrs(grp)
+        if 'RIMin' in ga and 'RIMax' in ga and float(ga['RIMax']) > float(ga['RIMin']):
+            return [((float(ga['RIMin']), float(ga['RIMax'])), 'RI')]
+        return [None]
+    out = []
+    for ch in _tcf_fl_channels(grp):
+        frames = _frames(grp[ch])
+        out.append(_dtype_range(grp[ch][frames[0]].dtype) if frames else None)
+    return out
+
+
 def _tcf_read_frame(f, modality: str, frame: str) -> np.ndarray:
     """(C, Z, Y, X) float32 of one timepoint; RI as float, FL as raw counts."""
     grp = f['Data'][modality]
@@ -171,6 +223,7 @@ def read_tcf(path, modality: str = '3D', timepoint: int = 0) -> Image:
             frames, times = _frames(grp), _frame_times(grp)
         timepoint = int(np.clip(timepoint, 0, len(frames) - 1))
         data = _tcf_read_frame(f, modality, frames[timepoint])
+        ranges = _tcf_ranges(grp, modality)
         meta = {
             'format': 'TCF',
             'modality': modality,
@@ -184,8 +237,8 @@ def read_tcf(path, modality: str = '3D', timepoint: int = 0) -> Image:
             return _tcf_read_frame(f, modality, frames[t])
 
     t0 = times[0] if times else 0.0
-    return Image(data, channels, vx, meta, colors,
-                 times=[t - t0 for t in times], t=timepoint, loader=loader)
+    return _set_ranges(Image(data, channels, vx, meta, colors,
+                             times=[t - t0 for t in times], t=timepoint, loader=loader), ranges)
 
 
 # ---- HT + FL on one pixel grid ---------------------------------------------
@@ -316,6 +369,7 @@ def read_tcf_aligned(path, timepoint: int = 0, refine: bool = True) -> Image:
         ha, fa = _attrs(hg), _attrs(fg)
         ht_frames, ht_times = _frames(hg), _frame_times(hg)
         fl_names, fl_colors, fl_frames, fl_times = _tcf_fl_info(fg)
+        ranges = _tcf_ranges(hg, ht_mod) + _tcf_ranges(fg, fl_mod)
         meta = {
             'format': 'TCF',
             'modality': f'{ht_mod}+{fl_mod}',
@@ -358,8 +412,9 @@ def read_tcf_aligned(path, timepoint: int = 0, refine: bool = True) -> Image:
     meta['fl_z0_um'] = fl_z0
     vx = {'Z': ha.get('ResolutionZ'), 'Y': ha['ResolutionY'], 'X': ha['ResolutionX']}
     t0 = ht_times[0] if ht_times else 0.0
-    return Image(data, ['RI'] + fl_names, vx, meta, [(1.0, 1.0, 1.0)] + fl_colors,
-                 times=[t - t0 for t in ht_times], t=timepoint, loader=loader)
+    return _set_ranges(Image(data, ['RI'] + fl_names, vx, meta, [(1.0, 1.0, 1.0)] + fl_colors,
+                             times=[t - t0 for t in ht_times], t=timepoint, loader=loader),
+                       ranges)
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +457,16 @@ def read_czi(path, scene: int | None = None) -> Image:
     names = [str(c) for c in x.coords['C'].values]
     info = x.attrs.get('channels') or {}
     colors = [_argb_to_rgb(info.get(n, {}).get('Color')) for n in names]
-    return Image(np.asarray(x.values), names, vx, meta, colors, times=times, loader=loader)
+    image = Image(np.asarray(x.values), names, vx, meta, colors, times=times, loader=loader)
+    return _set_ranges(image, [_czi_range(xml, image.data.dtype)] * len(names))
+
+
+def _czi_range(xml: str, dtype):
+    """Value range from the CZI ComponentBitCount (e.g. 12 or 14 in a uint16 image)."""
+    import re
+
+    m = re.search(r'<ComponentBitCount>\s*(\d+)', xml or '')
+    return (_bits_range(m.group(1)) if m else None) or _dtype_range(dtype)
 
 
 def _split_time(x):
@@ -476,7 +540,9 @@ def read_oir(path) -> Image:
         # image); the acquisition channel is the one with a detection range
         cands = [c for c in cands if c.start_wavelength is not None] or cands
         colors.append(luts.get(cands[-1].id) if cands else None)
-    return Image(np.asarray(x.values), channels, vx, meta, colors, times=times, loader=loader)
+    image = Image(np.asarray(x.values), channels, vx, meta, colors, times=times, loader=loader)
+    rng = _bits_range(meta['bitspersample']) or _dtype_range(image.data.dtype)
+    return _set_ranges(image, [rng] * len(channels))
 
 
 _OIR_LUT_COLORS = {
@@ -525,6 +591,166 @@ def _oir_luts(path) -> dict:
     return luts
 
 
+# ---------------------------------------------------------------------------
+# TIFF (plain, ImageJ hyperstack, OME-TIFF)
+# ---------------------------------------------------------------------------
+
+_TIFF_UNITS_UM = {'micron': 1.0, 'um': 1.0, '\u00b5m': 1.0, '\\u00B5m': 1.0,
+                  'nm': 1e-3, 'mm': 1e3, 'cm': 1e4, 'm': 1e6}
+
+
+def read_tiff(path) -> Image:
+    """Read a TIFF via tifffile: ImageJ hyperstacks and OME-TIFF keep their
+    T/Z/C axes, pixel size, channel names and colors; a plain multi-page TIFF
+    is read as a Z stack and an RGB TIFF as three channels.
+    """
+    import tifffile
+
+    with tifffile.TiffFile(path) as tif:
+        series = tif.series[0]
+        axes = series.axes.upper()
+        data = series.asarray()
+        page = series.pages[0] if series.pages else tif.pages[0]
+        ij = tif.imagej_metadata or {}
+        ome = tif.ome_metadata if tif.is_ome else None
+        tags = {t.name: t.value for t in page.tags.values()}
+        bits = tags.get('BitsPerSample')
+
+    rgb = 'S' in axes and 'C' not in axes
+    data, _ = _tiff_to_tczyx(data, axes)
+    nt, nc = data.shape[:2]
+    names = [f'CH{i + 1}' for i in range(nc)]
+    colors: list = [None] * nc
+    vx = {'Z': None, 'Y': None, 'X': None}
+    times = [float(i) for i in range(nt)]
+    sig_bits = None
+
+    if ome:
+        o = _ome_info(ome)
+        vx.update({k: v for k, v in o['voxel'].items() if v})
+        names = [n or names[i] for i, n in enumerate(o['names'][:nc])] + names[len(o['names']):]
+        colors = (o['colors'] + colors)[:nc] if o['colors'] else colors
+        sig_bits = o['bits']
+        if o['dt']:
+            times = [i * o['dt'] for i in range(nt)]
+    else:
+        x = _tiff_pixel_um(tags, ij)
+        if x:
+            vx['X'] = vx['Y'] = x
+        if ij.get('spacing') and data.shape[2] > 1:
+            vx['Z'] = float(ij['spacing']) * _TIFF_UNITS_UM.get(str(ij.get('unit', 'micron')), 1.0)
+        if ij.get('finterval'):
+            times = [i * float(ij['finterval']) for i in range(nt)]
+        luts = ij.get('LUTs') or []
+        for i, lut in enumerate(luts[:nc]):
+            lut = np.asarray(lut)
+            if lut.ndim == 2 and lut.shape[0] == 3:
+                top = lut[:, -1].astype(np.float64) / 255.0
+                if top.max() > 0:
+                    colors[i] = tuple(float(c) for c in top)
+        labels = ij.get('Labels')
+        if isinstance(labels, (list, tuple)) and len(labels) == nc and all(labels):
+            names = [str(n) for n in labels]
+        if rgb and nc == 3 and not any(colors):
+            names = ['R', 'G', 'B']
+            colors = [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)]
+
+    if isinstance(bits, tuple):
+        bits = bits[0]
+    rng = (_bits_range(sig_bits) if sig_bits and data.dtype.kind in 'ui' else None)
+    if rng is None and data.dtype.kind in 'ui':
+        rng = _bits_range(bits) if bits and int(bits) < data.dtype.itemsize * 8 else None
+        rng = rng or _dtype_range(data.dtype)
+    meta = {'format': 'TIFF', 'axes': axes, 'imagej': {k: v for k, v in ij.items()
+                                                        if k not in ('LUTs', 'Ranges')},
+            'ome': ome is not None, 'bits': bits}
+    image = Image(data[0], names, vx, meta, colors, times=times,
+                  loader=(lambda t: data[t]) if nt > 1 else None)
+    return _set_ranges(image, [rng] * nc)
+
+
+def _tiff_to_tczyx(data: np.ndarray, axes: str):
+    """Reorder a tifffile series to (T, C, Z, Y, X).
+
+    S (RGB samples) becomes C when there is no C axis; any other unknown axis
+    (I, Q, ...: an unlabelled page stack) becomes Z, or T when Z is taken.
+    """
+    axes = list(axes)
+    if 'S' in axes:
+        if 'C' in axes:
+            i = axes.index('S')
+            data = data.take(0, axis=i) if data.shape[i] == 1 else data
+            if data.ndim < len(axes):
+                axes.pop(i)
+            else:
+                raise ValueError('TIFF with both C and RGB samples is not supported')
+        else:
+            axes[axes.index('S')] = 'C'
+    for i, a in enumerate(axes):
+        if a not in 'TCZYX':
+            axes[i] = 'Z' if 'Z' not in axes else ('T' if 'T' not in axes else a)
+    extra = [i for i, a in enumerate(axes) if a not in 'TCZYX']
+    for i in reversed(extra):  # anything still unknown: keep the first plane
+        data = data.take(0, axis=i)
+        axes.pop(i)
+    for a in 'TCZ':
+        if a not in axes:
+            data = data[np.newaxis]
+            axes.insert(0, a)
+    order = [axes.index(a) for a in 'TCZYX']
+    return np.ascontiguousarray(data.transpose(order)), 'TCZYX'
+
+
+def _tiff_pixel_um(tags: dict, ij: dict) -> float | None:
+    """Pixel size in um from the XResolution tag (ImageJ stores pixels per unit)."""
+    res = tags.get('XResolution')
+    if not res:
+        return None
+    num, den = res if isinstance(res, tuple) else (res, 1)
+    if not num or not den:
+        return None
+    per_unit = num / den
+    unit = str(ij.get('unit', '')).strip()
+    # without an ImageJ unit the resolution is a print setting (dpi), not a pixel size
+    scale = (_TIFF_UNITS_UM.get(unit) or _TIFF_UNITS_UM.get(unit.lower())) if unit else None
+    if scale is None or per_unit <= 0:
+        return None
+    return float(scale / per_unit)
+
+
+def _ome_info(xml: str) -> dict:
+    """Voxel size, channel names/colors, significant bits and time step from OME-XML."""
+    import xml.etree.ElementTree as ET
+
+    out = {'voxel': {}, 'names': [], 'colors': [], 'bits': None, 'dt': None}
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError:
+        return out
+    pix = next((e for e in root.iter() if e.tag.endswith('}Pixels') or e.tag == 'Pixels'), None)
+    if pix is None:
+        return out
+    for ax in 'XYZ':
+        v = pix.get(f'PhysicalSize{ax}')
+        if v:
+            unit = pix.get(f'PhysicalSize{ax}Unit', '\u00b5m')
+            out['voxel'][ax] = float(v) * _TIFF_UNITS_UM.get(unit, 1.0)
+    out['bits'] = pix.get('SignificantBits')
+    if pix.get('TimeIncrement'):
+        out['dt'] = float(pix.get('TimeIncrement'))
+    for ch in (e for e in pix if e.tag.endswith('Channel')):
+        out['names'].append(ch.get('Name'))
+        c = ch.get('Color')
+        if c is not None:
+            v = int(c) & 0xFFFFFFFF  # signed RGBA
+            out['colors'].append(((v >> 24 & 255) / 255, (v >> 16 & 255) / 255, (v >> 8 & 255) / 255))
+        else:
+            out['colors'].append(None)
+    if not any(out['colors']):
+        out['colors'] = []
+    return out
+
+
 def read_image(path, **kwargs) -> Image:
     """Dispatch on file extension."""
     ext = Path(path).suffix.lower()
@@ -536,4 +762,6 @@ def read_image(path, **kwargs) -> Image:
         return read_czi(path, **kwargs)
     if ext == '.oir':
         return read_oir(path, **kwargs)
+    if ext in ('.tif', '.tiff'):
+        return read_tiff(path, **kwargs)
     raise ValueError(f'unsupported file extension: {ext}')

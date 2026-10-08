@@ -64,7 +64,7 @@ from .lut import (
 from .marker_panel import MarkerPanel
 from .roi_panel import RoiPanel, write_csv
 
-SUPPORTED = ('.tcf', '.czi', '.oir')
+SUPPORTED = ('.tcf', '.czi', '.oir', '.tif', '.tiff')
 SLIDER_STEPS = 1000
 
 
@@ -409,16 +409,24 @@ class ChannelPanel(QGroupBox):
         self.item: ImageItem | None = None
         self._busy = False
         self.lo, self.hi = 0.0, 1.0
+        self.steps = SLIDER_STEPS
 
         self.visible = QCheckBox('표시')
         self.color_btn = QPushButton()
         self.color_btn.setFixedWidth(40)
         self.auto_btn = QPushButton('Auto')
         self.reset_btn = QPushButton('Min/Max')
+        self.reset_btn.setToolTip('현재 이미지 데이터의 최소값~최대값으로 설정')
         self.all_btn = QPushButton('전체 이미지에 적용')
         self.all_btn.setToolTip('이 채널의 LUT를 모든 이미지의 같은 채널에 적용')
 
         self.hist = Histogram()
+        self.range_lo = QLabel()
+        self.range_hi = QLabel()
+        self.range_note = QLabel()
+        for lab in (self.range_lo, self.range_hi, self.range_note):
+            lab.setStyleSheet('color: gray; font-size: 11px;')
+        self.range_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.min_slider = QSlider(Qt.Orientation.Horizontal)
         self.max_slider = QSlider(Qt.Orientation.Horizontal)
         for s in (self.min_slider, self.max_slider):
@@ -455,6 +463,12 @@ class ChannelPanel(QGroupBox):
         lay = QVBoxLayout(self)
         lay.addLayout(top)
         lay.addWidget(self.hist)
+        scale = QHBoxLayout()
+        scale.setContentsMargins(0, 0, 0, 0)
+        scale.addWidget(self.range_lo)
+        scale.addWidget(self.range_note, 1)
+        scale.addWidget(self.range_hi)
+        lay.addLayout(scale)
         lay.addLayout(form)
         lay.addWidget(self.all_btn)
 
@@ -476,8 +490,24 @@ class ChannelPanel(QGroupBox):
     def bind(self, item: ImageItem):
         self.item = item
         plane = item.planes()[self.index]
-        lo, hi = float(np.nanmin(plane)), float(np.nanmax(plane))
-        self.lo, self.hi = lo, hi if hi > lo else lo + 1
+        self.lo, self.hi, note = item.value_range(self.index)
+        # integer data: one slider step per count when that is a sane number
+        integer = bool(note) and note != 'RI' and float(self.lo).is_integer() \
+            and float(self.hi).is_integer()
+        span = self.hi - self.lo
+        self.steps = int(span) if integer and 0 < span <= 1_000_000 else SLIDER_STEPS
+        self._busy = True
+        for s in (self.min_slider, self.max_slider):
+            s.setRange(0, self.steps)
+        for s in (self.min_spin, self.max_spin):
+            s.setDecimals(0 if integer else 4)
+            s.setRange(self.lo, self.hi)
+            s.setSingleStep(1 if integer else span / 100)
+        self._busy = False
+        fmt = (lambda v: f'{v:.0f}') if integer else (lambda v: f'{v:.4f}')
+        self.range_lo.setText(fmt(self.lo))
+        self.range_hi.setText(fmt(self.hi))
+        self.range_note.setText(f'파일 범위 ({note})' if note else '데이터 범위')
         self.setTitle(item.channels[self.index])
         self.hist.set_data(plane, self.lo, self.hi)
         self.refresh()
@@ -497,10 +527,10 @@ class ChannelPanel(QGroupBox):
         self._busy = False
 
     def _to_slider(self, v):
-        return int(round((v - self.lo) / (self.hi - self.lo) * SLIDER_STEPS))
+        return int(round((v - self.lo) / (self.hi - self.lo) * self.steps))
 
     def _from_slider(self, s):
-        return self.lo + s / SLIDER_STEPS * (self.hi - self.lo)
+        return self.lo + s / self.steps * (self.hi - self.lo)
 
     def _slider(self, spin, value):
         if self._busy:
@@ -535,7 +565,9 @@ class ChannelPanel(QGroupBox):
         self.changed.emit()
 
     def _full(self):
-        self.lut.vmin, self.lut.vmax = self.lo, self.hi
+        plane = self.item.planes()[self.index]
+        lo, hi = float(np.nanmin(plane)), float(np.nanmax(plane))
+        self.lut.vmin, self.lut.vmax = lo, (hi if hi > lo else self.hi)
         self.refresh()
         self.changed.emit()
 
@@ -564,7 +596,7 @@ class MainWindow(QMainWindow):
         rm_btn.clicked.connect(self.remove_current)
         left = QWidget()
         ll = QVBoxLayout(left)
-        ll.addWidget(QLabel('이미지 (TCF / CZI / OIR, 끌어다 놓기 가능)'))
+        ll.addWidget(QLabel('이미지 (TCF / CZI / OIR / TIF, 끌어다 놓기 가능)'))
         ll.addWidget(self.file_list)
         self.align_tcf = QCheckBox('TCF: HT와 FL을 정렬해 한 이미지로')
         self.align_tcf.setChecked(True)
@@ -762,7 +794,7 @@ class MainWindow(QMainWindow):
     def add_files_dialog(self):
         files, _ = QFileDialog.getOpenFileNames(
             self, '이미지 파일 선택', '',
-            'Microscopy (*.tcf *.TCF *.czi *.oir);;All files (*)',
+            'Microscopy (*.tcf *.TCF *.czi *.oir *.tif *.tiff *.TIF *.TIFF);;All files (*)',
         )
         self.add_files([Path(f) for f in files])
 

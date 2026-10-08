@@ -125,6 +125,24 @@ class ImageItem:
             rgb = time.draw(rgb, self.image.times, self.t if t is None else t)
         return rgb
 
+    def value_range(self, index: int) -> tuple[float, float, str]:
+        """(min, max, note) the LUT sliders span for a channel.
+
+        The range the file can hold (from its metadata, e.g. 0..4095 for
+        12-bit data) widened to include the current plane's values; without
+        metadata, 0 (or a negative minimum) to the plane's max.
+        """
+        plane = self.planes()[index]
+        dlo, dhi = float(np.nanmin(plane)), float(np.nanmax(plane))
+        ranges = self.image.ranges
+        rng = ranges[index] if index < len(ranges) else None
+        if rng is None:
+            lo = min(0.0, dlo)
+            return lo, (dhi if dhi > lo else lo + 1.0), ''
+        note = self.image.range_notes[index] if index < len(self.image.range_notes) else ''
+        lo, hi = min(rng[0], dlo), max(rng[1], dhi)
+        return lo, (hi if hi > lo else lo + 1.0), note
+
     def reset_luts(self):
         colors = channel_colors(self.image)
         planes = self.planes()
