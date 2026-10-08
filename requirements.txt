@@ -1,0 +1,13 @@
+numpy
+h5py        # Tomocube .TCF (HDF5)
+czifile     # Zeiss .czi
+oirfile     # Olympus/Evident .oir
+xarray      # used by czifile/oirfile for axis-labelled output
+imagecodecs # compressed CZI subblocks
+tifffile    # TIFF export
+matplotlib  # preview PNGs, DejaVu font for scale bar labels
+pillow      # scale bar drawing
+PySide6     # desktop app
+scipy
+scikit-image  # cell ROI segmentation
+roifile     # ImageJ .roi / RoiSet.zip
