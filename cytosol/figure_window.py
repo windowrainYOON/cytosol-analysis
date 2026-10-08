@@ -295,6 +295,13 @@ class FigureWindow(QMainWindow):
         self.inset_list = QListWidget()
         self.inset_list.setMaximumHeight(70)
         self.inset_list.currentRowChanged.connect(self._inset_selected)
+        self.placement = QComboBox()
+        self.placement.addItem('이미지 안 (모서리에 겹쳐서)', 'inside')
+        self.placement.addItem('다른 칸에 따로', 'cell')
+        self.placement.currentIndexChanged.connect(self._placement_changed)
+        self.target = QComboBox()
+        self.target.setToolTip('확대본을 넣을 칸. 이미 이미지가 있는 칸을 고르면 덮어씁니다.')
+        self.target.activated.connect(self._target_chosen)
         self.corner = QComboBox()
         for c, ko in zip(CORNERS, ['왼쪽 위', '오른쪽 위', '왼쪽 아래', '오른쪽 아래']):
             self.corner.addItem(ko, c)
@@ -313,7 +320,9 @@ class FigureWindow(QMainWindow):
         col_btn.clicked.connect(lambda: self._insets_to('col'))
 
         form = QFormLayout()
-        form.addRow('위치', self.corner)
+        form.addRow('표시 방식', self.placement)
+        form.addRow('넣을 칸', self.target)
+        form.addRow('모서리', self.corner)
         form.addRow('크기', self.inset_size)
         lay = QVBoxLayout(box)
         lay.addWidget(self.cell_canvas, 1)
@@ -567,7 +576,10 @@ class FigureWindow(QMainWindow):
         self.src_combo.addItem('(비어 있음)', None)
         for i, it in enumerate(self.items()):
             self.src_combo.addItem(it.label, i)
-        if cell.rgb is not None:
+        if cell.is_zoom:
+            self.src_combo.addItem('확대 칸 (원본 칸의 확대 영역)', 'zoom')
+            self.src_combo.setCurrentIndex(self.src_combo.count() - 1)
+        elif cell.rgb is not None:
             self.src_combo.addItem(f'파일: {cell.name}', 'file')
             self.src_combo.setCurrentIndex(self.src_combo.count() - 1)
         elif cell.item is not None and cell.item in self.items():
@@ -606,9 +618,16 @@ class FigureWindow(QMainWindow):
     def _cell_changed(self, insets_valid=True):
         cell = self.current_cell()
         if not insets_valid:
+            for ins in cell.insets:
+                self.spec.unlink_inset(ins)
             cell.insets = []
         r, c = self.current_rc()
         self._refresh_cell(r, c)
+        # zoom cells that show part of this one
+        for rr, row in enumerate(self.spec.cells):
+            for cc, other in enumerate(row):
+                if other.zoom_src is cell:
+                    self._refresh_cell(rr, cc)
         self._show_cell_canvas(refit=not insets_valid)
         self.schedule()
 
@@ -617,7 +636,7 @@ class FigureWindow(QMainWindow):
             return
         data = self.src_combo.currentData()
         cell = self.current_cell()
-        if data == 'file':
+        if data in ('file', 'zoom'):
             return
         if data is None:
             cell.copy_from(FigureCell())
@@ -736,7 +755,12 @@ class FigureWindow(QMainWindow):
         self.inset_list.clear()
         for k, i in enumerate(cell.insets, 1):
             x0, y0, x1, y1 = i.rect
-            self.inset_list.addItem(f'{k}: x {x0}–{x1}, y {y0}–{y1}')
+            where = '이미지 안'
+            if i.placement == 'cell':
+                pos = [self.spec.find(z) for z in self.spec.zoom_cells(i)]
+                where = (f'행 {pos[0][0] + 1}, 열 {pos[0][1] + 1} 칸' if pos and pos[0]
+                         else '연결된 칸 없음')
+            self.inset_list.addItem(f'{k}: x {x0}–{x1}, y {y0}–{y1}  → {where}')
         if cell.insets:
             self.inset_list.setCurrentRow(max(0, min(row, len(cell.insets) - 1)))
         self.inset_list.blockSignals(False)
@@ -744,12 +768,14 @@ class FigureWindow(QMainWindow):
 
     def _inset_selected(self, row, redraw=True):
         cell = self.current_cell()
-        if 0 <= row < len(cell.insets):
-            ins = cell.insets[row]
-            self._busy = True
+        ins = cell.insets[row] if 0 <= row < len(cell.insets) else None
+        self._busy = True
+        if ins is not None:
+            self.placement.setCurrentIndex(max(0, self.placement.findData(ins.placement)))
             self.corner.setCurrentIndex(max(0, self.corner.findData(ins.corner)))
             self.inset_size.setValue(round(ins.size * 100))
-            self._busy = False
+        self._fill_targets(ins)
+        self._busy = False
         if redraw:
             self.cell_canvas.show_crops([i.rect for i in cell.insets], row if row >= 0 else None)
 
@@ -763,10 +789,122 @@ class FigureWindow(QMainWindow):
         y0, y1 = sorted((int(np.clip(round(y0), 0, H)), int(np.clip(round(y1), 0, H))))
         if x1 - x0 < 3 or y1 - y0 < 3:
             return
-        cell.insets.append(Inset((x0, y0, x1, y1), self.corner.currentData(),
-                                 self.inset_size.value() / 100))
+        inset = Inset((x0, y0, x1, y1), self.corner.currentData(),
+                      self.inset_size.value() / 100, self.placement.currentData())
+        cell.insets.append(inset)
+        if inset.placement == 'cell':
+            self._link_default(cell, inset)
+            self.rebuild_table()
         self._refresh_inset_list(select=len(cell.insets) - 1)
         self._cell_changed()
+
+    # ---- inset in its own cell ------------------------------------------
+
+    def _current_inset(self):
+        cell = self.current_cell()
+        row = self.inset_list.currentRow()
+        return cell.insets[row] if 0 <= row < len(cell.insets) else None
+
+    def _fill_targets(self, ins):
+        """List the cells an inset can be shown in, plus 'insert a column/row'."""
+        self.target.clear()
+        cell_mode = ins is not None and ins.placement == 'cell'
+        self.target.setEnabled(cell_mode)
+        self.corner.setEnabled(not cell_mode)
+        self.inset_size.setEnabled(not cell_mode)
+        if not cell_mode:
+            return
+        r0, c0 = self.current_rc()
+        self.target.addItem('오른쪽에 새 열 삽입', 'insert-col')
+        self.target.addItem('아래에 새 행 삽입', 'insert-row')
+        current = [self.spec.find(z) for z in self.spec.zoom_cells(ins)]
+        for r in range(self.spec.nrows):
+            for c in range(self.spec.ncols):
+                if (r, c) == (r0, c0):
+                    continue
+                cell = self.spec.cells[r][c]
+                rl = self.spec.rows[r].text.replace('\n', ' ')
+                cl = self.spec.cols[c].text.replace('\n', ' ')
+                state = '' if cell.empty else (' · 확대 칸' if cell.is_zoom else ' · 이미지 있음')
+                self.target.addItem(f'행 {r + 1}, 열 {c + 1}  ({rl} / {cl}){state}', f'{r},{c}')
+                if (r, c) in current:
+                    self.target.setCurrentIndex(self.target.count() - 1)
+        if not current:
+            self.target.setCurrentIndex(-1)
+
+    def _drop_empty_lines(self, cells):
+        """Remove a row/column that held only the given (old zoom) cells and is now blank."""
+        for cell in cells:
+            pos = self.spec.find(cell)
+            if pos is None or not cell.empty:
+                continue
+            r, c = pos
+            if all(row[c].empty for row in self.spec.cells) and not self.spec.cols[c].text:
+                self.spec.remove_col(c)
+            elif all(x.empty for x in self.spec.cells[r]) and not self.spec.rows[r].text:
+                self.spec.remove_row(r)
+
+    def _link_to(self, src, inset, choice, ask=True) -> bool:
+        pos = self.spec.find(src)
+        if pos is None:
+            return False
+        old = self.spec.zoom_cells(inset)
+        ok = self._link(src, inset, choice, pos, ask)
+        if ok:
+            self._drop_empty_lines([o for o in old if o.zoom_inset is not inset])
+        return ok
+
+    def _link(self, src, inset, choice, pos, ask) -> bool:
+        r0, c0 = pos
+        if choice == 'insert-col':
+            self.spec.add_col(c0 + 1, text='')
+            inset.offset = (0, 1)
+        elif choice == 'insert-row':
+            self.spec.add_row(r0 + 1, text='')
+            inset.offset = (1, 0)
+        else:
+            r, c = (int(v) for v in choice.split(','))
+            target = self.spec.cells[r][c]
+            if ask and not target.empty and target.zoom_inset is not inset:
+                ans = QMessageBox.question(
+                    self, '확대 영역', f'행 {r + 1}, 열 {c + 1} 칸의 내용을 확대본으로 바꿀까요?')
+                if ans != QMessageBox.StandardButton.Yes:
+                    return False
+            inset.offset = (r - r0, c - c0)
+        return self.spec.link_inset(src, inset)
+
+    def _link_default(self, src, inset):
+        """Right-hand cell when it is free, else a new column inserted there."""
+        r0, c0 = self.spec.find(src)
+        if c0 + 1 < self.spec.ncols and self.spec.cells[r0][c0 + 1].empty:
+            self._link_to(src, inset, f'{r0},{c0 + 1}', ask=False)
+        else:
+            self._link_to(src, inset, 'insert-col')
+
+    def _placement_changed(self, *_):
+        if self._busy:
+            return
+        ins = self._current_inset()
+        if ins is None:
+            return
+        ins.placement = self.placement.currentData()
+        if ins.placement == 'cell':
+            if not self.spec.zoom_cells(ins):
+                self._link_default(self.current_cell(), ins)
+        else:
+            old = self.spec.zoom_cells(ins)
+            self.spec.unlink_inset(ins)
+            self._drop_empty_lines(old)
+        self.rebuild_table()
+
+    def _target_chosen(self, index):
+        ins = self._current_inset()
+        if ins is None or index < 0:
+            return
+        if self._link_to(self.current_cell(), ins, self.target.itemData(index)):
+            self.rebuild_table()
+        else:
+            self._inset_selected(self.inset_list.currentRow(), redraw=False)
 
     def _inset_changed(self, *_):
         if self._busy:
@@ -782,8 +920,11 @@ class FigureWindow(QMainWindow):
         cell = self.current_cell()
         row = self.inset_list.currentRow()
         if 0 <= row < len(cell.insets):
-            cell.insets.pop(row)
-            self._cell_changed()
+            ins = cell.insets.pop(row)
+            old = self.spec.zoom_cells(ins)
+            self.spec.unlink_inset(ins)
+            self._drop_empty_lines(old)
+            self.rebuild_table()
 
     def _insets_to(self, kind):
         src = self.current_cell()
@@ -793,17 +934,27 @@ class FigureWindow(QMainWindow):
         else:
             targets = [row[c0] for row in self.spec.cells]
         H, W = src.shape() if not src.empty else (0, 0)
-        n = 0
-        for cell in targets:
-            if cell is src or cell.empty:
+        n, blocked = 0, 0
+        for cell in list(targets):
+            if cell is src or cell.empty or cell.is_zoom:
                 continue
             h, w = cell.shape()
             if (h, w) != (H, W):
                 continue  # different size: the same pixel box would not match
-            cell.insets = [Inset(i.rect, i.corner, i.size) for i in src.insets]
+            for old in cell.insets:
+                self.spec.unlink_inset(old)
+            cell.insets = [i.copy() for i in src.insets]
+            for ins in cell.insets:
+                # same offset as the source's zoom cell, e.g. the row below
+                if ins.placement == 'cell' and not self.spec.link_inset(cell, ins, overwrite=False):
+                    ins.placement = 'inside'
+                    blocked += 1
             n += 1
         self.rebuild_table()
-        self.statusBar().showMessage(f'확대 영역을 칸 {n}개에 적용했습니다 (크기가 같은 이미지만).')
+        msg = f'확대 영역을 칸 {n}개에 적용했습니다 (크기가 같은 이미지만).'
+        if blocked:
+            msg += f' 넣을 칸이 이미 차 있어서 {blocked}개는 이미지 안에 넣었습니다.'
+        self.statusBar().showMessage(msg)
 
     # ------------------------------------------------------------------
     # layout + preview

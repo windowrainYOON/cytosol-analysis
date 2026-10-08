@@ -37,6 +37,13 @@ class Inset:
     rect: tuple[int, int, int, int]
     corner: str = 'upper left'
     size: float = 0.45  # inset width as a fraction of the cell width
+    # 'inside': pasted into a corner of the image; 'cell': shown in another table
+    # cell (that cell's zoom_src / zoom_inset point back here)
+    placement: str = 'inside'
+    offset: tuple = (0, 1)  # (rows, cols) from the source cell to the zoom cell
+
+    def copy(self) -> 'Inset':
+        return Inset(self.rect, self.corner, self.size, self.placement, self.offset)
 
 
 @dataclass(eq=False)
@@ -50,21 +57,39 @@ class FigureCell:
     rgb_pixel_um: float | None = None
     name: str = ''
     insets: list = field(default_factory=list)
+    # a zoom cell: shows zoom_inset.rect of the cell zoom_src
+    zoom_src: 'FigureCell | None' = None
+    zoom_inset: Inset | None = None
+
+    @property
+    def is_zoom(self) -> bool:
+        return self.zoom_src is not None
 
     @property
     def empty(self) -> bool:
+        if self.is_zoom:
+            return self.zoom_src.empty or not any(i is self.zoom_inset
+                                                  for i in self.zoom_src.insets)
         return self.item is None and self.rgb is None
 
     def image(self) -> np.ndarray:
+        if self.is_zoom:
+            x0, y0, x1, y1 = self.zoom_inset.rect
+            return self.zoom_src.image()[y0:y1, x0:x1]
         if self.item is not None:
             return self.item.composite(self.region, self.channels)
         return self.rgb
 
     @property
     def pixel_um(self):
+        if self.is_zoom:
+            return self.zoom_src.pixel_um
         return self.item.pixel_um if self.item is not None else self.rgb_pixel_um
 
     def shape(self):
+        if self.is_zoom:
+            x0, y0, x1, y1 = self.zoom_inset.rect
+            return y1 - y0, x1 - x0
         if self.item is not None:
             if self.region is not None:
                 x0, y0, x1, y1 = self.region
@@ -75,6 +100,8 @@ class FigureCell:
     def describe(self) -> str:
         if self.empty:
             return ''
+        if self.is_zoom:
+            return '확대: ' + self.zoom_src.describe().replace('\n', ' · ')
         if self.item is None:
             return self.name or '이미지'
         if self.channels is None:
@@ -92,9 +119,11 @@ class FigureCell:
     def copy_from(self, other: 'FigureCell', insets=True):
         self.item, self.region, self.rgb = other.item, other.region, other.rgb
         self.rgb_pixel_um, self.name = other.rgb_pixel_um, other.name
+        self.zoom_src, self.zoom_inset = other.zoom_src, other.zoom_inset
         self.channels = None if other.channels is None else list(other.channels)
         if insets:
-            self.insets = [Inset(i.rect, i.corner, i.size) for i in other.insets]
+            # zoom-cell links are not copied: those belong to the original cell
+            self.insets = [i.copy() for i in other.insets if i.placement == 'inside']
 
 
 @dataclass
@@ -165,6 +194,48 @@ class FigureSpec:
             for row in self.cells:
                 row[index], row[j] = row[j], row[index]
 
+    def find(self, cell):
+        for r, row in enumerate(self.cells):
+            for c, other in enumerate(row):
+                if other is cell:
+                    return r, c
+        return None
+
+    def zoom_cells(self, inset):
+        return [c for row in self.cells for c in row if c.zoom_inset is inset]
+
+    def unlink_inset(self, inset):
+        """Empty the zoom cell(s) showing inset."""
+        for cell in self.zoom_cells(inset):
+            cell.copy_from(FigureCell())
+
+    def link_inset(self, src: FigureCell, inset: Inset, overwrite=True) -> bool:
+        """Show inset in the cell at src + inset.offset, adding rows/columns if needed.
+
+        Returns False (and links nothing) when that cell is the source itself, or
+        holds an image and overwrite is False.
+        """
+        pos = self.find(src)
+        if pos is None:
+            return False
+        dr, dc = inset.offset
+        r, c = pos[0] + dr, pos[1] + dc
+        if r < 0 or c < 0 or (dr, dc) == (0, 0):
+            return False
+        while self.nrows <= r:
+            self.add_row()
+        while self.ncols <= c:
+            self.add_col()
+        target = self.cells[r][c]
+        if target is src:
+            return False
+        if not overwrite and not target.empty and target.zoom_inset is not inset:
+            return False
+        self.unlink_inset(inset)
+        target.copy_from(FigureCell(zoom_src=src, zoom_inset=inset))
+        target.insets = []
+        return True
+
     def forget_item(self, item):
         """Empty every cell that shows item (it was removed from the app)."""
         for row in self.cells:
@@ -195,7 +266,8 @@ class FigureSpec:
 
     def auto_scale_um(self) -> float | None:
         """One bar length for all cells: fits 25% of the narrowest field of view."""
-        fovs = [c.shape()[1] * c.pixel_um for c in self.filled() if c.pixel_um]
+        fovs = [c.shape()[1] * c.pixel_um for c in self.filled()
+                if c.pixel_um and not c.is_zoom]
         if not fovs:
             return None
         target = min(fovs) * 0.25
@@ -255,7 +327,12 @@ def render_cell(cell: FigureCell, spec: FigureSpec, w_px: int, h_px: int,
     px = cell.pixel_um
     line = max(1, round(dw * 0.006))
 
-    if spec.scale_bar and px and scale_um:
+    if cell.is_zoom:
+        # a zoomed area in its own cell carries the inset scale bar
+        if spec.inset_scale_bar and px and inset_scale_um and inset_scale_um * s / px < dw * 0.9:
+            disp, _ = add_scale_bar(disp, px / s, inset_scale_um, spec.scale_position,
+                                    label=spec.scale_label)
+    elif spec.scale_bar and px and scale_um:
         disp, _ = add_scale_bar(disp, px / s, scale_um, spec.scale_position,
                                 label=spec.scale_label)
 
@@ -264,6 +341,11 @@ def render_cell(cell: FigureCell, spec: FigureSpec, w_px: int, h_px: int,
         x0, x1 = max(0, x0), min(W, x1)
         y0, y1 = max(0, y0), min(H, y1)
         if x1 - x0 < 2 or y1 - y0 < 2:
+            continue
+        if inset.placement == 'cell':
+            # only the box here; the zoomed copy is drawn in its own cell
+            _box(disp, round(x0 * s), round(y0 * s), round(x1 * s), round(y1 * s),
+                 spec.inset_color, line)
             continue
         iw = max(4, round(dw * inset.size))
         ih = max(4, round(iw * (y1 - y0) / (x1 - x0)))

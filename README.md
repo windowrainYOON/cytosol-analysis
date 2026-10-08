@@ -123,9 +123,13 @@ that lays images out as a table with row and column labels:
   the composite of visible channels or any set of channels. `파일…` puts a PNG/TIFF
   file (e.g. an earlier export) in a cell instead. `이 행을 채널별 + Merged로 채우기`
   fills a row with one column per channel plus the merged image.
-- **Zoom insets**: drag `확대 영역 그리기` on the cell preview; the area gets a box
-  and a magnified copy in the chosen corner at the chosen size. `이 행 전체에 적용`
-  copies the same inset to every same-sized cell of the row (or column).
+- **Zoom insets**: drag `확대 영역 그리기` on the cell preview; the area gets a box.
+  `표시 방식` chooses where the magnified copy goes: `이미지 안` puts it in the
+  chosen corner of the same image at the chosen size; `다른 칸에 따로` shows it in
+  its own table cell (`넣을 칸`: any cell, or a new column/row inserted next to the
+  image; by default the free cell to the right, else a new column). `이 행 전체에 적용`
+  copies the same insets to every same-sized cell of the row (or column); separate
+  zoom cells keep the same offset, e.g. a zoom row under the image row.
 - **Layout**: black or white background (labels switch to white/black), cell
   borders, cell width and aspect, gap, font and size, scale bars (one length for
   every cell, automatic or fixed, optional inset scale bars and a
