@@ -348,9 +348,10 @@ def read_tcf_aligned(path, timepoint: int = 0, refine: bool = True) -> Image:
             meta['fl_shift_um'] = (state['shift'][0] * fl_grid['ry'],
                                    state['shift'][1] * fl_grid['rx'])
         flr = _resample_fl(fl, ht_grid, fl_grid, fl_z0, state['shift'])
-        if flr.shape[1] != ht.shape[1]:  # 2D HT: FL already projected
-            flr = np.repeat(flr, ht.shape[1], axis=1)
-        return np.concatenate([ht, flr])
+        out = np.empty((1 + flr.shape[0],) + ht.shape[1:], np.float32)
+        out[:1] = ht
+        out[1:] = flr  # broadcasts a projected FL over every slice of a 2D HT
+        return out
 
     timepoint = int(np.clip(timepoint, 0, len(ht_frames) - 1))
     data = loader(timepoint)

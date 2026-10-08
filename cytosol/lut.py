@@ -307,91 +307,101 @@ def export_item(
     if crops:
         regions += [(f'crop{k}', r) for k, r in enumerate(item.crops, 1)]
     times = list(range(item.nt)) if all_times and item.nt > 1 else [item.t]
-    written = []
-    for tag, region in regions:
-        written += _export_region(
-            item, region, out_dir / f'{stem}_{tag}', composite, per_channel, raw_stack,
-            scale, time, times,
-        )
-    return written
+    return _export_regions(item, [(r, out_dir / f'{stem}_{tag}') for tag, r in regions],
+                           composite, per_channel, raw_stack, scale, time, times)
 
 
-def _export_region(item, region, base: Path, composite, per_channel, raw_stack,
-                   scale, time, times) -> list[str]:
+def _export_regions(item, regions, composite, per_channel, raw_stack,
+                    scale, time, times) -> list[str]:
+    """Write every output of every region in one pass over the timepoints.
+
+    Loading a timepoint (and, for TCF, aligning HT and FL) is the slow part,
+    so each one is loaded once and fed to all outputs: RGB frames are
+    collected in memory (8-bit, small) and the raw stacks are written straight
+    into memory-mapped ImageJ TIFFs.
+    """
     import tifffile
 
     px = item.pixel_um
     res = (1.0 / px, 1.0 / px) if px else None
     meta_common = {'unit': 'um'} if px else {}
-    written = []
-    start_t = item.t
     series = len(times) > 1
     interval = None
     if series:
         dt = np.diff([item.image.times[t] for t in times])
         interval = float(np.median(dt)) if len(dt) and np.median(dt) > 0 else None
 
-    def frames(fn):
-        """Yield fn() at every exported timepoint, restoring the current one after."""
-        try:
-            for t in times:
-                item.set_t(t)
-                yield fn(t)
-        finally:
-            item.set_t(start_t)
+    # (path, region, channels or None) -> list of uint8 frames
+    rgb_jobs = []
+    raw_jobs = []  # (path, region, memmap)
+    for region, base in regions:
+        if composite:
+            rgb_jobs.append((Path(f'{base}_composite.tif'), region, None, []))
+        if per_channel:
+            for i, name in enumerate(item.channels):
+                rgb_jobs.append((Path(f'{base}_C{i}_{_safe(name)}.tif'), region, [i], []))
+    written = []
+    start_t = item.t
+    try:
+        for k, t in enumerate(times):
+            item.set_t(t)
+            for path, region, chans, frames in rgb_jobs:
+                rgb = item.decorate(item.composite(region, channels=chans), scale, time, t)
+                frames.append((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
+            if raw_stack:
+                if k == 0:
+                    raw_jobs = [(Path(f'{base}_raw.tif'), region,
+                                 _open_raw(item, region, Path(f'{base}_raw.tif'), len(times) if series else 0,
+                                           res, meta_common, interval))
+                                for region, base in regions]
+                for _, region, mm in raw_jobs:
+                    stack = item.region_stack(region)  # C, Z, Y, X
+                    (mm[k] if series else mm)[:] = np.moveaxis(stack, 0, 1)
+    finally:
+        item.set_t(start_t)
+        for path, _, mm in raw_jobs:
+            mm.flush()
+            del mm
+    raw_jobs = [(path, region) for path, region, _ in raw_jobs]
 
-    def write_rgb(make, name):
-        path = Path(f'{base}_{name}.tif')
+    for path, region, chans, frames in rgb_jobs:
         rgb_meta = dict(meta_common)
         if series:
             rgb_meta['axes'] = 'TYXS'
             if interval:
                 rgb_meta['finterval'] = interval
-        pages = list(frames(
-            lambda t: (np.clip(item.decorate(make(), scale, time, t), 0, 1) * 255).astype(np.uint8)
-        ))
-        data = np.stack(pages) if series else pages[0]
         tifffile.imwrite(
-            path, data, photometric='rgb', resolution=res,
-            metadata=rgb_meta or None, imagej=bool(px) or series,
+            path, np.stack(frames) if series else frames[0], photometric='rgb',
+            resolution=res, metadata=rgb_meta or None, imagej=bool(px) or series,
         )
         written.append(str(path))
-
-    if composite:
-        write_rgb(lambda: item.composite(region), 'composite')
-    if per_channel:
-        for i, name in enumerate(item.channels):
-            write_rgb(lambda i=i: item.composite(region, channels=[i]), f'C{i}_{_safe(name)}')
-    if raw_stack:
-        first = item.region_stack(region)  # C, Z, Y, X of the current timepoint
-        dtype = np.float32 if first.dtype == np.float64 else first.dtype
-        c, z, h, w = first.shape
-        meta = {
-            'axes': 'TZCYX' if series else 'ZCYX',
-            'mode': 'composite',
-            'LUTs': _imagej_luts(item),
-            'Ranges': tuple(v for lut in item.luts for v in (lut.vmin, lut.vmax)),
-            'Labels': list(item.channels),
-            **meta_common,
-        }
-        vz = item.image.voxel_size_um.get('Z')
-        if vz:
-            meta['spacing'] = vz
-        if interval:
-            meta['finterval'] = interval
-        path = Path(f'{base}_raw.tif')
-
-        def planes():
-            for stack in frames(lambda t: item.region_stack(region)):
-                for zi in range(z):
-                    for ci in range(c):
-                        yield np.ascontiguousarray(stack[ci, zi], dtype=dtype)
-
-        shape = ((len(times),) if series else ()) + (z, c, h, w)
-        tifffile.imwrite(path, planes(), shape=shape, dtype=dtype, imagej=True,
-                         resolution=res, metadata=meta)
-        written.append(str(path))
+    written += [str(path) for path, _ in raw_jobs]
     return written
+
+
+def _open_raw(item, region, path: Path, nt: int, res, meta_common, interval):
+    """Create an uncompressed ImageJ hyperstack on disk and return it memory-mapped."""
+    import tifffile
+
+    first = item.region_stack(region)
+    dtype = np.float32 if first.dtype == np.float64 else first.dtype
+    c, z, h, w = first.shape
+    meta = {
+        'axes': 'TZCYX' if nt else 'ZCYX',
+        'mode': 'composite',
+        'LUTs': _imagej_luts(item),
+        'Ranges': tuple(v for lut in item.luts for v in (lut.vmin, lut.vmax)),
+        'Labels': list(item.channels),
+        **meta_common,
+    }
+    vz = item.image.voxel_size_um.get('Z')
+    if vz:
+        meta['spacing'] = vz
+    if interval:
+        meta['finterval'] = interval
+    shape = ((nt,) if nt else ()) + (z, c, h, w)
+    return tifffile.memmap(path, shape=shape, dtype=dtype, imagej=True,
+                           resolution=res, metadata=meta)
 
 
 def export_all(items, out_dir, **kwargs) -> list[str]:
