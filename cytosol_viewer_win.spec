@@ -7,7 +7,10 @@ hiddenimports = (
     + collect_submodules('czifile')
     + collect_submodules('oirfile')
     + collect_submodules('skimage')
-    + ['h5py', 'tifffile', 'xarray', 'roifile']
+    + ['h5py', 'tifffile', 'xarray', 'roifile',
+       # figure export picks the backend by file type at save time
+       'matplotlib.backends.backend_pdf', 'matplotlib.backends.backend_svg',
+       'matplotlib.backends.backend_ps']
 )
 datas = collect_data_files('skimage') + [('cytosol/assets', 'cytosol/assets')]
 
