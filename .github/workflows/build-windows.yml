@@ -1,0 +1,30 @@
+name: Build Windows app
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Build and self-test
+        shell: pwsh
+        env:
+          PYTHON: python
+        run: ./build_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CytosolViewer-Windows
+          path: dist/Cytosol Viewer/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest-output
+          path: dist/selftest/

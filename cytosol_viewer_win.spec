@@ -1,4 +1,5 @@
-# PyInstaller spec for Cytosol Viewer.  Build with ./build_mac.sh
+# PyInstaller spec for Cytosol Viewer on Windows.  Build with build_windows.ps1
+# (the macOS build uses cytosol_viewer.spec).  Output: dist/Cytosol Viewer/Cytosol Viewer.exe
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hiddenimports = (
@@ -29,25 +30,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name='Cytosol Viewer',
+    icon='cytosol/assets/icon.ico',
     console=False,
-    argv_emulation=False,
 )
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Cytosol Viewer')
-app = BUNDLE(
-    coll,
-    name='Cytosol Viewer.app',
-    icon='cytosol/assets/icon.icns',
-    bundle_identifier='com.windowrainyoon.cytosolviewer',
-    info_plist={
-        'NSHighResolutionCapable': True,
-        'CFBundleShortVersionString': '0.2.0',
-        'CFBundleDocumentTypes': [
-            {
-                'CFBundleTypeName': 'Microscopy image',
-                'CFBundleTypeRole': 'Viewer',
-                'LSItemContentTypes': ['public.data'],
-                'CFBundleTypeExtensions': ['tcf', 'TCF', 'czi', 'oir'],
-            }
-        ],
-    },
-)
