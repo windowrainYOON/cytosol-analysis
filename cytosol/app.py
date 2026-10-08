@@ -14,6 +14,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
+    QIcon,
     QImage,
     QKeySequence,
     QPainter,
@@ -588,6 +589,10 @@ class MainWindow(QMainWindow):
         cbl.addLayout(row)
         cbl.addWidget(crop_all)
         ll.addWidget(crop_box)
+        fig_btn = QPushButton('Figure 만들기…')
+        fig_btn.setToolTip('LUT/crop을 적용한 이미지로 행·열 표 형태의 figure 만들기')
+        fig_btn.clicked.connect(self.open_figure)
+        ll.addWidget(fig_btn)
 
         # center: canvas + view controls
         self.canvas = Canvas()
@@ -714,6 +719,11 @@ class MainWindow(QMainWindow):
         menu = self.menuBar().addMenu('파일')
         menu.addAction(open_act)
         menu.addAction(export_act)
+        fig_act = QAction('Figure 만들기…', self)
+        fig_act.setShortcut(QKeySequence('Ctrl+Shift+F'))
+        fig_act.triggered.connect(self.open_figure)
+        self.menuBar().addMenu('Figure').addAction(fig_act)
+        self.figure_win = None
         self.statusBar().showMessage('파일을 추가하세요.')
 
     # ---- files ----------------------------------------------------------
@@ -758,8 +768,11 @@ class MainWindow(QMainWindow):
         row = self.file_list.currentRow()
         if row < 0:
             return
-        self.items.pop(row)
+        removed = self.items.pop(row)
         self.file_list.takeItem(row)
+        if self.figure_win is not None:
+            self.figure_win.spec.forget_item(removed)
+            self.figure_win.refresh_sources()
         if not self.items:
             self.current = None
             self._build_panels()
@@ -944,6 +957,19 @@ class MainWindow(QMainWindow):
                 p.refresh()
             self.update_preview()
 
+    # ---- figure ---------------------------------------------------------
+
+    def open_figure(self):
+        from .figure_window import FigureWindow
+
+        if self.figure_win is None:
+            self.figure_win = FigureWindow(self)
+        else:
+            self.figure_win.refresh_sources()
+        self.figure_win.show()
+        self.figure_win.raise_()
+        self.figure_win.activateWindow()
+
     # ---- export ---------------------------------------------------------
 
     def export_current(self):
@@ -994,6 +1020,9 @@ def main(argv=None):
     argv = sys.argv if argv is None else argv
     app = QApplication(argv)
     app.setApplicationName('Cytosol Viewer')
+    icon = Path(__file__).parent / 'assets' / 'icon.png'
+    if icon.exists():
+        app.setWindowIcon(QIcon(str(icon)))
     win = MainWindow()
     win.show()
     files = [Path(a) for a in argv[1:] if Path(a).suffix.lower() in SUPPORTED]

@@ -8,7 +8,7 @@ hiddenimports = (
     + collect_submodules('skimage')
     + ['h5py', 'tifffile', 'xarray', 'roifile']
 )
-datas = collect_data_files('skimage')
+datas = collect_data_files('skimage') + [('cytosol/assets', 'cytosol/assets')]
 
 a = Analysis(
     ['cytosol_viewer.py'],
@@ -33,10 +33,11 @@ coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name='Cytosol V
 app = BUNDLE(
     coll,
     name='Cytosol Viewer.app',
+    icon='cytosol/assets/icon.icns',
     bundle_identifier='com.windowrainyoon.cytosolviewer',
     info_plist={
         'NSHighResolutionCapable': True,
-        'CFBundleShortVersionString': '0.1.0',
+        'CFBundleShortVersionString': '0.2.0',
         'CFBundleDocumentTypes': [
             {
                 'CFBundleTypeName': 'Microscopy image',

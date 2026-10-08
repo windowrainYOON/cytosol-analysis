@@ -109,6 +109,32 @@ rois = segment_cells(bg_plane, nucleus_plane, pixel_um, RoiParams(edge_mode='tri
 rois.save('cells_RoiSet.zip')
 ```
 
+### Figure 만들기 (figure table)
+
+`Figure 만들기…` (left panel, or `Figure` menu, `Ctrl+Shift+F`) opens a window
+that lays images out as a table with row and column labels:
+
+- **Table**: add, delete and reorder rows and columns; double-click a row or
+  column header to edit its label (several lines allowed) and its color
+  (right-click for insert/delete). `열 이름을 채널 이름/색으로` names the columns
+  after the channels in the current row, in their LUT colors.
+- **Cells** show a loaded image with its current LUTs (changes in the main window
+  appear when you come back to the figure window): whole image or any crop region,
+  the composite of visible channels or any set of channels. `파일…` puts a PNG/TIFF
+  file (e.g. an earlier export) in a cell instead. `이 행을 채널별 + Merged로 채우기`
+  fills a row with one column per channel plus the merged image.
+- **Zoom insets**: drag `확대 영역 그리기` on the cell preview; the area gets a box
+  and a magnified copy in the chosen corner at the chosen size. `이 행 전체에 적용`
+  copies the same inset to every same-sized cell of the row (or column).
+- **Layout**: black or white background (labels switch to white/black), cell
+  borders, cell width and aspect, gap, font and size, scale bars (one length for
+  every cell, automatic or fixed, optional inset scale bars and a
+  `(Scale bar = … µm)` caption).
+- **Export** the whole table as PNG, TIFF (at the chosen DPI, default 300) or as
+  PDF / SVG with editable text.
+
+From Python: `cytosol.figure` (`FigureSpec`, `fill_row_by_channels`, `save_figure`).
+
 Run from source: `python -m cytosol.app [files…]`
 
 Build the macOS app: `./build_mac.sh` → `dist/Cytosol Viewer.app`
