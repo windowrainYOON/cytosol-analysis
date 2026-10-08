@@ -144,3 +144,23 @@ Run from source: `python -m cytosol.app [files…]`
 Build the macOS app: `./build_mac.sh` → `dist/Cytosol Viewer.app`
 (set `PYTHON=/path/to/python3.10+` if the system python3 is older).
 Package it: `./make_dmg.sh` → `~/Desktop/CytosolViewer.dmg`.
+
+### Windows build
+
+Every push to `main` (and `claude/**` branches) builds the Windows app on
+GitHub Actions (`.github/workflows/build-windows.yml`): open the run under the
+repository's **Actions → Build Windows app** and download the
+`CytosolViewer-Windows` artifact. Unzip it anywhere and run
+`Cytosol Viewer.exe`; keep the `_internal` folder next to it. Nothing needs to
+be installed. The exe is not code-signed, so Windows SmartScreen asks once
+(**추가 정보 → 실행**).
+
+On a Windows PC with Python 3.12:
+`powershell -ExecutionPolicy Bypass -File build_windows.ps1` →
+`dist\Cytosol Viewer\Cytosol Viewer.exe` and `dist\CytosolViewer-Windows.zip`.
+It uses its own `.venv-win` and `cytosol_viewer_win.spec`, so it does not touch
+the macOS build files.
+
+`"Cytosol Viewer.exe" --selftest OUT_DIR` (or `python -m cytosol.selftest OUT_DIR`)
+runs export, ROI detection and figure export on a synthetic image and writes
+`OUT_DIR\selftest.log`; the CI build runs it on the packaged exe.
