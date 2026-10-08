@@ -234,6 +234,11 @@ def _safe(text: str) -> str:
     return ''.join(c if c.isalnum() or c in '-_.' else '_' for c in text)
 
 
+def item_stem(item: ImageItem) -> str:
+    """File-name stem for an image; also the name of its per-image folder."""
+    return _safe(Path(item.label).stem if item.label == item.path.name else item.label)
+
+
 def _imagej_luts(item: ImageItem) -> list[np.ndarray]:
     ramp = np.arange(256, dtype=np.float32) / 255.0
     return [
@@ -266,7 +271,7 @@ def export_item(
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = _safe(Path(item.label).stem if item.label == item.path.name else item.label)
+    stem = item_stem(item)
     regions = []
     if full:
         regions.append(('full', None))
