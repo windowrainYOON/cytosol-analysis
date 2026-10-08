@@ -71,6 +71,11 @@ A GUI for working on a whole set of images at once:
   - optional per-channel RGB,
   - an ImageJ hyperstack of the original values for all Z, carrying the channel
     LUTs, display ranges and µm calibration, ready for measurement in Fiji.
+- **이미지별 폴더에 나눠 저장** (on by default, shared with the ROI tab): each image's
+  files go into their own subfolder `<chosen folder>/<name>/`.
+- **모든 데이터 일괄 저장** (File menu, Ctrl+Shift+E): for every image, one folder
+  `<name>/` holding its TIFFs, `<name>_RoiSet.zip` and `<name>_cell_rois.csv`, plus
+  a combined `cell_rois.csv` at the top.
 
 ### 세포질 ROI tab (cell / cytosol ROIs)
 
@@ -99,7 +104,8 @@ A GUI for working on a whole set of images at once:
    (whole cell polygon), `nucNNN` (nucleus polygon) and `cytoNNN` (cell minus
    nucleus, a composite ROI). `ROI 불러오기…` reads `.zip` / `.roi` files back
    for editing. `모든 이미지 ROI 저장` writes one RoiSet per image plus
-   `cell_rois.csv` with cell, nucleus and cytosol areas.
+   `cell_rois.csv` with cell, nucleus and cytosol areas (with
+   `이미지별 폴더에 나눠 저장`, each RoiSet and its own CSV go in `<name>/`).
 
 From Python:
 

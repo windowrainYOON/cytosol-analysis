@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .cellroi import CellRois, RoiParams, auto_saturation, merged_preview, segment_cells
-from .lut import ImageItem, _safe, match_channel
+from .lut import ImageItem, item_stem, match_channel
 
 EDGE_LABELS = [
     ('trim', '안쪽 경계로 자르기'),
@@ -210,6 +210,9 @@ class RoiPanel(QWidget):
         load_btn.clicked.connect(self.load_current)
         save_all = QPushButton('모든 이미지 ROI 저장 (폴더)…')
         save_all.clicked.connect(self.save_all)
+        self.per_image = QCheckBox('이미지별 폴더에 나눠 저장')
+        self.per_image.setChecked(True)
+        self.per_image.setToolTip('폴더 안에 이미지마다 하위 폴더를 만들어 그 이미지의 파일을 넣습니다.')
         io = QGroupBox('ImageJ ROI 파일')
         il = QVBoxLayout(io)
         row = QHBoxLayout()
@@ -221,6 +224,7 @@ class RoiPanel(QWidget):
         row.addWidget(save_btn)
         row.addWidget(load_btn)
         il.addLayout(row)
+        il.addWidget(self.per_image)
         il.addWidget(save_all)
 
         lay = QVBoxLayout(self)
@@ -560,7 +564,12 @@ class RoiPanel(QWidget):
                     cytosol=self.save_cyto.isChecked())
 
     def _stem(self, item):
-        return _safe(Path(item.label).stem if item.label == item.path.name else item.label)
+        return item_stem(item)
+
+    def save_item(self, it, folder) -> list[dict]:
+        """Write <stem>_RoiSet.zip into folder; returns the measurement rows."""
+        it.cells.save(Path(folder) / f'{self._stem(it)}_RoiSet.zip', **self._save_kwargs())
+        return [{'image': it.label, **r} for r in it.cells.measurements()]
 
     def save_current(self):
         it = self.item
@@ -617,21 +626,29 @@ class RoiPanel(QWidget):
         out = QFileDialog.getExistingDirectory(self, 'ROI를 저장할 폴더')
         if not out:
             return
+        per_image = self.per_image.isChecked()
         rows, errors = [], []
         for it in items:
-            stem = self._stem(it)
+            folder = Path(out) / self._stem(it) if per_image else Path(out)
             try:
-                it.cells.save(Path(out) / f'{stem}_RoiSet.zip', **self._save_kwargs())
-                for r in it.cells.measurements():
-                    rows.append({'image': it.label, **r})
+                folder.mkdir(parents=True, exist_ok=True)
+                item_rows = self.save_item(it, folder)
+                if per_image:
+                    write_csv(folder / f'{self._stem(it)}_cell_rois.csv', item_rows)
+                rows += item_rows
             except Exception as exc:
                 errors.append(f'{it.label}: {exc}')
-        if rows:
-            with open(Path(out) / 'cell_rois.csv', 'w', newline='') as f:
-                w = csv.DictWriter(f, fieldnames=list(rows[0]))
-                w.writeheader()
-                w.writerows(rows)
+        write_csv(Path(out) / 'cell_rois.csv', rows)
         msg = f'이미지 {len(items) - len(errors)}개의 ROI와 cell_rois.csv를 저장했습니다.\n{out}'
         if errors:
             msg += '\n\n실패:\n' + '\n'.join(errors)
         QMessageBox.information(self, '저장 완료', msg)
+
+
+def write_csv(path, rows):
+    if not rows:
+        return
+    with open(path, 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
