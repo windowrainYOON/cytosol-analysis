@@ -1,4 +1,4 @@
-"""Draw the Cytosol Viewer app icon: cytosol/assets/icon.png and icon.icns.
+"""Draw the Cytosol Viewer app icon: cytosol/assets/icon.png, icon.icns and icon.ico.
 
     python scripts/make_icon.py
 """
@@ -114,7 +114,9 @@ def main():
     final.save(OUT / 'icon.png')
     final.save(OUT / 'icon.icns', sizes=[(16, 16), (32, 32), (64, 64), (128, 128),
                                          (256, 256), (512, 512), (1024, 1024)])
-    print('wrote', OUT / 'icon.png', OUT / 'icon.icns')
+    final.save(OUT / 'icon.ico', sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64),
+                                        (128, 128), (256, 256)])
+    print('wrote', OUT / 'icon.png', OUT / 'icon.icns', OUT / 'icon.ico')
 
 
 if __name__ == '__main__':

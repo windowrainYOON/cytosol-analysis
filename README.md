@@ -54,7 +54,22 @@ render(read_image('cells.czi'), 'figures/', prefix='cells', scale_um=10,
 A GUI for working on a whole set of images at once:
 
 - Add TCF / CZI / OIR files with **파일 추가…** or by dragging files or folders
-  onto the window. A TCF becomes two entries, HT (RI) and FL.
+  onto the window. A TCF becomes one entry with HT and FL aligned on the HT
+  grid (channels `RI`, `CH0…`): FL is resampled by pixel size around the shared
+  image center plus a small automatic registration (at most 2 µm), and in Z
+  from `3DFL/OffsetZ` (the center of the FL stack measured from the bottom of
+  the HT volume). Turn off **TCF: HT와 FL을 정렬해 한 이미지로** to get HT and
+  FL as two entries instead (`read_image(path, aligned=True)` from Python).
+- **Time series** (TCF, CZI, OIR with a T axis, together with Z): a **T** slider
+  under the image; each timepoint is read from the file when selected. Export
+  writes every timepoint (RGB TIFFs become T-frame stacks with the time stamp
+  on each frame, the raw stack a TZCYX hyperstack) unless
+  **타임시리즈는 모든 시점 저장** is off.
+- **마커 tab**: size marker (scale bar) and time-series marker (time stamp).
+  Each has on/off, text on/off, font size, marker length/thickness, text-marker
+  gap, edge margin, position and color; the time stamp also has the unit
+  (auto, s, min, h, hh:mm:ss, mm:ss, frame), decimals, prefix, a time offset
+  and an optional progress bar. Used by the preview and every TIFF export.
 - **Per-channel LUT** with a live preview: show/hide, color, min/max (slider,
   number or histogram), gamma, `Auto` (0.5–99.8 percentile) and `Min/Max`.
 - **Z**: MIP or any single slice.
@@ -71,6 +86,11 @@ A GUI for working on a whole set of images at once:
   - optional per-channel RGB,
   - an ImageJ hyperstack of the original values for all Z, carrying the channel
     LUTs, display ranges and µm calibration, ready for measurement in Fiji.
+- **이미지별 폴더에 나눠 저장** (on by default, shared with the ROI tab): each image's
+  files go into their own subfolder `<chosen folder>/<name>/`.
+- **모든 데이터 일괄 저장** (File menu, Ctrl+Shift+E): for every image, one folder
+  `<name>/` holding its TIFFs, `<name>_RoiSet.zip` and `<name>_cell_rois.csv`, plus
+  a combined `cell_rois.csv` at the top.
 
 ### 세포질 ROI tab (cell / cytosol ROIs)
 
@@ -99,7 +119,8 @@ A GUI for working on a whole set of images at once:
    (whole cell polygon), `nucNNN` (nucleus polygon) and `cytoNNN` (cell minus
    nucleus, a composite ROI). `ROI 불러오기…` reads `.zip` / `.roi` files back
    for editing. `모든 이미지 ROI 저장` writes one RoiSet per image plus
-   `cell_rois.csv` with cell, nucleus and cytosol areas.
+   `cell_rois.csv` with cell, nucleus and cytosol areas (with
+   `이미지별 폴더에 나눠 저장`, each RoiSet and its own CSV go in `<name>/`).
 
 From Python:
 
@@ -144,3 +165,23 @@ Run from source: `python -m cytosol.app [files…]`
 Build the macOS app: `./build_mac.sh` → `dist/Cytosol Viewer.app`
 (set `PYTHON=/path/to/python3.10+` if the system python3 is older).
 Package it: `./make_dmg.sh` → `~/Desktop/CytosolViewer.dmg`.
+
+### Windows build
+
+Every push to `main` (and `claude/**` branches) builds the Windows app on
+GitHub Actions (`.github/workflows/build-windows.yml`): open the run under the
+repository's **Actions → Build Windows app** and download the
+`CytosolViewer-Windows` artifact. Unzip it anywhere and run
+`Cytosol Viewer.exe`; keep the `_internal` folder next to it. Nothing needs to
+be installed. The exe is not code-signed, so Windows SmartScreen asks once
+(**추가 정보 → 실행**).
+
+On a Windows PC with Python 3.12:
+`powershell -ExecutionPolicy Bypass -File build_windows.ps1` →
+`dist\Cytosol Viewer\Cytosol Viewer.exe` and `dist\CytosolViewer-Windows.zip`.
+It uses its own `.venv-win` and `cytosol_viewer_win.spec`, so it does not touch
+the macOS build files.
+
+`"Cytosol Viewer.exe" --selftest OUT_DIR` (or `python -m cytosol.selftest OUT_DIR`)
+runs export, ROI detection and figure export on a synthetic image and writes
+`OUT_DIR\selftest.log`; the CI build runs it on the packaged exe.
