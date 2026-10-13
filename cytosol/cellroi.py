@@ -9,9 +9,11 @@ Pipeline (segment_cells):
   1. background channel: smooth and saturate (a very bright LUT), so the dim
      signal fills the whole cytoplasm while the gaps between cells stay dark
   2. nuclei: Otsu on the nucleus channel (dim out-of-focus nuclei fall below
-     it), touching nuclei split by a distance-transform watershed
+     it), or a manual threshold in nucleus-channel units; touching nuclei
+     split by a distance-transform watershed
   3. merge: max(saturated background, nuclei) -> each cell is one solid blob;
-     foreground = Otsu on that merged image
+     foreground = Otsu on that merged image, or a manual threshold given in
+     background-channel units
   4. one nucleus = one cell: watershed from the nuclei over the dark
      cell-cell "valleys" (Sato filter) of the merged image. Without a nucleus
      channel, seeds come from the distance map and over-split regions whose
@@ -50,6 +52,10 @@ class RoiParams:
     edge_mode: str = 'trim'
     edge_margin_um: float = 1.0
     work_px_um: float = 0.2          # computations run at about this pixel size
+    # manual thresholds in raw channel values (None = Otsu): nucleus channel
+    # (after light smoothing) and background channel (cell vs. gap)
+    nuc_threshold: float | None = None
+    cell_threshold: float | None = None
 
 
 def _norm(img):
@@ -69,9 +75,18 @@ def brighten(bg: np.ndarray, saturation: float) -> np.ndarray:
     return np.clip((bg.astype(np.float32) - lo) / max(saturation - lo, 1e-9), 0, 1)
 
 
+def nucleus_signal(nuc: np.ndarray, px_um: float) -> np.ndarray:
+    """The nucleus channel as thresholded: lightly smoothed, raw units."""
+    return filters.gaussian(nuc.astype(np.float32), max(0.3 / px_um, 0.5), preserve_range=True)
+
+
+def nucleus_threshold(s: np.ndarray, p: RoiParams) -> float:
+    return float(p.nuc_threshold) if p.nuc_threshold is not None else float(filters.threshold_otsu(s))
+
+
 def segment_nuclei(nuc: np.ndarray, px_um: float, p: RoiParams) -> np.ndarray:
-    s = filters.gaussian(nuc.astype(np.float32), max(0.3 / px_um, 0.5), preserve_range=True)
-    m = s > filters.threshold_otsu(s)
+    s = nucleus_signal(nuc, px_um)
+    m = s > nucleus_threshold(s, p)
     m = ndi.binary_opening(m, morphology.disk(max(1, round(0.4 / px_um))))
     m = ndi.binary_fill_holes(m)
     m = morphology.remove_small_objects(m, max_size=int(p.min_nucleus_um2 / px_um ** 2))
@@ -177,6 +192,62 @@ def _smooth_labels(lab, radius, keep=None):
     return out
 
 
+def _bg_floor(bg) -> float:
+    return float(np.percentile(bg, 0.5))  # the 0 of brighten()
+
+
+def _cell_threshold(dens, bg, sat, p: RoiParams) -> tuple[float, float]:
+    """(threshold on the merged 0..1 image, the same in background-channel units)."""
+    lo = _bg_floor(bg)
+    span = max(sat - lo, 1e-9)
+    if p.cell_threshold is not None:
+        return (float(p.cell_threshold) - lo) / span, float(p.cell_threshold)
+    t01 = float(filters.threshold_otsu(dens)) * p.fg_k
+    return t01, lo + t01 * span
+
+
+def threshold_preview(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
+                      p: RoiParams | None = None) -> dict:
+    """Masks and values of the two thresholds without segmenting, for a live preview.
+
+    Returns {'cell': bool (Y, X), 'nuc': bool (Y, X) or None,
+             'cell_threshold', 'nuc_threshold' (raw units; Otsu where not manual),
+             'saturation'}.
+    """
+    p = p or RoiParams()
+    px_um = px_um or 0.1
+    H, W = bg.shape
+    k = max(1, int(round(p.work_px_um / px_um)))
+    wpx = px_um * k
+
+    def down(a):
+        a = a.astype(np.float32)
+        if k == 1:
+            return a
+        h, w = (H // k) * k, (W // k) * k
+        return a[:h, :w].reshape(h // k, k, w // k, k).mean((1, 3))
+
+    def up(m):
+        if k > 1:
+            m = np.repeat(np.repeat(m, k, 0), k, 1)
+        out = np.zeros((H, W), bool)
+        out[:m.shape[0], :m.shape[1]] = m[:H, :W]
+        return out
+
+    sat = p.saturation if p.saturation else auto_saturation(bg, px_um, p)
+    merged = down(brighten(bg, sat))
+    nmask = nuc_thr = None
+    if nuc is not None:
+        s = nucleus_signal(down(nuc), wpx)
+        nuc_thr = nucleus_threshold(s, p)
+        nmask = s > nuc_thr
+        merged = np.maximum(merged, nmask.astype(np.float32))
+    dens = filters.gaussian(merged, max(p.smooth_um / wpx, 0.5))
+    t01, cell_thr = _cell_threshold(dens, bg, sat, p)
+    return {'cell': up(dens > t01), 'nuc': None if nmask is None else up(nmask),
+            'cell_threshold': cell_thr, 'nuc_threshold': nuc_thr, 'saturation': sat}
+
+
 def segment_cells(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
                   p: RoiParams | None = None) -> 'CellRois':
     """Cell ROIs from a background-signal plane and an optional nucleus plane."""
@@ -197,14 +268,18 @@ def segment_cells(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
     sat = p.saturation if p.saturation else auto_saturation(bg, px_um, p)
     b = down(brighten(bg, sat))
     nuclei = None
+    nuc_thr = None
     if nuc is not None:
-        nuclei = segment_nuclei(down(nuc), wpx, p)
+        dn_ = down(nuc)
+        nuc_thr = nucleus_threshold(nucleus_signal(dn_, wpx), p)
+        nuclei = segment_nuclei(dn_, wpx, p)
         merged = np.maximum(b, (nuclei > 0).astype(np.float32))
     else:
         merged = b
     sig = max(p.smooth_um / wpx, 0.5)
     dens = filters.gaussian(merged, sig)
-    fg = dens > filters.threshold_otsu(dens) * p.fg_k
+    t01, cell_thr = _cell_threshold(dens, bg, sat, p)
+    fg = dens > t01
     r_open = max(1, round(1.0 / wpx))
     fg = ndi.binary_opening(fg, morphology.disk(r_open))
     min_cell = p.min_cell_um2 / wpx ** 2
@@ -262,6 +337,7 @@ def segment_cells(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
 
     rois = CellRois(lab.astype(np.int32), nuclei, px_um)
     rois.saturation = sat
+    rois.nuc_threshold, rois.cell_threshold = nuc_thr, cell_thr
     rois.apply_edge_mode(p.edge_mode, p.edge_margin_um, p.min_cell_um2)
     return rois
 
@@ -278,6 +354,9 @@ class CellRois:
     px_um: float | None = None
     status: dict = field(default_factory=dict)  # label -> 'ok' | 'edge-trimmed' | 'edge'
     saturation: float | None = None
+    # thresholds the detection used, in raw channel values
+    nuc_threshold: float | None = None
+    cell_threshold: float | None = None
     _undo: list = field(default_factory=list, repr=False)
     _redo: list = field(default_factory=list, repr=False)
     max_undo: int = 30

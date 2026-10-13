@@ -26,11 +26,19 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QPushButton,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
 
-from .cellroi import CellRois, RoiParams, auto_saturation, merged_preview, segment_cells
+from .cellroi import (
+    CellRois,
+    RoiParams,
+    auto_saturation,
+    merged_preview,
+    segment_cells,
+    threshold_preview,
+)
 from .imageid import roi_id
 from .lut import ImageItem, item_stem, match_channel
 
@@ -46,6 +54,15 @@ TOOLS = [
     ('sub', '빼기', 'S', '드래그로 영역을 그려 선택한 세포에서 빼기 (선택 없으면 모든 세포에서)'),
     ('new', '새 세포', 'N', '드래그로 그린 영역을 새 세포로 추가'),
 ]
+THR_STEPS = 1000
+THRESHOLDS = [
+    ('nuc', '핵 threshold',
+     '핵 채널(약하게 스무딩)에서 이 값보다 밝은 곳을 핵으로 봅니다. 수동을 끄면 Otsu 자동값.'),
+    ('cell', '세포 threshold',
+     '배경 신호 채널에서 이 값보다 밝은 곳을 세포로 봅니다 (세포 사이 틈은 이보다 어둡게). '
+     '배경 포화값보다 작아야 합니다. 수동을 끄면 Otsu 자동값.'),
+]
+THR_COLORS = {'cell': (1.0, 0.85, 0.0), 'nuc': (0.2, 0.5, 1.0)}
 NUC_HINT = re.compile(r'dapi|hoechst|nuc|draq|h2b|405', re.I)
 
 
@@ -95,6 +112,29 @@ class RoiPanel(QWidget):
         self.sat_auto_btn.clicked.connect(lambda: self.sat.setValue(0))
         self.input_view = QCheckBox('검출용 합성 이미지 보기 (배경 밝게 + 핵)')
         self.input_view.toggled.connect(lambda _: self.win.update_preview())
+        # manual thresholds: checkbox, value, slider over the channel's value range
+        self.thr = {}
+        for key, label, tip in THRESHOLDS:
+            manual = QCheckBox('수동')
+            manual.setToolTip(tip)
+            spin = QDoubleSpinBox()
+            spin.setRange(-1e9, 1e9)
+            spin.setDecimals(2)
+            spin.setToolTip(tip)
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, THR_STEPS)
+            slider.setTracking(False)  # one preview update when the handle is released
+            for w in (spin, slider):
+                w.setEnabled(False)
+            manual.toggled.connect(lambda on, k=key: self._thr_manual(k, on))
+            spin.valueChanged.connect(lambda _, k=key: self._thr_spin(k))
+            slider.valueChanged.connect(lambda v, k=key: self._thr_slider(k, v))
+            self.thr[key] = {'label': label, 'manual': manual, 'spin': spin, 'slider': slider,
+                             'range': (0.0, 1.0)}
+        self.thr_view = QCheckBox('threshold 영역 미리보기 (노랑: 세포, 파랑: 핵)')
+        self.thr_view.setToolTip('threshold를 넘는 영역을 검출용 합성 이미지 위에 칠해 보여줍니다. '
+                                 '값을 바꾸면 바로 갱신됩니다.')
+        self.thr_view.toggled.connect(lambda _: self.win.update_preview())
         self.min_cell = QDoubleSpinBox()
         self.min_cell.setRange(1, 1e6)
         self.min_cell.setValue(RoiParams.min_cell_um2)
@@ -123,6 +163,13 @@ class RoiPanel(QWidget):
         row.addWidget(self.sat_auto_btn)
         dl.addRow('배경 포화값', row)
         dl.addRow(self.input_view)
+        for key, t in self.thr.items():
+            row = QHBoxLayout()
+            row.addWidget(t['manual'])
+            row.addWidget(t['spin'], 1)
+            dl.addRow(t['label'], row)
+            dl.addRow('', t['slider'])
+        dl.addRow(self.thr_view)
         dl.addRow('최소 세포 크기', self.min_cell)
         dl.addRow('최소 핵 크기', self.min_nuc)
         dl.addRow('스무딩', self.smooth)
@@ -258,7 +305,87 @@ class RoiPanel(QWidget):
             min_nucleus_um2=self.min_nuc.value(),
             edge_mode=self.edge_combo.currentData(),
             edge_margin_um=self.edge_margin.value(),
+            nuc_threshold=self._thr_value('nuc'),
+            cell_threshold=self._thr_value('cell'),
         )
+
+    # ---- manual thresholds ----------------------------------------------
+
+    def _thr_value(self, key):
+        t = self.thr[key]
+        return t['spin'].value() if t['manual'].isChecked() else None
+
+    def show_input(self) -> bool:
+        """Whether the preview shows the detector's input instead of the composite."""
+        return self.input_view.isChecked() or self.thr_view.isChecked()
+
+    def _thr_ranges(self, item):
+        """Slider spans the current plane's value range of each role's channel."""
+        r = self.roles(item)
+        planes = item.planes()
+        for key, ch in (('nuc', r['nuc']), ('cell', r['bg'])):
+            t = self.thr[key]
+            if ch is None:
+                t['range'] = (0.0, 1.0)
+            else:
+                plane = planes[ch]
+                lo, hi = float(np.nanmin(plane)), float(np.nanmax(plane))
+                t['range'] = (lo, hi if hi > lo else lo + 1.0)
+            self._thr_sync_slider(key)
+        has_nuc = r['nuc'] is not None
+        self.thr['nuc']['manual'].setEnabled(has_nuc)
+        if not has_nuc:
+            self.thr['nuc']['manual'].setChecked(False)
+
+    def _thr_sync_slider(self, key):
+        t = self.thr[key]
+        lo, hi = t['range']
+        t['slider'].blockSignals(True)
+        t['slider'].setValue(int(round((t['spin'].value() - lo) / (hi - lo) * THR_STEPS)))
+        t['slider'].blockSignals(False)
+
+    def _thr_show(self, key, value):
+        """Show a value (e.g. the automatic one) without triggering an update."""
+        if value is None:
+            return
+        t = self.thr[key]
+        t['spin'].blockSignals(True)
+        t['spin'].setValue(value)
+        t['spin'].blockSignals(False)
+        self._thr_sync_slider(key)
+
+    def _thr_manual(self, key, on):
+        t = self.thr[key]
+        if on and self.item is not None:  # start from the automatic value
+            auto = self._auto_thresholds(self.item)
+            self._thr_show(key, auto.get(key))
+        t['spin'].setEnabled(on)
+        t['slider'].setEnabled(on)
+        if self.show_input():
+            self.win.update_preview()
+
+    def _thr_spin(self, key):
+        self._thr_sync_slider(key)
+        if self.show_input():
+            self.win.update_preview()
+
+    def _thr_slider(self, key, v):
+        t = self.thr[key]
+        lo, hi = t['range']
+        t['spin'].setValue(lo + (hi - lo) * v / THR_STEPS)
+
+    def _inputs(self, item):
+        r = self.roles(item)
+        planes = item.planes()
+        return planes[r['bg']], (planes[r['nuc']] if r['nuc'] is not None else None)
+
+    def _auto_thresholds(self, item) -> dict:
+        """The Otsu thresholds the detector would pick now (raw channel values)."""
+        bg, nuc = self._inputs(item)
+        p = self.params()
+        p.nuc_threshold = p.cell_threshold = None
+        tp = threshold_preview(bg, nuc, item.pixel_um, p)
+        return {'nuc': tp['nuc_threshold'], 'cell': tp['cell_threshold']}
 
     def roles(self, item=None):
         item = item or self.item
@@ -283,6 +410,11 @@ class RoiPanel(QWidget):
             self.bg_combo.setCurrentIndex(max(0, self.bg_combo.findData(r['bg'])))
             if item.cells is not None and item.cells.saturation:
                 self.sat.setValue(item.cells.saturation)
+            self._thr_ranges(item)
+            if item.cells is not None:
+                for key in self.thr:
+                    if not self.thr[key]['manual'].isChecked():
+                        self._thr_show(key, getattr(item.cells, f'{key}_threshold', None))
         self._busy = False
         self.selected = 0
         self.refresh_list()
@@ -291,21 +423,28 @@ class RoiPanel(QWidget):
         if self._busy or self.item is None:
             return
         self.item.roi_roles = {'nuc': self.nuc_combo.currentData(), 'bg': self.bg_combo.currentData()}
-        if self.input_view.isChecked():
+        self._thr_ranges(self.item)
+        if self.show_input():
             self.win.update_preview()
 
     def _sat_changed(self, _):
-        if self.input_view.isChecked():
+        if self.show_input():
             self.win.update_preview()
 
     def preview_rgb(self, item: ImageItem) -> np.ndarray:
         """What the detector sees: the background channel with a bright LUT plus nuclei."""
-        r = self.roles(item)
-        planes = item.planes()
-        bg = planes[r['bg']]
-        nuc = planes[r['nuc']] if r['nuc'] is not None else None
+        bg, nuc = self._inputs(item)
         sat = self.sat.value() or auto_saturation(bg, item.pixel_um or 0.1)
-        return merged_preview(bg, nuc, sat)
+        rgb = merged_preview(bg, nuc, sat)
+        if self.thr_view.isChecked():
+            tp = threshold_preview(bg, nuc, item.pixel_um, self.params())
+            for key in ('cell', 'nuc'):
+                m = tp[key]
+                if m is not None:
+                    rgb[m] = rgb[m] * 0.55 + 0.45 * np.asarray(THR_COLORS[key], np.float32)
+                if not self.thr[key]['manual'].isChecked():
+                    self._thr_show(key, tp[f'{key}_threshold'])
+        return rgb
 
     # ---- detection ------------------------------------------------------
 
@@ -335,6 +474,16 @@ class RoiPanel(QWidget):
         msg = f'세포 {len(it.cells)}개 검출'
         if not self.sat.value():
             msg += f' (배경 포화값 자동: {it.cells.saturation:.3g})'
+        used = []
+        for key in self.thr:
+            v = getattr(it.cells, f'{key}_threshold', None)
+            if v is not None:
+                how = '수동' if self.thr[key]['manual'].isChecked() else '자동'
+                used.append(f"{self.thr[key]['label']} {v:.4g} ({how})")
+                if how == '자동':
+                    self._thr_show(key, v)
+        if used:
+            msg += ', ' + ', '.join(used)
         if self.roles()['nuc'] is not None and it.cells.nuclei is None:
             msg += '. 핵 채널에서 핵을 찾지 못해 핵 없이 나눴습니다.'
         self.status(msg)
