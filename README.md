@@ -97,6 +97,12 @@ A GUI for working on a whole set of images at once:
     axis by any angle, brightest point or mean along the view. Z spacing is
     automatic (voxel Z / pixel size from the metadata) or a manual value in µm.
     The preview is subsampled for speed; saving can use full resolution.
+    The 3D preview is built once per image, Z range, crop, preview size and
+    timepoint (the stack reduced to the preview size, LUT-mapped to 8 bit and
+    resampled to cubic voxels) and the full volume is then released; turning
+    it only re-projects that structure (shear-warp, ~0.05 s). Min/max/gamma
+    changes reach it with **새로고침 (LUT 반영)** (highlighted when the LUT
+    changed); color and show/hide apply at once.
   - LUT: starts from the LUT tab's LUT; with **LUT 탭과 연동** on, changes go
     both ways (a sum's range is scaled by the slice count), off gives the
     projection its own LUT.
