@@ -21,7 +21,7 @@ jobs:
         run: ./build_windows.ps1
       - uses: actions/upload-artifact@v4
         with:
-          name: CytosolViewer-Windows
+          name: ${{ env.BUILD_NAME }}
           path: dist/Cytosol Viewer/
       - uses: actions/upload-artifact@v4
         if: always()

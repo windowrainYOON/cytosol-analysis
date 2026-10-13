@@ -1,5 +1,8 @@
 # PyInstaller spec for Cytosol Viewer.  Build with ./build_mac.sh
+import re
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
+VERSION = re.search(r"__version__ = '(.+)'", open('cytosol/version.py').read()).group(1)
 
 hiddenimports = (
     collect_submodules('imagecodecs')
@@ -40,7 +43,7 @@ app = BUNDLE(
     bundle_identifier='com.windowrainyoon.cytosolviewer',
     info_plist={
         'NSHighResolutionCapable': True,
-        'CFBundleShortVersionString': '0.2.0',
+        'CFBundleShortVersionString': VERSION,
         'CFBundleDocumentTypes': [
             {
                 'CFBundleTypeName': 'Microscopy image',

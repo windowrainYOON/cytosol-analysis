@@ -1,6 +1,7 @@
 # Build "dist\Cytosol Viewer\Cytosol Viewer.exe" on Windows and zip it.
 #   powershell -ExecutionPolicy Bypass -File build_windows.ps1
-# Uses $env:PYTHON if set, otherwise "py -3.12".  Output: dist\CytosolViewer-Windows.zip
+# Uses $env:PYTHON if set, otherwise "py -3.12".
+# Output: dist\CytosolViewer-<version>-<commit>-Windows.zip (version from cytosol\version.py)
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
@@ -22,8 +23,14 @@ $p = Start-Process -FilePath $exe -ArgumentList '--selftest', 'dist\selftest' -W
 Get-Content 'dist\selftest\selftest.log'
 if ($p.ExitCode -ne 0) { throw "selftest failed ($($p.ExitCode))" }
 
-$zip = 'dist\CytosolViewer-Windows.zip'
-if (Test-Path $zip) { Remove-Item $zip }
+$ver = ([regex]::Match((Get-Content cytosol\version.py -Raw), "__version__ = '(.+)'")).Groups[1].Value
+$sha = (git rev-parse --short=7 HEAD 2>$null)
+if (-not $sha) { $sha = 'nogit' }
+$name = "CytosolViewer-$ver-$sha-Windows"
+if ($env:GITHUB_ENV) { "BUILD_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+
+Remove-Item 'dist\CytosolViewer-*-Windows.zip' -ErrorAction SilentlyContinue
+$zip = "dist\$name.zip"
 Compress-Archive -Path 'dist\Cytosol Viewer' -DestinationPath $zip
 Write-Host "Built: $(Resolve-Path $exe)"
 Write-Host "Zip:   $(Resolve-Path $zip)"
