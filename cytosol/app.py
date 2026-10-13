@@ -61,10 +61,11 @@ from .lut import (
     load_preset,
     save_preset,
 )
-from .render import add_scale_bar
+from .imageid import ROI_EXT, match_roi, plan_pairing
+from .marker_panel import MarkerPanel
 from .roi_panel import RoiPanel, write_csv
 
-SUPPORTED = ('.tcf', '.czi', '.oir')
+SUPPORTED = ('.tcf', '.czi', '.oir', '.tif', '.tiff')
 SLIDER_STEPS = 1000
 
 
@@ -78,9 +79,11 @@ def qcolor(rgb) -> QColor:
     return QColor.fromRgbF(*[float(c) for c in rgb])
 
 
-def load_items(path: Path) -> list[ImageItem]:
-    """TCF files give two entries (HT and FL); other formats give one."""
+def load_items(path: Path, align_tcf: bool = True) -> list[ImageItem]:
+    """One entry per file. With align_tcf off, a TCF gives two (HT and FL)."""
     if path.suffix.lower() == '.tcf':
+        if align_tcf:
+            return [ImageItem.load(path, label=path.stem, aligned=True)]
         from .io import tcf_metadata
 
         mods = tcf_metadata(path)['modalities']
@@ -90,6 +93,9 @@ def load_items(path: Path) -> list[ImageItem]:
                 items.append(ImageItem.load(path, label=f'{path.stem}_{tag}', modality=mod))
         if not items and '2DMIP' in mods:
             items.append(ImageItem.load(path, label=f'{path.stem}_HT', modality='2DMIP'))
+        if len(items) > 1:
+            for it in items:
+                it.id_suffix = it.label.rsplit('_', 1)[-1]
         return items
     return [ImageItem.load(path)]
 
@@ -104,6 +110,13 @@ CELL_COLORS = [QColor(c) for c in (
     '#ff9678', '#96b4ff',
 )]
 LASSO_COLORS = {'add': QColor(80, 255, 120), 'sub': QColor(255, 80, 80), 'new': QColor(80, 220, 255)}
+
+
+def folder_files(folder: Path) -> list[Path]:
+    """Images and ROI files anywhere under folder (hidden files skipped)."""
+    return sorted(q for q in folder.rglob('*')
+                  if q.is_file() and not q.name.startswith('.')
+                  and q.suffix.lower() in SUPPORTED + ROI_EXT)
 
 
 def polygon_path(*polys) -> QPainterPath:
@@ -407,16 +420,24 @@ class ChannelPanel(QGroupBox):
         self.item: ImageItem | None = None
         self._busy = False
         self.lo, self.hi = 0.0, 1.0
+        self.steps = SLIDER_STEPS
 
         self.visible = QCheckBox('표시')
         self.color_btn = QPushButton()
         self.color_btn.setFixedWidth(40)
         self.auto_btn = QPushButton('Auto')
         self.reset_btn = QPushButton('Min/Max')
+        self.reset_btn.setToolTip('현재 이미지 데이터의 최소값~최대값으로 설정')
         self.all_btn = QPushButton('전체 이미지에 적용')
         self.all_btn.setToolTip('이 채널의 LUT를 모든 이미지의 같은 채널에 적용')
 
         self.hist = Histogram()
+        self.range_lo = QLabel()
+        self.range_hi = QLabel()
+        self.range_note = QLabel()
+        for lab in (self.range_lo, self.range_hi, self.range_note):
+            lab.setStyleSheet('color: gray; font-size: 11px;')
+        self.range_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.min_slider = QSlider(Qt.Orientation.Horizontal)
         self.max_slider = QSlider(Qt.Orientation.Horizontal)
         for s in (self.min_slider, self.max_slider):
@@ -453,6 +474,12 @@ class ChannelPanel(QGroupBox):
         lay = QVBoxLayout(self)
         lay.addLayout(top)
         lay.addWidget(self.hist)
+        scale = QHBoxLayout()
+        scale.setContentsMargins(0, 0, 0, 0)
+        scale.addWidget(self.range_lo)
+        scale.addWidget(self.range_note, 1)
+        scale.addWidget(self.range_hi)
+        lay.addLayout(scale)
         lay.addLayout(form)
         lay.addWidget(self.all_btn)
 
@@ -474,8 +501,24 @@ class ChannelPanel(QGroupBox):
     def bind(self, item: ImageItem):
         self.item = item
         plane = item.planes()[self.index]
-        lo, hi = float(np.nanmin(plane)), float(np.nanmax(plane))
-        self.lo, self.hi = lo, hi if hi > lo else lo + 1
+        self.lo, self.hi, note = item.value_range(self.index)
+        # integer data: one slider step per count when that is a sane number
+        integer = bool(note) and note != 'RI' and float(self.lo).is_integer() \
+            and float(self.hi).is_integer()
+        span = self.hi - self.lo
+        self.steps = int(span) if integer and 0 < span <= 1_000_000 else SLIDER_STEPS
+        self._busy = True
+        for s in (self.min_slider, self.max_slider):
+            s.setRange(0, self.steps)
+        for s in (self.min_spin, self.max_spin):
+            s.setDecimals(0 if integer else 4)
+            s.setRange(self.lo, self.hi)
+            s.setSingleStep(1 if integer else span / 100)
+        self._busy = False
+        fmt = (lambda v: f'{v:.0f}') if integer else (lambda v: f'{v:.4f}')
+        self.range_lo.setText(fmt(self.lo))
+        self.range_hi.setText(fmt(self.hi))
+        self.range_note.setText(f'파일 범위 ({note})' if note else '데이터 범위')
         self.setTitle(item.channels[self.index])
         self.hist.set_data(plane, self.lo, self.hi)
         self.refresh()
@@ -495,10 +538,10 @@ class ChannelPanel(QGroupBox):
         self._busy = False
 
     def _to_slider(self, v):
-        return int(round((v - self.lo) / (self.hi - self.lo) * SLIDER_STEPS))
+        return int(round((v - self.lo) / (self.hi - self.lo) * self.steps))
 
     def _from_slider(self, s):
-        return self.lo + s / SLIDER_STEPS * (self.hi - self.lo)
+        return self.lo + s / self.steps * (self.hi - self.lo)
 
     def _slider(self, spin, value):
         if self._busy:
@@ -533,7 +576,9 @@ class ChannelPanel(QGroupBox):
         self.changed.emit()
 
     def _full(self):
-        self.lut.vmin, self.lut.vmax = self.lo, self.hi
+        plane = self.item.planes()[self.index]
+        lo, hi = float(np.nanmin(plane)), float(np.nanmax(plane))
+        self.lut.vmin, self.lut.vmax = lo, (hi if hi > lo else self.hi)
         self.refresh()
         self.changed.emit()
 
@@ -558,13 +603,26 @@ class MainWindow(QMainWindow):
         self.file_list.currentRowChanged.connect(self._select)
         add_btn = QPushButton('파일 추가…')
         add_btn.clicked.connect(self.add_files_dialog)
+        folder_btn = QPushButton('폴더 불러오기…')
+        folder_btn.setToolTip(
+            '폴더 안의 원본 이미지, 내보낸 TIFF, ROI(.zip/.roi)를 이미지 ID로 짝지어 불러옵니다.\n'
+            '원본이 없으면 내보낸 TIFF(raw 스택 우선)로 열고, ROI는 해당 이미지에 자동으로 붙입니다.')
+        folder_btn.clicked.connect(self.add_folder_dialog)
         rm_btn = QPushButton('목록에서 제거')
         rm_btn.clicked.connect(self.remove_current)
         left = QWidget()
         ll = QVBoxLayout(left)
-        ll.addWidget(QLabel('이미지 (TCF / CZI / OIR, 끌어다 놓기 가능)'))
+        ll.addWidget(QLabel('이미지 (TCF / CZI / OIR / TIF, 끌어다 놓기 가능)'))
         ll.addWidget(self.file_list)
+        self.align_tcf = QCheckBox('TCF: HT와 FL을 정렬해 한 이미지로')
+        self.align_tcf.setChecked(True)
+        self.align_tcf.setToolTip(
+            'FL을 HT 픽셀 격자에 맞춰 리샘플링합니다 (XY: 픽셀 크기와 자동 미세 보정, '
+            'Z: 3DFL OffsetZ). 끄면 HT와 FL이 따로 열립니다. 새로 추가하는 파일부터 적용됩니다.'
+        )
+        ll.addWidget(self.align_tcf)
         ll.addWidget(add_btn)
+        ll.addWidget(folder_btn)
         ll.addWidget(rm_btn)
 
         # left, below files: crop regions of the current image
@@ -605,17 +663,14 @@ class MainWindow(QMainWindow):
         self.show_crop_btn.toggled.connect(lambda _: self.update_preview(refit=True))
         fit_btn = QPushButton('화면 맞춤')
         fit_btn.clicked.connect(self.canvas.fit)
-        self.scalebar_chk = QCheckBox('Scale bar')
-        self.scalebar_chk.setChecked(True)
-        self.scalebar_chk.toggled.connect(lambda _: self.update_preview())
-        self.scale_um = QDoubleSpinBox()
-        self.scale_um.setRange(0, 10000)
-        self.scale_um.setSpecialValueText('자동')
-        self.scale_um.setSuffix(' µm')
-        self.scale_um.valueChanged.connect(lambda _: self.update_preview())
-        self.scale_pos = QComboBox()
-        self.scale_pos.addItems(['lower right', 'lower left', 'upper right', 'upper left'])
-        self.scale_pos.currentIndexChanged.connect(lambda _: self.update_preview())
+        self.t_slider = QSlider(Qt.Orientation.Horizontal)
+        self.t_slider.setTracking(False)  # load a timepoint on release, not while dragging
+        self.t_slider.valueChanged.connect(self._t_changed)
+        self.t_slider.sliderMoved.connect(self._t_preview_label)
+        self.t_label = QLabel()
+        self.t_label.setMinimumWidth(130)
+        self.markers = MarkerPanel()
+        self.markers.changed.connect(self.update_preview)
         self.info = QLabel()
 
         bar1 = QHBoxLayout()
@@ -624,16 +679,20 @@ class MainWindow(QMainWindow):
         bar1.addWidget(self.show_crop_btn)
         bar1.addStretch()
         bar1.addWidget(fit_btn)
+        self.t_row = QWidget()
+        tl = QHBoxLayout(self.t_row)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.addWidget(QLabel('T'))
+        tl.addWidget(self.t_slider, 1)
+        tl.addWidget(self.t_label)
         bar2 = QHBoxLayout()
-        bar2.addWidget(self.scalebar_chk)
-        bar2.addWidget(self.scale_um)
-        bar2.addWidget(self.scale_pos)
         bar2.addStretch()
         bar2.addWidget(self.info)
         center = QWidget()
         cl = QVBoxLayout(center)
         cl.addLayout(bar1)
         cl.addWidget(self.canvas, 1)
+        cl.addWidget(self.t_row)
         cl.addLayout(bar2)
 
         # right: channel panels + batch + export
@@ -671,6 +730,8 @@ class MainWindow(QMainWindow):
         self.exp_channels = QCheckBox('채널별 RGB')
         self.exp_raw = QCheckBox('원본값 스택 (ImageJ, 모든 Z)')
         self.exp_raw.setChecked(True)
+        self.exp_all_t = QCheckBox('타임시리즈는 모든 시점 저장 (끄면 현재 시점만)')
+        self.exp_all_t.setChecked(True)
         self.exp_per_image = QCheckBox('이미지별 폴더에 나눠 저장')
         self.exp_per_image.setChecked(True)
         self.exp_per_image.setToolTip('폴더 안에 이미지마다 하위 폴더를 만들어 그 이미지의 파일을 넣습니다.')
@@ -685,7 +746,8 @@ class MainWindow(QMainWindow):
         row.addWidget(self.exp_full)
         row.addWidget(self.exp_crops)
         el.addLayout(row)
-        for w in (self.exp_composite, self.exp_channels, self.exp_raw, self.exp_per_image):
+        for w in (self.exp_composite, self.exp_channels, self.exp_raw, self.exp_all_t,
+                  self.exp_per_image):
             el.addWidget(w)
         row = QHBoxLayout()
         row.addWidget(exp_one)
@@ -711,6 +773,10 @@ class MainWindow(QMainWindow):
         right = QTabWidget()
         right.addTab(lut_tab, 'LUT · 내보내기')
         right.addTab(roi_scroll, '세포질 ROI')
+        marker_scroll = QScrollArea()
+        marker_scroll.setWidgetResizable(True)
+        marker_scroll.setWidget(self.markers)
+        right.addTab(marker_scroll, '마커')
         right.setMinimumWidth(380)
 
         split = QSplitter()
@@ -726,8 +792,12 @@ class MainWindow(QMainWindow):
         export_act = QAction('TIFF로 일괄 저장…', self)
         export_act.setShortcut(QKeySequence('Ctrl+E'))
         export_act.triggered.connect(self.export_all)
+        folder_act = QAction('폴더 불러오기 (ID로 이미지·TIFF·ROI 짝짓기)…', self)
+        folder_act.setShortcut(QKeySequence('Ctrl+Shift+O'))
+        folder_act.triggered.connect(self.add_folder_dialog)
         menu = self.menuBar().addMenu('파일')
         menu.addAction(open_act)
+        menu.addAction(folder_act)
         menu.addAction(export_act)
         everything_act = QAction('모든 데이터 일괄 저장 (이미지별 폴더)…', self)
         everything_act.setShortcut(QKeySequence('Ctrl+Shift+E'))
@@ -745,38 +815,132 @@ class MainWindow(QMainWindow):
     def add_files_dialog(self):
         files, _ = QFileDialog.getOpenFileNames(
             self, '이미지 파일 선택', '',
-            'Microscopy (*.tcf *.TCF *.czi *.oir);;All files (*)',
+            'Microscopy (*.tcf *.TCF *.czi *.oir *.tif *.tiff *.TIF *.TIFF);;'
+            '이미지 + ROI (*.tcf *.TCF *.czi *.oir *.tif *.tiff *.TIF *.TIFF *.zip *.roi);;'
+            'All files (*)',
         )
         self.add_files([Path(f) for f in files])
 
-    def add_files(self, paths):
-        paths = [p for p in paths if p.suffix.lower() in SUPPORTED]
+    def add_folder_dialog(self):
+        folder = QFileDialog.getExistingDirectory(self, '불러올 폴더 선택')
+        if folder:
+            self.add_files(folder_files(Path(folder)), pair=True)
+
+    def _add_item(self, item: ImageItem):
+        self.items.append(item)
+        entry = QListWidgetItem(item.label)
+        self.file_list.addItem(entry)
+        self._update_tooltip(len(self.items) - 1)
+
+    def _update_tooltip(self, row):
+        it = self.items[row]
+        tip = [str(it.path), f'이미지 ID: {it.image_id} '
+               f'({it.image.metadata.get("image_id_source", "")})']
+        if it.source_name != it.path.name:
+            tip.append(f'원본: {it.source_name}')
+        if it.linked:
+            tip.append(f'함께 찾은 내보낸 파일 {len(it.linked)}개:')
+            tip += [f'  {p.name}' for p in it.linked[:20]]
+        if it.cells is not None and len(it.cells):
+            tip.append(f'세포 ROI {len(it.cells)}개')
+        self.file_list.item(row).setToolTip('\n'.join(tip))
+
+    def add_files(self, paths, pair=False):
+        """Open images and attach ROI files to them by image ID.
+
+        ROI files go to the image with their ID (older ROIs without one: by
+        file name) when that image has no ROIs yet. With pair (loading a
+        folder), TIFFs this app exported are grouped by the ID of their
+        original: with the original among the loaded images they are only
+        listed with it, otherwise the best of them (full raw stack first) is
+        opened in its place. Without pair every chosen image is opened.
+        """
+        paths = [p for p in paths if p.suffix.lower() in SUPPORTED + ROI_EXT]
         if not paths:
             return
-        prog = QProgressDialog('불러오는 중…', '취소', 0, len(paths), self)
+        plan = plan_pairing(paths)
+        if not pair:
+            plan['open'] = [p for p in paths if p.suffix.lower() in SUPPORTED]
+            plan['exports'] = {}
+        prog = QProgressDialog('불러오는 중…', '취소', 0, len(plan['open']) + len(plan['exports']),
+                               self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
-        errors = []
-        for i, p in enumerate(paths):
-            if prog.wasCanceled():
-                break
+        errors, notes = [], []
+        n_before = len(self.items)
+
+        def load(p, i):
             prog.setLabelText(f'불러오는 중: {p.name}')
             prog.setValue(i)
             QApplication.processEvents()
             try:
-                for item in load_items(p):
-                    self.items.append(item)
-                    entry = QListWidgetItem(item.label)
-                    entry.setToolTip(str(item.path))
-                    self.file_list.addItem(entry)
+                loaded = load_items(p, self.align_tcf.isChecked())
             except Exception as exc:  # keep loading the rest
                 errors.append(f'{p.name}: {exc}')
                 traceback.print_exc()
-        prog.setValue(len(paths))
+                return []
+            for item in loaded:
+                self._add_item(item)
+            return loaded
+
+        i = 0
+        for p in plan['open']:
+            if prog.wasCanceled():
+                break
+            load(p, i)
+            i += 1
+        by_id = {it.image_id: it for it in self.items}
+        for iid, files in plan['exports'].items():
+            if prog.wasCanceled():
+                break
+            if iid not in by_id:
+                for f in files:  # open the best export that loads
+                    loaded = load(f, i)
+                    if loaded:
+                        by_id[iid] = loaded[0]
+                        files = [q for q in files if q != f]
+                        break
+            if iid in by_id:
+                it = by_id[iid]
+                it.linked += [f for f in files if f not in it.linked and f != it.path]
+            i += 1
+        prog.setValue(prog.maximum())
+
+        n_roi = 0
+        for f in plan['rois']:
+            it, how = match_roi(f, self.items, item_stem)
+            if it is None:
+                notes.append(f'{f.name}: {how}')
+                continue
+            if it.cells is not None and len(it.cells):
+                if f not in it.linked:
+                    it.linked.append(f)
+                notes.append(f'{f.name}: {it.label}에 이미 ROI가 있어 건너뜀')
+                continue
+            try:
+                self.roi_panel.load_into(it, [f])
+                it.linked.append(f)
+                n_roi += 1
+            except Exception as exc:
+                errors.append(f'{f.name}: {exc}')
+                traceback.print_exc()
+        for row in range(len(self.items)):
+            self._update_tooltip(row)
+
         if errors:
             QMessageBox.warning(self, '불러오기 실패', '\n'.join(errors))
         if self.current is None and self.items:
             self.file_list.setCurrentRow(0)
-        self.statusBar().showMessage(f'이미지 {len(self.items)}개')
+        elif self.current is not None:
+            self.roi_panel.bind(self.current)
+            self.update_preview()
+        n_linked = sum(len(it.linked) for it in self.items[n_before:])
+        msg = f'이미지 {len(self.items)}개'
+        if n_roi or plan['exports']:
+            msg += f' · ROI {n_roi}개 연결, 내보낸 파일 {n_linked}개 짝지음'
+        if notes:
+            msg += f' · 짝 없는 ROI {len(notes)}개'
+            print('\n'.join(notes))
+        self.statusBar().showMessage(msg)
 
     def remove_current(self):
         row = self.file_list.currentRow()
@@ -799,14 +963,15 @@ class MainWindow(QMainWindow):
             event.acceptProposedAction()
 
     def dropEvent(self, event):
-        paths = []
+        paths, pair = [], False
         for url in event.mimeData().urls():
             p = Path(url.toLocalFile())
             if p.is_dir():
-                paths += sorted(q for q in p.rglob('*') if q.suffix.lower() in SUPPORTED)
+                paths += folder_files(p)
+                pair = True
             else:
                 paths.append(p)
-        self.add_files(paths)
+        self.add_files(paths, pair=pair)
 
     # ---- selection ------------------------------------------------------
 
@@ -824,14 +989,21 @@ class MainWindow(QMainWindow):
         self.z_combo.setCurrentIndex(max(idx, 0))
         self.z_combo.setEnabled(it.nz > 1)
         self.z_combo.blockSignals(False)
+        self.t_slider.blockSignals(True)
+        self.t_slider.setRange(0, max(it.nt - 1, 0))
+        self.t_slider.setValue(it.t)
+        self.t_slider.blockSignals(False)
+        self.t_row.setVisible(it.nt > 1)
+        self._t_preview_label(it.t)
         self._build_panels()
         self.roi_panel.bind(it)
         self._refresh_crop_list(select=0)
         c, z, h, w = it.image.data.shape
         px = it.pixel_um
         self.info.setText(
-            f'{w}×{h} px, Z {z}, C {c}'
+            f'{w}×{h} px, Z {z}, C {c}' + (f', T {it.nt}' if it.nt > 1 else '')
             + (f', {px:.4f} µm/px' if px else ', 픽셀 크기 없음')
+            + f', ID {it.image_id}'
         )
         self.update_preview(refit=True)
 
@@ -849,6 +1021,33 @@ class MainWindow(QMainWindow):
             panel.applyAll.connect(self.apply_channel_to_all)
             self.channel_box.insertWidget(self.channel_box.count() - 1, panel)
             self.panels.append(panel)
+
+    def _t_preview_label(self, t):
+        it = self.current
+        if it is None or it.nt < 2:
+            self.t_label.setText('')
+            return
+        times = it.image.times
+        t = max(0, min(int(t), it.nt - 1))
+        text = self.markers.time_style().text(times[t], times[-1] - times[0], t)
+        self.t_label.setText(f'{t + 1}/{it.nt}  ({text.strip()})')
+
+    def _t_changed(self, t):
+        it = self.current
+        if it is None or t == it.t:
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            it.set_t(t)
+        except Exception as exc:
+            traceback.print_exc()
+            QMessageBox.warning(self, '시점 불러오기 실패', str(exc))
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._t_preview_label(it.t)
+        for p in self.panels:
+            p.bind(it)
+        self.update_preview()
 
     def _z_changed(self, _):
         if self.current is None:
@@ -877,10 +1076,8 @@ class MainWindow(QMainWindow):
             rgb = self.roi_panel.preview_rgb(it)
         else:
             rgb = it.composite(it.crops[sel] if only else None)
-        if self.scalebar_chk.isChecked() and it.pixel_um:
-            rgb, _ = add_scale_bar(
-                rgb, it.pixel_um, self.scale_um.value() or None, self.scale_pos.currentText()
-            )
+        rgb = it.decorate(rgb, self.markers.scale_style(), self.markers.time_style())
+        self._t_preview_label(it.t)
         self.canvas.set_image(to_qimage(rgb), refit=refit and only)
         if refit and not only:
             self.canvas.fit()
@@ -1000,9 +1197,9 @@ class MainWindow(QMainWindow):
             composite=self.exp_composite.isChecked(),
             per_channel=self.exp_channels.isChecked(),
             raw_stack=self.exp_raw.isChecked(),
-            scale_bar=self.scalebar_chk.isChecked(),
-            scale_um=self.scale_um.value() or None,
-            scale_position=self.scale_pos.currentText(),
+            scale=self.markers.scale_style(),
+            time=self.markers.time_style(),
+            all_times=self.exp_all_t.isChecked(),
         )
 
     def _export(self, items):

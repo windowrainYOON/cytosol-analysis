@@ -4,15 +4,24 @@ Microscopy image-based cytosol ROI determination and analysis.
 
 ## Reading raw files
 
-`cytosol.io.read_image(path)` opens Tomocube `.TCF`, Zeiss `.czi` and
-Olympus/Evident `.oir` files and returns an `Image` with `data` shaped
-`(C, Z, Y, X)`, channel names, voxel size in micrometers and the raw metadata.
+`cytosol.io.read_image(path)` opens Tomocube `.TCF`, Zeiss `.czi`,
+Olympus/Evident `.oir` and `.tif`/`.tiff` files and returns an `Image` with
+`data` shaped `(C, Z, Y, X)`, channel names, voxel size in micrometers, the raw
+metadata and `ranges`: per channel the value range the file can hold (0 to
+the detector maximum), read from the metadata.
 
 | Format | Reader | Notes |
 |---|---|---|
 | TCF (HDF5) | `h5py` | `modality='3D'` (default) or `'2DMIP'` gives refractive index (stored uint16 / 10000); `'3DFL'` / `'2DFLMIP'` gives fluorescence per channel. HT and FL have different XY pixel sizes and Z ranges (`Data/3DFL` `OffsetZ`). |
 | CZI | `czifile` | `scene=` selects a scene in multi-scene files. |
 | OIR | `oirfile` | |
+| TIFF | `tifffile` | ImageJ hyperstacks and OME-TIFF keep T/Z/C, pixel size, channel names and colors (ImageJ LUTs, OME `Color`). A plain multi-page TIFF is a Z stack; an RGB TIFF gives channels R/G/B. |
+
+Value range per format: CZI `ComponentBitCount`, OIR bits per sample,
+OME-TIFF `SignificantBits` (else the TIFF `BitsPerSample` / stored integer
+type), TCF fluorescence the stored integer type (uint8/uint16), and TCF RI the
+`RIMin`–`RIMax` recorded in the file. Float TIFFs without metadata use 0 to
+the data maximum.
 
 ```
 pip install -r requirements.txt
@@ -53,10 +62,29 @@ render(read_image('cells.czi'), 'figures/', prefix='cells', scale_um=10,
 
 A GUI for working on a whole set of images at once:
 
-- Add TCF / CZI / OIR files with **파일 추가…** or by dragging files or folders
-  onto the window. A TCF becomes two entries, HT (RI) and FL.
+- Add TCF / CZI / OIR / TIFF files with **파일 추가…** or by dragging files or folders
+  onto the window. A TCF becomes one entry with HT and FL aligned on the HT
+  grid (channels `RI`, `CH0…`): FL is resampled by pixel size around the shared
+  image center plus a small automatic registration (at most 2 µm), and in Z
+  from `3DFL/OffsetZ` (the center of the FL stack measured from the bottom of
+  the HT volume). Turn off **TCF: HT와 FL을 정렬해 한 이미지로** to get HT and
+  FL as two entries instead (`read_image(path, aligned=True)` from Python).
+- **Time series** (TCF, CZI, OIR with a T axis, together with Z): a **T** slider
+  under the image; each timepoint is read from the file when selected. Export
+  writes every timepoint (RGB TIFFs become T-frame stacks with the time stamp
+  on each frame, the raw stack a TZCYX hyperstack) unless
+  **타임시리즈는 모든 시점 저장** is off.
+- **마커 tab**: size marker (scale bar) and time-series marker (time stamp).
+  Each has on/off, text on/off, font size, marker length/thickness, text-marker
+  gap, edge margin, position and color; the time stamp also has the unit
+  (auto, s, min, h, hh:mm:ss, mm:ss, frame), decimals, prefix, a time offset
+  and an optional progress bar. Used by the preview and every TIFF export.
 - **Per-channel LUT** with a live preview: show/hide, color, min/max (slider,
-  number or histogram), gamma, `Auto` (0.5–99.8 percentile) and `Min/Max`.
+  number or histogram), gamma, `Auto` (0.5–99.8 percentile) and `Min/Max`
+  (the current image's data min–max). The sliders and histogram span the
+  file's value range from its metadata (e.g. 0–4095 for 12-bit, 0–255 for
+  8-bit), shown under the histogram; the starting min/max is still the
+  automatic percentile range.
 - **Z**: MIP or any single slice.
 - **Crop** regions per image: press `Crop 추가 (드래그)` and drag on the image;
   repeat for more regions. Each region is listed, numbered on the image, can be
@@ -76,6 +104,26 @@ A GUI for working on a whole set of images at once:
 - **모든 데이터 일괄 저장** (File menu, Ctrl+Shift+E): for every image, one folder
   `<name>/` holding its TIFFs, `<name>_RoiSet.zip` and `<name>_cell_rois.csv`, plus
   a combined `cell_rois.csv` at the top.
+
+### Image ID and folder loading
+
+Every image gets an ID like `A9F3-2596-73B6`, derived from what the microscope
+wrote into the file, so it survives renaming and copying: the TCF `UniqueID`,
+the CZI file GUID, the OIR acquisition time plus channel UUIDs, the OME-TIFF
+`UUID`, or (for anything else) a hash of the file content. It is shown under the
+preview and in the file list tooltip (`cytosol/imageid.py`).
+
+- Every export carries it: TIFFs in their ImageJ `Info` and `Properties`
+  (`CytosolImageID`, plus the original file name as `CytosolSource`; Fiji:
+  Image › Show Info), every ROI in a RoiSet in its properties, and the
+  measurement CSVs in an `image_id` column.
+- **폴더 불러오기…** (File menu, Ctrl+Shift+O; dropping a folder does the same)
+  scans the folder and its subfolders and pairs files by ID: exported TIFFs are
+  listed with their original image; when the original is not there, the best
+  export opens in its place (full raw stack first) and keeps the original's ID;
+  RoiSets are loaded into the image with their ID. ROIs saved before IDs existed
+  are matched by file name (`<name>_RoiSet.zip`).
+- `ROI 불러오기…` asks before loading ROIs whose ID belongs to another image.
 
 ### 세포질 ROI tab (cell / cytosol ROIs)
 

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .cellroi import CellRois, RoiParams, auto_saturation, merged_preview, segment_cells
+from .imageid import roi_id
 from .lut import ImageItem, item_stem, match_channel
 
 EDGE_LABELS = [
@@ -559,17 +560,18 @@ class RoiPanel(QWidget):
 
     # ---- files ----------------------------------------------------------
 
-    def _save_kwargs(self):
+    def _save_kwargs(self, item):
         return dict(cells=self.save_cell.isChecked(), nuclei=self.save_nuc.isChecked(),
-                    cytosol=self.save_cyto.isChecked())
+                    cytosol=self.save_cyto.isChecked(), properties=item.id_properties())
 
     def _stem(self, item):
         return item_stem(item)
 
     def save_item(self, it, folder) -> list[dict]:
         """Write <stem>_RoiSet.zip into folder; returns the measurement rows."""
-        it.cells.save(Path(folder) / f'{self._stem(it)}_RoiSet.zip', **self._save_kwargs())
-        return [{'image': it.label, **r} for r in it.cells.measurements()]
+        it.cells.save(Path(folder) / f'{self._stem(it)}_RoiSet.zip', **self._save_kwargs(it))
+        return [{'image': it.label, 'image_id': it.image_id, **r}
+                for r in it.cells.measurements()]
 
     def save_current(self):
         it = self.item
@@ -585,7 +587,7 @@ class RoiPanel(QWidget):
         if '.roi' in flt and not path.lower().endswith('.roi'):
             path = str(Path(path).with_suffix('.roi'))
         try:
-            files = it.cells.save(path, **self._save_kwargs())
+            files = it.cells.save(path, **self._save_kwargs(it))
         except Exception as exc:
             traceback.print_exc()
             QMessageBox.warning(self, '저장 실패', str(exc))
@@ -600,19 +602,32 @@ class RoiPanel(QWidget):
             self, 'ROI 불러오기', str(it.path.parent), 'ImageJ ROI (*.zip *.roi)')
         if not files:
             return
+        other = {i for i in map(roi_id, files) if i and i != it.image_id}
+        if other:
+            r = QMessageBox.question(
+                self, 'ROI 불러오기',
+                f'이 ROI는 다른 이미지(ID {", ".join(sorted(other))})에서 저장된 것입니다.\n'
+                f'현재 이미지 ID: {it.image_id}\n그래도 불러올까요?')
+            if r != QMessageBox.StandardButton.Yes:
+                return
         if it.cells is not None and len(it.cells) and not self._confirm_load():
             return
         try:
-            h, w = it.image.data.shape[-2:]
-            it.cells = CellRois.load(files, (h, w), it.pixel_um)
+            self.load_into(it, files)
         except Exception as exc:
             traceback.print_exc()
             QMessageBox.warning(self, '불러오기 실패', str(exc))
             return
-        self.selected = 0
-        self.refresh_list()
-        self.win.update_preview()
         self.status(f'세포 ROI {len(it.cells)}개 불러옴')
+
+    def load_into(self, it: ImageItem, files):
+        """Replace an image's cell ROIs with the ones in files."""
+        h, w = it.image.data.shape[-2:]
+        it.cells = CellRois.load(files, (h, w), it.pixel_um)
+        if it is self.item:
+            self.selected = 0
+            self.refresh_list()
+            self.win.update_preview()
 
     def _confirm_load(self):
         r = QMessageBox.question(self, 'ROI 불러오기', '현재 ROI를 불러온 ROI로 바꿀까요?')
