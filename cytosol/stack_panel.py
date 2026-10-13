@@ -34,6 +34,7 @@ class StackPanel(QWidget):
 
     changed = Signal()
     saveRequested = Signal(str)  # 'current' or 'rotation'
+    refreshRequested = Signal()  # re-apply the LUT to the 3D structure
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -134,6 +135,12 @@ class StackPanel(QWidget):
         f3.addRow('Z 간격', srow)
         f3.addRow(self.spacing_note)
         f3.addRow('미리보기', self.preview)
+        self.refresh_btn = QPushButton('새로고침 (LUT 반영)')
+        self.refresh_btn.setToolTip(
+            '3D 구조는 이미지·Z 범위·미리보기 해상도마다 한 번만 만들고, 돌릴 때는 다시 읽지 않습니다.\n'
+            'LUT의 Min/Max/Gamma를 바꾼 뒤 이 버튼을 누르면 3D에 반영됩니다 (색과 표시는 바로 반영).')
+        self.refresh_btn.clicked.connect(self.refreshRequested.emit)
+        f3.addRow(self.refresh_btn)
         lay.addWidget(self.box_3d)
 
         # LUT
@@ -257,6 +264,11 @@ class StackPanel(QWidget):
         st.step = max(1, -(-max(h, w) // size)) if size else 1
 
     # ---- internals --------------------------------------------------------
+
+    def set_stale(self, stale: bool):
+        """Highlight the refresh button when the LUT changed since the 3D build."""
+        self.refresh_btn.setText('새로고침 (LUT 바뀜 · 눌러서 반영)' if stale else '새로고침 (LUT 반영)')
+        self.refresh_btn.setStyleSheet('font-weight: bold; color: #e0a000;' if stale else '')
 
     def _show_mode(self):
         three = self.mode_3d.isChecked()

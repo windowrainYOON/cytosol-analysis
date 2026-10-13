@@ -101,6 +101,71 @@ def _turntable(v: np.ndarray, theta: float, zr: float, method: str, width: int) 
     return out
 
 
+def _shear_warp(v: np.ndarray, theta: float, method: str, columns=None) -> np.ndarray:
+    """Fast turntable projection of one channel (Z, Y, X) with cubic voxels.
+
+    Shear-warp: the slices along the axis closest to the view are shifted by
+    whole pixels into an intermediate image and combined with an elementwise
+    max (or sum), which is one cheap vectorized step per slice; a single
+    reduceat then squeezes that image onto the screen columns. Positions are
+    within half a pixel of the exact turn (``_turntable``).
+    columns: optional callable returning v as contiguous (X, Y, Z), used for
+    the nearly edge-on case (much faster than strided column reads).
+    Returns (Y, width) float32; columns no voxel reaches are 0.
+    """
+    nz, ny, nx = v.shape
+    c, s = math.cos(theta), math.sin(theta)
+    width = projection_width(nx, nz, 1.0)
+    uc = (width - 1) / 2
+    if abs(c) >= abs(s):  # walk the Z slices, X runs along the screen
+        n, nfast, t, scale = nz, nx, s / c, c
+        slow_c, fast_c = (nz - 1) / 2, (nx - 1) / 2
+
+        def plane(k):
+            return v[k]
+    else:  # nearly edge-on: walk the X columns, Z runs along the screen
+        n, nfast, t, scale = nx, nz, c / s, s
+        slow_c, fast_c = (nx - 1) / 2, (nz - 1) / 2
+
+        vt = columns() if columns is not None else None
+
+        def plane(k):
+            return vt[k] if vt is not None else v[:, :, k].T
+    shifts = np.rint((np.arange(n) - slow_c) * t).astype(np.int64)
+    lo = int(shifts.min())
+    w_inter = nfast + int(shifts.max()) - lo
+    use_max = method == 'max'
+    inter = np.zeros((ny, w_inter), v.dtype if use_max else np.float32)
+    cover = None if use_max else np.zeros(w_inter + 1, np.float32)
+    for k in range(n):
+        a = int(shifts[k]) - lo
+        dst = inter[:, a:a + nfast]
+        if use_max:
+            np.maximum(dst, plane(k), out=dst)
+        else:
+            dst += plane(k)
+            cover[a] += 1
+            cover[a + nfast] -= 1
+    u = np.floor(scale * (np.arange(w_inter) + lo - fast_c) + uc + 0.5).astype(np.int64)
+    if scale < 0:
+        u, inter = u[::-1], inter[:, ::-1]
+        if cover is not None:
+            cover = np.r_[np.cumsum(cover[:-1])[::-1]]
+    elif cover is not None:
+        cover = np.cumsum(cover[:-1])
+    starts = np.flatnonzero(np.r_[True, np.diff(u) != 0])
+    cols = slice(int(u[0]), int(u[0]) + len(starts))
+    out = np.zeros((ny, width), np.float32)
+    if use_max:
+        out[:, cols] = np.maximum.reduceat(inter, starts, axis=1)
+        return out
+    sums = np.add.reduceat(inter, starts, axis=1)
+    cnt = np.add.reduceat(cover, starts)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        out[:, cols] = np.where(cnt > 0, sums / np.maximum(cnt, 1), 0)
+    return out
+
+
 def projection_width(nx: int, nz: int, zr: float) -> int:
     """Screen width that holds the volume at every angle."""
     return int(math.ceil(math.hypot(nx, nz * zr))) + 2
@@ -182,6 +247,18 @@ class StackView:
         self.result_key = None
         self.pixel_um = item.pixel_um
         self._synced = None
+        # 3D preview structure, built once per image / Z range / crop / preview
+        # size / timepoint (``build_3d``): the volume block-reduced to the
+        # preview size, then (``refresh_3d``) LUT-mapped to uint8 and
+        # interpolated to cubic voxels. Turning it only re-projects these few
+        # MB; the full volume is released as soon as the structure exists.
+        self.raw3d: np.ndarray | None = None  # (C, Z, Y', X') float32
+        self.raw3d_key = None
+        self.ref3d: np.ndarray | None = None  # (C, Y', X') max over Z, for the LUT panels
+        self.iso3d: np.ndarray | None = None  # (C, Z', Y', X') uint8, LUT applied
+        self.iso3d_key = None
+        self.iso3d_luts = None  # (vmin, vmax, gamma) per channel baked into iso3d
+        self._cols = {}  # (channel, axis) -> iso3d as contiguous (X, Y, Z) for steep angles
 
     @property
     def channels(self):
@@ -252,6 +329,91 @@ class StackView:
         return ('3d', st.method_3d, round(st.angle, 3), st.axis, round(self.z_ratio(), 6),
                 st.step) + common
 
+    # ---- 3D structure -----------------------------------------------------
+
+    def struct_key(self):
+        st = self.settings
+        z0, z1 = st.z_range(self.item.nz)
+        return (self.item.t, z0, z1, st.region, st.step, st.method_3d)
+
+    def build_3d(self):
+        """Block-reduce the chosen stack to the preview size (max blocks for a
+        brightest-point view, mean blocks for a mean view), then free the
+        full volume of a lazy image."""
+        st = self.settings
+        vol = self.stack()
+        s = st.step
+        c, z, y, x = vol.shape
+        sy, sx = min(s, y), min(s, x)
+        yc, xc = y // sy * sy, x // sx * sx
+        blocks = vol[:, :, :yc, :xc].reshape(c, z, yc // sy, sy, xc // sx, sx)
+        if st.method_3d == 'max':
+            raw = blocks.max(axis=(3, 5))
+        else:
+            raw = blocks.mean(axis=(3, 5), dtype=np.float32)
+        self.raw3d = np.ascontiguousarray(raw, np.float32)
+        self.ref3d = self.raw3d.max(axis=1)
+        self.raw3d_key = self.struct_key()
+        self.iso3d = None
+        self.item.image.release()
+
+    def lut_state(self):
+        return [(lut.vmin, lut.vmax, lut.gamma) for lut in self.luts]
+
+    def lut_stale(self) -> bool:
+        """LUT range/gamma changed since the 3D structure was last refreshed."""
+        return self.iso3d is not None and self.iso3d_luts != self.lut_state()
+
+    def iso_key(self):
+        return (self.raw3d_key, round(self.z_ratio() / self.settings.step, 6))
+
+    def refresh_3d(self):
+        """Apply the current LUTs (min, max, gamma) to the structure and
+        interpolate its slices to the XY voxel size. Colors and visibility
+        are applied when drawing, so they need no refresh."""
+        raw = self.raw3d
+        c, z, y, x = raw.shape
+        zr = self.z_ratio() / self.settings.step
+        nz = 1 if z == 1 else max(2, int(round((z - 1) * zr)) + 1)
+        pos = np.linspace(0, z - 1, nz)
+        iso = np.empty((c, nz, y, x), np.uint8)
+        for i in range(c):
+            n = self.luts[i].apply(raw[i]) * np.float32(255)  # (Z, Y', X') 0..255
+            for k, p in enumerate(pos):
+                j0 = int(p)
+                w = p - j0
+                sl = n[j0] if w < 1e-6 or j0 + 1 >= z else (1 - w) * n[j0] + w * n[j0 + 1]
+                iso[i, k] = sl + np.float32(0.5)  # rounds on the cast to uint8
+        self.iso3d = iso
+        self._cols = {}
+        self.iso3d_key = self.iso_key()
+        self.iso3d_luts = self.lut_state()
+        self.result_key = None
+
+    def render_3d(self) -> np.ndarray:
+        """(C, H, W) 0..1 (LUT already applied): the structure at the current angle."""
+        st = self.settings
+        theta = math.radians(st.angle)
+        out = []
+        for i, v in enumerate(self.iso3d):
+            if st.axis != 'Y':
+                v = v.transpose(0, 2, 1)
+
+            def columns(i=i, v=v):
+                key = (i, st.axis)
+                if key not in self._cols:
+                    self._cols[key] = np.ascontiguousarray(v.transpose(2, 1, 0))
+                return self._cols[key]
+            p = _shear_warp(v, theta, st.method_3d, columns)
+            if st.axis != 'Y':
+                p = p.T
+            out.append(p / np.float32(255))
+        return np.stack(out).astype(np.float32)
+
+    def structure_mb(self) -> float:
+        arrays = [self.raw3d, self.iso3d] + list(self._cols.values())
+        return sum(a.nbytes for a in arrays if a is not None) / 1e6
+
     def stack(self) -> np.ndarray:
         """(C, Z, Y, X) of the chosen slices and region (loads the volume)."""
         st = self.settings
@@ -273,8 +435,17 @@ class StackView:
         key = self.key()
         if not override and self.result is not None and key == self.result_key:
             return self.result
-        vol = self.stack()
         px = self.item.pixel_um
+        if st.mode == '3d' and not override:
+            if self.raw3d_key != self.struct_key():
+                self.build_3d()
+            if self.iso3d is None or self.iso3d_key != self.iso_key():
+                self.refresh_3d()
+            res = self.render_3d()
+            self.result, self.result_key = res, key
+            self.pixel_um = px * st.step if px else None
+            return res
+        vol = self.stack()
         if st.mode == '2d':
             res, pix = project_2d(vol, st.method_2d), px
         else:
@@ -290,6 +461,8 @@ class StackView:
     # ---- what the LUT panels use -----------------------------------------
 
     def planes(self) -> np.ndarray:
+        if self.settings.mode == '3d' and self.ref3d is not None:
+            return self.ref3d  # LUT panels show the raw values, not the LUT-mapped view
         return self.result if self.result is not None else self.item.planes()
 
     def value_range(self, index: int) -> tuple[float, float, str]:
@@ -307,13 +480,20 @@ class StackView:
     def auto_lut(self, index: int, low=0.5, high=99.8):
         self.luts[index].vmin, self.luts[index].vmax = auto_range(self.planes()[index], low, high)
 
-    def composite(self, planes: np.ndarray | None = None) -> np.ndarray:
+    def composite(self, planes: np.ndarray | None = None, lut_applied: bool = False) -> np.ndarray:
+        """RGB of raw projected values, or of a 3D preview whose LUT is
+        already applied (``lut_applied``: only color and visibility)."""
         planes = self.planes() if planes is None else planes
         rgb = np.zeros(planes.shape[1:] + (3,), np.float32)
         for plane, lut in zip(planes, self.luts):
             if lut.visible:
-                add_colored(rgb, lut.apply(plane), lut.color)
+                add_colored(rgb, plane if lut_applied else lut.apply(plane), lut.color)
         return np.clip(rgb, 0.0, 1.0, out=rgb)
+
+    def preview_rgb(self) -> np.ndarray:
+        """The current projection as RGB (3D: from the cached structure)."""
+        res = self.compute()
+        return self.composite(res, lut_applied=self.settings.mode == '3d')
 
     def decorate(self, rgb, scale: ScaleBarStyle | None, time: TimeStampStyle | None,
                  pixel_um: float | None = None, t: int | None = None) -> np.ndarray:
@@ -346,7 +526,7 @@ def export_projection(view: StackView, path_stem, scale=None, time=None, all_tim
 
     item = view.item
     times = list(range(item.nt)) if all_times and item.nt > 1 else [item.t]
-    step = 1 if full_res else None
+    step = 1 if full_res else view.settings.step  # always from the volume, raw values
     start_t = item.t
     rgb_frames, raw_frames = [], []
     pix = view.pixel_um

@@ -809,6 +809,7 @@ class MainWindow(QMainWindow):
         self.stack_panel = StackPanel()
         self.stack_panel.changed.connect(self.update_preview)
         self.stack_panel.saveRequested.connect(self.save_projection)
+        self.stack_panel.refreshRequested.connect(self._refresh_3d)
         self.stack_panels: list[ChannelPanel] = []
         self.stack_views: dict[int, StackView] = {}
         stack_scroll = QScrollArea()
@@ -1191,20 +1192,25 @@ class MainWindow(QMainWindow):
         self.update_preview(refit=True)
 
     def _stack_preview(self, refit=False):
+        import time
+
         it = self.current
         view = self._stack_view(it)
         self.stack_panel.read(region=it.crops[self._selected_crop()]
                               if self._selected_crop() is not None else None)
-        need_volume = view.key() != view.result_key
-        loading = need_volume and it.image.lazy and not it.image.volume_loaded
-        if loading:
-            self.stack_panel.status.setText('Z 스택 불러오는 중…')
+        three = view.settings.mode == '3d'
+        # what has to be (re)built: 2D needs the volume for every new projection,
+        # 3D only when its structure changes (not for a new angle)
+        rebuild = view.raw3d_key != view.struct_key() if three else view.key() != view.result_key
+        if rebuild and it.image.lazy and not it.image.volume_loaded:
+            self.stack_panel.status.setText('Z 스택 불러오는 중…' if not three
+                                            else '3D 구조 만드는 중 (한 번만)…')
             QApplication.processEvents()
-        import time
+        pulled = view.sync()  # linked LUTs first, so a new 3D structure uses them
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         t0 = time.perf_counter()
         try:
-            res = view.compute()
+            rgb = view.preview_rgb()
         except Exception as exc:
             traceback.print_exc()
             self.stack_panel.status.setText(f'투영 실패: {exc}')
@@ -1212,26 +1218,39 @@ class MainWindow(QMainWindow):
         finally:
             QApplication.restoreOverrideCursor()
         dt = time.perf_counter() - t0
-        pulled = view.sync()
+        pulled = view.sync() or pulled
         for p in self.stack_panels:
-            if need_volume:
-                p.bind(view)  # new projection: new histogram and range
+            if rebuild:
+                p.bind(view)  # new data: new histogram and range
             elif pulled:
                 p.refresh()
-        rgb = view.decorate(view.composite(res), self.markers.scale_style(),
-                            self.markers.time_style())
+        rgb = view.decorate(rgb, self.markers.scale_style(), self.markers.time_style())
         self._t_preview_label(it.t)
-        shape = res.shape
+        shape = rgb.shape
         self.canvas.set_image(to_qimage(rgb))
         if refit or shape != self._last_shape:
             self.canvas.fit()
         self._last_shape = shape
         self.canvas.show_crops([])
         self.roi_panel.draw_overlay(hidden=True)
-        if need_volume:
+        self.stack_panel.set_stale(three and view.lut_stale())
+        if three:
+            self.stack_panel.status.setText(
+                f'{view.describe()} · {dt:.2f}초 · 3D 구조 {view.structure_mb():.0f} MB'
+                + (' (새로 만듦)' if rebuild else ''))
+        elif rebuild:
             mb = it.image.data.nbytes / 1e6 if it.image.volume_loaded else 0
             self.stack_panel.status.setText(
                 f'{view.describe()} · {dt:.2f}초' + (f' · 스택 {mb:.0f} MB' if mb else ''))
+
+    def _refresh_3d(self):
+        it = self.current
+        if it is None:
+            return
+        view = self._stack_view(it)
+        if view.raw3d is not None:
+            view.refresh_3d()
+        self.update_preview()
 
     def save_projection(self, kind):
         it = self.current

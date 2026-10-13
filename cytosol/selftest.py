@@ -209,6 +209,17 @@ def run(out_dir) -> int:
             raise AssertionError('sum projection LUT not scaled by the slice count')
         view.settings.mode, view.settings.angle = '3d', 30
         res = view.compute()
+        built = view.raw3d_key
+        view.settings.angle = 60
+        view.preview_rgb()
+        if view.raw3d_key != built:
+            raise AssertionError('turning the 3D view rebuilt its structure')
+        view.luts[0].vmax *= 0.5
+        if not view.lut_stale():
+            raise AssertionError('LUT change not flagged for 3D refresh')
+        view.refresh_3d()
+        if view.lut_stale():
+            raise AssertionError('3D refresh did not apply the LUT')
         files = export_projection(view, out / 'stack' / 'selftest_3d')
         files += export_rotation(view, out / 'stack' / 'selftest_rot', range(0, 90, 30))
         return f'3D {res.shape}, {len(files)} files'
