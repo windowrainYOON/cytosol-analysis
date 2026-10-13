@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 format-check/
 figures/
+.venv-win/
