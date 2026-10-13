@@ -16,11 +16,14 @@ from typing import Callable
 import numpy as np
 
 
-@dataclass
+@dataclass(eq=False)
 class Image:
     """One image volume and its metadata."""
 
-    data: np.ndarray  # (C, Z, Y, X)
+    # (C, Z, Y, X) of timepoint ``t``. Files that set ``plane_loader`` (TCF)
+    # start with None here and the volume is read on first access to ``data``
+    # (see the property below); viewing single planes never needs it.
+    data: np.ndarray | None = field(repr=False)
     channels: list[str]
     voxel_size_um: dict[str, float | None]  # keys: 'Z', 'Y', 'X'; None if unknown
     metadata: dict = field(default_factory=dict)
@@ -38,17 +41,98 @@ class Image:
     # came from ('12-bit', 'uint16', ...); None where the file says nothing
     ranges: list[tuple[float, float] | None] = field(default_factory=list)
     range_notes: list[str] = field(default_factory=list)
+    # lazy files: plane_loader(t, z) returns the (C, Y, X) plane of one z index
+    # or 'mip' straight from the file, so browsing Z and T reads one plane at a
+    # time and the whole volume is only loaded for projections and exports
+    plane_loader: Callable[[int, object], np.ndarray] | None = field(default=None, repr=False)
+    shape: tuple | None = None  # (C, Z, Y, X); taken from data when not given
+
+    def __post_init__(self):
+        if self.shape is None:
+            self.shape = tuple(self._vol.shape)
+        self._vol_t = self.t if self._vol is not None else None
 
     @property
     def nt(self) -> int:
         return len(self.times)
 
+    @property
+    def lazy(self) -> bool:
+        return self.plane_loader is not None
+
+    @property
+    def volume_loaded(self) -> bool:
+        return self._vol is not None and self._vol_t == self.t
+
     def load_time(self, t: int):
-        """Make ``data`` hold timepoint t."""
+        """Make timepoint t current. A lazy image only drops the old volume."""
         t = int(np.clip(t, 0, self.nt - 1))
-        if t != self.t and self.loader is not None:
-            self.data = self.loader(t)
+        if t == self.t or self.loader is None:
+            return
+        if self.lazy:
+            self._vol = None
             self.t = t
+        else:
+            vol = self.loader(t)
+            self.t = t
+            self.data = vol
+
+    def release(self):
+        """Free the volume of a lazy image (it is read again when needed)."""
+        if self.lazy:
+            self._vol = None
+
+    def plane(self, z='mip') -> np.ndarray:
+        """(C, Y, X) of the current timepoint: 'mip' (max projection), 'mid' or a z index."""
+        if self.lazy:
+            return self.plane_loader(self.t, z)
+        data = self.data
+        if z == 'mip':
+            return data.max(axis=1)
+        if z == 'mid':
+            return data[:, data.shape[1] // 2]
+        return data[:, int(z)]
+
+
+def _get_data(self):
+    if self._vol is None or self._vol_t != self.t:
+        self._vol = None  # free the old volume before reading the next one
+        self._vol = self.loader(self.t)
+        self._vol_t = self.t
+    return self._vol
+
+
+def _set_data(self, value):
+    self._vol = value
+    self._vol_t = self.t
+    if value is not None:
+        self.shape = tuple(value.shape)
+
+
+Image.data = property(_get_data, _set_data)
+
+
+class _LRU:
+    """Tiny least-recently-used cache: get(key, make) calls make() on a miss."""
+
+    def __init__(self, size: int):
+        from collections import OrderedDict
+
+        self.size = size
+        self.items = OrderedDict()
+
+    def get(self, key, make):
+        if key in self.items:
+            self.items.move_to_end(key)
+            return self.items[key]
+        value = make()
+        self.items[key] = value
+        while len(self.items) > self.size:
+            self.items.popitem(last=False)
+        return value
+
+    def clear(self):
+        self.items.clear()
 
 
 def _decode(value):
@@ -180,6 +264,55 @@ def _tcf_ranges(grp, modality: str) -> list:
     return out
 
 
+def _tcf_shape(grp, modality: str) -> tuple:
+    """(C, Z, Y, X) of a TCF modality group, from its first timepoint."""
+    if 'FL' in modality:
+        chans = _tcf_fl_channels(grp)
+        ds = grp[chans[0]][_frames(grp[chans[0]])[0]]
+        c = len(chans)
+    else:
+        ds, c = grp[_frames(grp)[0]], 1
+    zyx = ds.shape if len(ds.shape) == 3 else (1,) + tuple(ds.shape)
+    return (c,) + tuple(int(v) for v in zyx)
+
+
+def _ri(raw: np.ndarray) -> np.ndarray:
+    """Stored uint16 RI*1e4 -> float32 RI, without a float64 temporary."""
+    out = np.empty(raw.shape, np.float32)
+    np.divide(raw, np.float32(TCF_RI_SCALE), out=out)
+    return out
+
+
+def _tcf_dataset_plane(ds, z) -> np.ndarray:
+    """One z plane of a TCF dataset as stored ('mip': max over z); only that
+    plane is read from the file."""
+    if ds.ndim == 2:
+        return ds[()]
+    if z == 'mip':
+        return ds[()].max(axis=0)
+    if z == 'mid':
+        z = ds.shape[0] // 2
+    return ds[int(z)]
+
+
+def _tcf_read_plane(f, modality: str, frame: str, z) -> np.ndarray:
+    """(C, Y, X) float32 of one z plane (or 'mip') of one timepoint."""
+    grp = f['Data'][modality]
+    if 'FL' in modality:
+        chans = _tcf_fl_channels(grp)
+        ref = next(grp[c][frame] for c in chans if frame in grp[c])
+        return np.stack([
+            _tcf_dataset_plane(grp[ch][frame], z).astype(np.float32) if frame in grp[ch]
+            else np.zeros(ref.shape[-2:], np.float32)  # channel not acquired at this time
+            for ch in chans
+        ])
+    if z == 'mip' and modality == '3D' and frame in f['Data'].get('2DMIP', {}):
+        raw = f['Data']['2DMIP'][frame][()]  # the file's own max projection of the 3D RI
+    else:
+        raw = _tcf_dataset_plane(grp[frame], z)
+    return _ri(raw)[None]
+
+
 def _tcf_read_frame(f, modality: str, frame: str) -> np.ndarray:
     """(C, Z, Y, X) float32 of one timepoint; RI as float, FL as raw counts."""
     grp = f['Data'][modality]
@@ -193,8 +326,11 @@ def _tcf_read_frame(f, modality: str, frame: str) -> np.ndarray:
                 arr = np.zeros(ref.shape, np.float32)
             planes.append(arr if arr.ndim == 3 else arr[None])
         return np.stack(planes)
-    arr = grp[frame][()].astype(np.float32) / TCF_RI_SCALE
+    arr = _ri(grp[frame][()])
     return (arr if arr.ndim == 3 else arr[None])[None]
+
+
+PLANE_CACHE = 8  # planes kept per lazy image, for flipping back and forth in Z/T
 
 
 def read_tcf(path, modality: str = '3D', timepoint: int = 0) -> Image:
@@ -202,8 +338,10 @@ def read_tcf(path, modality: str = '3D', timepoint: int = 0) -> Image:
 
     modality: '3D' or '2DMIP' (refractive index, returned as float RI),
     '3DFL' or '2DFLMIP' (fluorescence, raw counts per channel).
-    Every timepoint of a time-lapse file is reachable through
-    ``Image.load_time``; ``timepoint`` picks the one loaded first.
+    Lazy: planes are read one at a time (``Image.plane``) and the volume of
+    the current timepoint only when ``Image.data`` is used. Every timepoint
+    of a time-lapse file is reachable through ``Image.load_time``;
+    ``timepoint`` picks the current one.
     """
     import h5py
 
@@ -217,12 +355,14 @@ def read_tcf(path, modality: str = '3D', timepoint: int = 0) -> Image:
             'X': ga['ResolutionX'],
         }
         if 'FL' in modality:
-            channels, colors, frames, times = _tcf_fl_info(grp)
+            channels, colors = _tcf_fl_info(grp)[:2]
+            frames = _frames(grp[_tcf_fl_channels(grp)[0]])
+            times = _frame_times(grp[_tcf_fl_channels(grp)[0]])
         else:
             channels, colors = ['RI'], [(1.0, 1.0, 1.0)]
             frames, times = _frames(grp), _frame_times(grp)
         timepoint = int(np.clip(timepoint, 0, len(frames) - 1))
-        data = _tcf_read_frame(f, modality, frames[timepoint])
+        shape = _tcf_shape(grp, modality)
         ranges = _tcf_ranges(grp, modality)
         meta = {
             'format': 'TCF',
@@ -231,14 +371,22 @@ def read_tcf(path, modality: str = '3D', timepoint: int = 0) -> Image:
             'device': _attrs(f['Info/Device']) if 'Info/Device' in f else {},
             'group': ga,
         }
+    planes = _LRU(PLANE_CACHE)
 
     def loader(t):
         with h5py.File(path, 'r') as f:
             return _tcf_read_frame(f, modality, frames[t])
 
+    def plane_loader(t, z):
+        def make():
+            with h5py.File(path, 'r') as f:
+                return _tcf_read_plane(f, modality, frames[t], z)
+        return planes.get((t, z), make)
+
     t0 = times[0] if times else 0.0
-    return _set_ranges(Image(data, channels, vx, meta, colors,
-                             times=[t - t0 for t in times], t=timepoint, loader=loader), ranges)
+    return _set_ranges(Image(None, channels, vx, meta, colors,
+                             times=[t - t0 for t in times], t=timepoint, loader=loader,
+                             plane_loader=plane_loader, shape=shape), ranges)
 
 
 # ---- HT + FL on one pixel grid ---------------------------------------------
@@ -254,53 +402,87 @@ def _grid(ga) -> dict:
     }
 
 
-def _resample_fl(fl: np.ndarray, ht_grid: dict, fl_grid: dict, fl_z0_um: float | None,
-                 shift_px=(0.0, 0.0)) -> np.ndarray:
-    """Resample a (C, Zf, Yf, Xf) FL volume onto the HT grid (C, Zh, Yh, Xh).
+class _FlMapper:
+    """Where FL voxels land on the HT grid.
 
     XY: both images share the optical axis, so the pixel centers are aligned
     at the image center and scaled by the pixel size ratio; ``shift_px`` adds a
     residual (dy, dx) offset in FL pixels. Z: HT slice k sits at (k + 0.5) * dz
     from the bottom of the HT volume and FL slice j at fl_z0_um + (j + 0.5) * dz;
-    HT slices outside the FL range are 0. With fl_z0_um None (a 2D HT image)
-    the FL volume is max-projected.
+    HT slices outside the FL range get 0. With fl_z0_um None (a 2D HT image)
+    the FL volume is max-projected onto every HT slice (``project``).
     """
-    from scipy import ndimage as ndi
 
-    h, f = ht_grid, fl_grid
-    sy, sx = h['ry'] / f['ry'], h['rx'] / f['rx']
-    oy = (f['ny'] - 1) / 2 - sy * (h['ny'] - 1) / 2 + shift_px[0]
-    ox = (f['nx'] - 1) / 2 - sx * (h['nx'] - 1) / 2 + shift_px[1]
+    def __init__(self, ht_grid: dict, fl_grid: dict, fl_z0_um: float | None, shift_px=(0.0, 0.0),
+                 zf: int | None = None):
+        h, f = ht_grid, fl_grid
+        zf = f['nz'] if zf is None else zf
+        self.shape = (h['ny'], h['nx'])
+        self.sy, self.sx = h['ry'] / f['ry'], h['rx'] / f['rx']
+        self.oy = (f['ny'] - 1) / 2 - self.sy * (h['ny'] - 1) / 2 + shift_px[0]
+        self.ox = (f['nx'] - 1) / 2 - self.sx * (h['nx'] - 1) / 2 + shift_px[1]
+        self.project = fl_z0_um is None or h['nz'] == 1 or zf == 1
+        self.zf = zf
+        self.jf = []
+        if not self.project:
+            # fractional FL slice index of every HT slice
+            zpos = (np.arange(h['nz']) + 0.5) * h['rz']
+            self.jf = list((zpos - fl_z0_um) / f['rz'] - 0.5)
+        self.covered = [k for k, v in enumerate(self.jf) if -0.5 <= v <= zf - 0.5]
+        self.need = sorted({j for k in self.covered for j in self.weights(k)[:2]})
 
-    def xy(plane):
-        return ndi.affine_transform(plane, [sy, sx], offset=[oy, ox],
-                                    output_shape=(h['ny'], h['nx']), order=1)
+    def xy(self, plane: np.ndarray) -> np.ndarray:
+        from scipy import ndimage as ndi
 
-    c, zf = fl.shape[:2]
-    if fl_z0_um is None or h['nz'] == 1 or zf == 1:
-        return np.stack([xy(fl[i].max(axis=0))[None] for i in range(c)]).astype(np.float32)
-    out = np.zeros((c, h['nz'], h['ny'], h['nx']), np.float32)
-    # fractional FL slice index of every HT slice
-    zpos = (np.arange(h['nz']) + 0.5) * h['rz']
-    jf = (zpos - fl_z0_um) / f['rz'] - 0.5
-    need = sorted({j for v in jf if -0.5 <= v <= zf - 0.5
-                   for j in (int(np.floor(v)), int(np.ceil(v))) if 0 <= j < zf})
+        return ndi.affine_transform(plane, [self.sy, self.sx], offset=[self.oy, self.ox],
+                                    output_shape=self.shape, order=1)
+
+    def weights(self, k: int):
+        """(j0, j1, w): HT slice k = (1 - w) * FL j0 + w * FL j1, or None outside FL."""
+        v = self.jf[k] if k < len(self.jf) else -1.0
+        if v < -0.5 or v > self.zf - 0.5:
+            return None
+        v = float(np.clip(v, 0, self.zf - 1))
+        j0, j1 = int(np.floor(v)), int(np.ceil(v))
+        return j0, j1, v - j0
+
+    def slices(self, fl_channel: np.ndarray) -> dict:
+        """XY-resampled FL slices one channel needs: {j: plane} or {'proj': plane}."""
+        if self.project:
+            return {'proj': self.xy(fl_channel.max(axis=0))}
+        return {j: self.xy(fl_channel[j]) for j in self.need}
+
+    def plane(self, slices: dict, k: int):
+        """FL on HT slice k from ``slices`` (None where FL has no data)."""
+        if self.project:
+            return slices['proj']
+        w = self.weights(k)
+        if w is None:
+            return None
+        j0, j1, a = w
+        return slices[j0] if j1 == j0 else (1 - a) * slices[j0] + a * slices[j1]
+
+
+def _resample_fl(fl: np.ndarray, ht_grid: dict, fl_grid: dict, fl_z0_um: float | None,
+                 shift_px=(0.0, 0.0)) -> np.ndarray:
+    """Resample a (C, Zf, Yf, Xf) FL volume onto the HT grid (C, Zh, Yh, Xh)
+    (or (C, 1, Yh, Xh) when projected); see _FlMapper."""
+    m = _FlMapper(ht_grid, fl_grid, fl_z0_um, shift_px, zf=fl.shape[1])
+    c = fl.shape[0]
+    if m.project:
+        return np.stack([m.slices(fl[i])['proj'][None] for i in range(c)]).astype(np.float32)
+    out = np.zeros((c, ht_grid['nz']) + m.shape, np.float32)
     for i in range(c):
-        cache = {j: xy(fl[i, j]) for j in need}
-        for k, v in enumerate(jf):
-            if v < -0.5 or v > zf - 0.5:
-                continue
-            v = float(np.clip(v, 0, zf - 1))
-            j0, j1 = int(np.floor(v)), int(np.ceil(v))
-            w = v - j0
-            out[i, k] = cache[j0] if j1 == j0 else (1 - w) * cache[j0] + w * cache[j1]
+        sl = m.slices(fl[i])
+        for k in m.covered:
+            out[i, k] = m.plane(sl, k)
     return out
 
 
-def _fl_shift(ht: np.ndarray, fl: np.ndarray, ht_grid, fl_grid) -> tuple[float, float]:
+def _fl_shift(ht_mip: np.ndarray, fl: np.ndarray, ht_grid, fl_grid) -> tuple[float, float]:
     """Residual (dy, dx) of FL against HT in FL pixels, from the projections.
 
-    Each FL channel is registered to the HT max projection by phase
+    Each FL channel is registered to the HT max projection (Y, X) by phase
     correlation; shifts larger than MAX_FL_SHIFT_UM (a failed match, e.g. a
     channel with no structure shared with RI) are discarded. Returns the
     accepted shift with the smallest error, or (0, 0).
@@ -315,7 +497,7 @@ def _fl_shift(ht: np.ndarray, fl: np.ndarray, ht_grid, fl_grid) -> tuple[float, 
 
     import warnings
 
-    ref = norm(ht[0].max(axis=0))
+    ref = norm(ht_mip)
     if not ref.std() > 0:
         return 0.0, 0.0
     flp = _resample_fl(fl, ht_grid, fl_grid, None)
@@ -353,6 +535,10 @@ def read_tcf_aligned(path, timepoint: int = 0, refine: bool = True) -> Image:
     Uses 3D/3DFL when present, else 2DMIP/2DFLMIP. Falls back to a single
     modality when the file has only HT or only FL. Time series: HT timepoints
     drive the time axis and each one gets the FL timepoint nearest in time.
+
+    Lazy like read_tcf: a plane needs one HT slice (or the stored 2DMIP) and
+    the few FL slices around it; the resampled FL slices of the last two
+    timepoints are kept, so moving through Z only interpolates.
     """
     import h5py
 
@@ -370,6 +556,7 @@ def read_tcf_aligned(path, timepoint: int = 0, refine: bool = True) -> Image:
         ht_frames, ht_times = _frames(hg), _frame_times(hg)
         fl_names, fl_colors, fl_frames, fl_times = _tcf_fl_info(fg)
         ranges = _tcf_ranges(hg, ht_mod) + _tcf_ranges(fg, fl_mod)
+        ht_shape = _tcf_shape(hg, ht_mod)
         meta = {
             'format': 'TCF',
             'modality': f'{ht_mod}+{fl_mod}',
@@ -391,29 +578,73 @@ def read_tcf_aligned(path, timepoint: int = 0, refine: bool = True) -> Image:
         fl_for = list(range(len(ht_frames)))
     else:
         fl_for = [int(np.argmin([abs(ft - t) for ft in fl_times])) for t in ht_times]
-    state = {'shift': None}
+    nfl, nz = len(fl_names), ht_shape[1]
+    state = {}  # 'mapper': _FlMapper, built once the XY shift is known
+    fl_cache = _LRU(2)  # t -> per FL channel the XY-resampled slices
+    plane_cache = _LRU(PLANE_CACHE)
+
+    def fl_slices(t):
+        def make():
+            with h5py.File(path, 'r') as f:
+                fl = _tcf_read_frame(f, fl_mod, fl_frames[fl_for[t]])
+                if 'mapper' not in state:
+                    shift = (0.0, 0.0)
+                    if refine:
+                        ht_mip = _tcf_read_plane(f, ht_mod, ht_frames[t], 'mip')[0]
+                        shift = _fl_shift(ht_mip, fl, ht_grid, fl_grid)
+                    meta['fl_shift_um'] = (shift[0] * fl_grid['ry'], shift[1] * fl_grid['rx'])
+                    state['mapper'] = _FlMapper(ht_grid, fl_grid, fl_z0, shift, zf=fl.shape[1])
+            m = state['mapper']
+            return [m.slices(fl[i]) for i in range(nfl)]
+        return fl_cache.get(t, make)
+
+    def plane_loader(t, z):
+        def make():
+            sl = fl_slices(t)
+            m = state['mapper']
+            with h5py.File(path, 'r') as f:
+                ht = _tcf_read_plane(f, ht_mod, ht_frames[t], z)[0]
+            out = np.zeros((1 + nfl,) + ht.shape, np.float32)
+            out[0] = ht
+            for i in range(nfl):
+                if z == 'mip':
+                    for k in ([0] if m.project else m.covered):
+                        np.maximum(out[1 + i], m.plane(sl[i], k), out=out[1 + i])
+                else:
+                    p = m.plane(sl[i], nz // 2 if z == 'mid' else int(z))
+                    if p is not None:
+                        out[1 + i] = p
+            return out
+        return plane_cache.get((t, z), make)
 
     def loader(t):
+        sl = fl_slices(t)
+        m = state['mapper']
+        # zeros: FL slices outside the FL stack are never written, so (on
+        # calloc-backed allocations) they cost no memory
+        out = np.zeros((1 + nfl,) + tuple(ht_shape[1:]), np.float32)
         with h5py.File(path, 'r') as f:
-            ht = _tcf_read_frame(f, ht_mod, ht_frames[t])
-            fl = _tcf_read_frame(f, fl_mod, fl_frames[fl_for[t]])
-        if state['shift'] is None:
-            state['shift'] = _fl_shift(ht, fl, ht_grid, fl_grid) if refine else (0.0, 0.0)
-            meta['fl_shift_um'] = (state['shift'][0] * fl_grid['ry'],
-                                   state['shift'][1] * fl_grid['rx'])
-        flr = _resample_fl(fl, ht_grid, fl_grid, fl_z0, state['shift'])
-        out = np.empty((1 + flr.shape[0],) + ht.shape[1:], np.float32)
-        out[:1] = ht
-        out[1:] = flr  # broadcasts a projected FL over every slice of a 2D HT
+            raw = hg_read(f, t)
+        np.divide(raw.reshape(ht_shape[1:]), np.float32(TCF_RI_SCALE), out=out[0])
+        del raw
+        for i in range(nfl):
+            if m.project:
+                out[1 + i] = sl[i]['proj']  # broadcasts over every slice of a 2D HT
+            else:
+                for k in m.covered:
+                    out[1 + i, k] = m.plane(sl[i], k)
         return out
 
+    def hg_read(f, t):
+        return f['Data'][ht_mod][ht_frames[t]][()]
+
     timepoint = int(np.clip(timepoint, 0, len(ht_frames) - 1))
-    data = loader(timepoint)
     meta['fl_z0_um'] = fl_z0
     vx = {'Z': ha.get('ResolutionZ'), 'Y': ha['ResolutionY'], 'X': ha['ResolutionX']}
     t0 = ht_times[0] if ht_times else 0.0
-    return _set_ranges(Image(data, ['RI'] + fl_names, vx, meta, [(1.0, 1.0, 1.0)] + fl_colors,
-                             times=[t - t0 for t in ht_times], t=timepoint, loader=loader),
+    return _set_ranges(Image(None, ['RI'] + fl_names, vx, meta, [(1.0, 1.0, 1.0)] + fl_colors,
+                             times=[t - t0 for t in ht_times], t=timepoint, loader=loader,
+                             plane_loader=plane_loader, shape=(1 + nfl,) + tuple(ht_shape[1:])),
                        ranges)
 
 

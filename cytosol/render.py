@@ -73,12 +73,7 @@ def channel_colors(image: Image, overrides: dict | None = None) -> list:
 
 def project(image: Image, z='mip') -> np.ndarray:
     """Return a (C, Y, X) plane: 'mip' (max projection), 'mid' or a z index."""
-    data = image.data
-    if z == 'mip':
-        return data.max(axis=1)
-    if z == 'mid':
-        return data[:, data.shape[1] // 2]
-    return data[:, int(z)]
+    return image.plane(z)
 
 
 def normalize(plane: np.ndarray, low=0.5, high=99.8) -> np.ndarray:

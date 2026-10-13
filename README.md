@@ -85,7 +85,23 @@ A GUI for working on a whole set of images at once:
   file's value range from its metadata (e.g. 0–4095 for 12-bit, 0–255 for
   8-bit), shown under the histogram; the starting min/max is still the
   automatic percentile range.
-- **Z**: MIP or any single slice.
+- **Z**: a vertical slider left of the image (bottom = first slice, with the
+  slice number and height in µm), or **MIP**. TCF files are read lazily: a
+  slice is one HT plane plus the few FL slices around it (the stored 2DMIP for
+  MIP), and the whole volume is only loaded for the stack tab and exports and
+  freed again afterwards, so browsing Z and T stays quick and each open TCF
+  costs a few hundred MB instead of its whole volume.
+- **스택 tab** (Z-stack projection; the image area shows the result while it is open):
+  - 2D projection of a Z range (or the selected crop): max, mean, sum, min, SD, median.
+  - 3D projection: the volume turned about the Y (left–right) or X (up–down)
+    axis by any angle, brightest point or mean along the view. Z spacing is
+    automatic (voxel Z / pixel size from the metadata) or a manual value in µm.
+    The preview is subsampled for speed; saving can use full resolution.
+  - LUT: starts from the LUT tab's LUT; with **LUT 탭과 연동** on, changes go
+    both ways (a sum's range is scaled by the slice count), off gives the
+    projection its own LUT.
+  - Saving: the current projection (RGB with markers + float32 ImageJ stack,
+    optionally every timepoint) or a 3D rotation series as a TIFF stack.
 - **Crop** regions per image: press `Crop 추가 (드래그)` and drag on the image;
   repeat for more regions. Each region is listed, numbered on the image, can be
   previewed alone, deleted, or copied to every image with the same pixel size.

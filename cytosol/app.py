@@ -10,7 +10,7 @@ import traceback
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QColorDialog,
-    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -66,6 +65,8 @@ from .lut import (
 from .imageid import ROI_EXT, match_roi, plan_pairing
 from .marker_panel import MarkerPanel
 from .roi_panel import RoiPanel, write_csv
+from .stack import StackView, export_projection, export_rotation
+from .stack_panel import StackPanel
 from .version import __version__
 
 SUPPORTED = ('.tcf', '.czi', '.oir', '.tif', '.tiff')
@@ -379,6 +380,8 @@ class Histogram(QWidget):
 
     def set_data(self, plane, lo, hi):
         self.lo, self.hi = lo, hi
+        if plane.size > 1_000_000:  # a quarter of the pixels draws the same curve
+            plane = plane[::2, ::2]
         counts, _ = np.histogram(plane, bins=128, range=(lo, hi))
         self.counts = np.log1p(counts.astype(np.float64))
         self.update()
@@ -659,8 +662,21 @@ class MainWindow(QMainWindow):
         # center: canvas + view controls
         self.canvas = Canvas()
         self.canvas.cropDrawn.connect(self._crop_drawn)
-        self.z_combo = QComboBox()
-        self.z_combo.currentIndexChanged.connect(self._z_changed)
+        # Z: vertical slider left of the image (bottom = first slice)
+        self.z_slider = QSlider(Qt.Orientation.Vertical)
+        self.z_slider.setMinimum(1)
+        self.z_slider.setToolTip('Z 슬라이스 (아래 = 첫 슬라이스). 휠이나 ↑↓ / PageUp·PageDown으로도 움직입니다.')
+        self.z_slider.valueChanged.connect(self._z_slider_moved)
+        self.z_mip = QCheckBox('MIP')
+        self.z_mip.setToolTip('모든 Z의 최대값 투영으로 보기 (슬라이더를 움직이면 해당 슬라이스로 전환)')
+        self.z_mip.toggled.connect(self._z_mip_toggled)
+        self.z_label = QLabel()
+        self.z_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.z_label.setMinimumWidth(56)
+        self._z_timer = QTimer(self)
+        self._z_timer.setSingleShot(True)
+        self._z_timer.setInterval(10)  # coalesce fast slider moves into one redraw
+        self._z_timer.timeout.connect(self._z_changed)
         self.crop_btn.toggled.connect(self.canvas.set_crop_mode)
         self.show_crop_btn = QCheckBox('선택한 Crop만 보기')
         self.show_crop_btn.toggled.connect(lambda _: self.update_preview(refit=True))
@@ -677,8 +693,6 @@ class MainWindow(QMainWindow):
         self.info = QLabel()
 
         bar1 = QHBoxLayout()
-        bar1.addWidget(QLabel('Z'))
-        bar1.addWidget(self.z_combo)
         bar1.addWidget(self.show_crop_btn)
         bar1.addStretch()
         bar1.addWidget(fit_btn)
@@ -694,7 +708,19 @@ class MainWindow(QMainWindow):
         center = QWidget()
         cl = QVBoxLayout(center)
         cl.addLayout(bar1)
-        cl.addWidget(self.canvas, 1)
+        self.z_col = QWidget()
+        zl = QVBoxLayout(self.z_col)
+        zl.setContentsMargins(0, 0, 0, 0)
+        ztitle = QLabel('Z')
+        ztitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        zl.addWidget(ztitle)
+        zl.addWidget(self.z_label)
+        zl.addWidget(self.z_slider, 1, Qt.AlignmentFlag.AlignHCenter)
+        zl.addWidget(self.z_mip)
+        view_row = QHBoxLayout()
+        view_row.addWidget(self.z_col)
+        view_row.addWidget(self.canvas, 1)
+        cl.addLayout(view_row, 1)
         cl.addWidget(self.t_row)
         cl.addLayout(bar2)
 
@@ -780,6 +806,18 @@ class MainWindow(QMainWindow):
         marker_scroll.setWidgetResizable(True)
         marker_scroll.setWidget(self.markers)
         right.addTab(marker_scroll, '마커')
+        self.stack_panel = StackPanel()
+        self.stack_panel.changed.connect(self.update_preview)
+        self.stack_panel.saveRequested.connect(self.save_projection)
+        self.stack_panels: list[ChannelPanel] = []
+        self.stack_views: dict[int, StackView] = {}
+        stack_scroll = QScrollArea()
+        stack_scroll.setWidgetResizable(True)
+        stack_scroll.setWidget(self.stack_panel)
+        self.stack_tab = right.addTab(stack_scroll, '스택')
+        right.currentChanged.connect(self._tab_changed)
+        self.right_tabs = right
+        self._last_shape = None
         right.setMinimumWidth(380)
 
         split = QSplitter()
@@ -950,6 +988,8 @@ class MainWindow(QMainWindow):
         if row < 0:
             return
         removed = self.items.pop(row)
+        self.stack_views.pop(id(removed), None)
+        removed.image.release()
         self.file_list.takeItem(row)
         if self.figure_win is not None:
             self.figure_win.spec.forget_item(removed)
@@ -981,17 +1021,12 @@ class MainWindow(QMainWindow):
     def _select(self, row):
         if row < 0 or row >= len(self.items):
             return
+        prev = self.current
+        if prev is not None and prev is not self.items[row]:
+            prev.image.release()  # a lazy (TCF) volume is read again when needed
         self.current = self.items[row]
         it = self.current
-        self.z_combo.blockSignals(True)
-        self.z_combo.clear()
-        self.z_combo.addItem('MIP', 'mip')
-        for z in range(it.nz):
-            self.z_combo.addItem(f'z {z}', z)
-        idx = self.z_combo.findData(it.z)
-        self.z_combo.setCurrentIndex(max(idx, 0))
-        self.z_combo.setEnabled(it.nz > 1)
-        self.z_combo.blockSignals(False)
+        self._sync_z_widgets()
         self.t_slider.blockSignals(True)
         self.t_slider.setRange(0, max(it.nt - 1, 0))
         self.t_slider.setValue(it.t)
@@ -1001,7 +1036,9 @@ class MainWindow(QMainWindow):
         self._build_panels()
         self.roi_panel.bind(it)
         self._refresh_crop_list(select=0)
-        c, z, h, w = it.image.data.shape
+        self.stack_panel.bind(self._stack_view(it))
+        self._build_stack_panels()
+        c, z, h, w = it.image.shape
         px = it.pixel_um
         self.info.setText(
             f'{w}×{h} px, Z {z}, C {c}' + (f', T {it.nt}' if it.nt > 1 else '')
@@ -1052,12 +1089,201 @@ class MainWindow(QMainWindow):
             p.bind(it)
         self.update_preview()
 
-    def _z_changed(self, _):
+    # ---- Z ----------------------------------------------------------------
+
+    def _sync_z_widgets(self):
+        it = self.current
+        nz = it.nz if it is not None else 1
+        for w in (self.z_slider, self.z_mip):
+            w.blockSignals(True)
+        self.z_slider.setRange(1, max(nz, 1))
+        self.z_slider.setPageStep(max(1, nz // 10))
+        mip = it is None or it.z == 'mip'
+        z = nz // 2 if mip or it.z == 'mid' else int(it.z)
+        self.z_slider.setValue(z + 1)
+        self.z_mip.setChecked(mip)
+        for w in (self.z_slider, self.z_mip):
+            w.blockSignals(False)
+        self.z_col.setEnabled(nz > 1 and not self._stack_on())
+        self._z_label()
+
+    def _z_label(self):
+        it = self.current
+        if it is None:
+            self.z_label.setText('')
+        elif it.z == 'mip':
+            self.z_label.setText(f'MIP\n({it.nz})')
+        else:
+            vz = it.image.voxel_size_um.get('Z')
+            z = self.z_slider.value()
+            um = f'\n{(z - 1) * float(vz):.1f} µm' if vz else ''
+            self.z_label.setText(f'{z}/{it.nz}{um}')
+
+    def _z_slider_moved(self, _):
+        if self.z_mip.isChecked():
+            self.z_mip.blockSignals(True)
+            self.z_mip.setChecked(False)
+            self.z_mip.blockSignals(False)
+        self._z_timer.start()
+
+    def _z_mip_toggled(self, _):
+        self._z_timer.start()
+
+    def _z_changed(self):
+        it = self.current
+        if it is None:
+            return
+        z = 'mip' if self.z_mip.isChecked() else self.z_slider.value() - 1
+        if z == it.z:
+            return
+        it.z = z
+        self._z_label()
+        try:
+            for p in self.panels:
+                p.bind(it)
+        except Exception as exc:
+            traceback.print_exc()
+            QMessageBox.warning(self, 'Z 불러오기 실패', str(exc))
+            return
+        self.update_preview()
+
+    # ---- stack tab ---------------------------------------------------------
+
+    def _stack_on(self) -> bool:
+        return getattr(self, 'right_tabs', None) is not None \
+            and self.right_tabs.currentIndex() == self.stack_tab
+
+    def _stack_view(self, it) -> StackView:
+        view = self.stack_views.get(id(it))
+        if view is None:
+            view = self.stack_views[id(it)] = StackView(it)
+        return view
+
+    def _build_stack_panels(self):
+        for p in self.stack_panels:
+            p.setParent(None)
+            p.deleteLater()
+        self.stack_panels = []
         if self.current is None:
             return
-        self.current.z = self.z_combo.currentData()
-        for p in self.panels:
-            p.bind(self.current)
+        view = self._stack_view(self.current)
+        for i in range(len(self.current.channels)):
+            panel = ChannelPanel(i)
+            panel.all_btn.hide()
+            panel.bind(view)
+            panel.changed.connect(self._stack_lut_edited)
+            self.stack_panel.lut_box.addWidget(panel)
+            self.stack_panels.append(panel)
+
+    def _stack_lut_edited(self):
+        view = self.stack_views.get(id(self.current))
+        if view is not None and view.linked:
+            view.push()
+            for p in self.panels:
+                p.refresh()
+        self.update_preview()
+
+    def _tab_changed(self, _):
+        it = self.current
+        if not self._stack_on() and it is not None:
+            it.image.release()
+        self._sync_z_widgets()
+        self.update_preview(refit=True)
+
+    def _stack_preview(self, refit=False):
+        it = self.current
+        view = self._stack_view(it)
+        self.stack_panel.read(region=it.crops[self._selected_crop()]
+                              if self._selected_crop() is not None else None)
+        need_volume = view.key() != view.result_key
+        loading = need_volume and it.image.lazy and not it.image.volume_loaded
+        if loading:
+            self.stack_panel.status.setText('Z 스택 불러오는 중…')
+            QApplication.processEvents()
+        import time
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        t0 = time.perf_counter()
+        try:
+            res = view.compute()
+        except Exception as exc:
+            traceback.print_exc()
+            self.stack_panel.status.setText(f'투영 실패: {exc}')
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+        dt = time.perf_counter() - t0
+        pulled = view.sync()
+        for p in self.stack_panels:
+            if need_volume:
+                p.bind(view)  # new projection: new histogram and range
+            elif pulled:
+                p.refresh()
+        rgb = view.decorate(view.composite(res), self.markers.scale_style(),
+                            self.markers.time_style())
+        self._t_preview_label(it.t)
+        shape = res.shape
+        self.canvas.set_image(to_qimage(rgb))
+        if refit or shape != self._last_shape:
+            self.canvas.fit()
+        self._last_shape = shape
+        self.canvas.show_crops([])
+        self.roi_panel.draw_overlay(hidden=True)
+        if need_volume:
+            mb = it.image.data.nbytes / 1e6 if it.image.volume_loaded else 0
+            self.stack_panel.status.setText(
+                f'{view.describe()} · {dt:.2f}초' + (f' · 스택 {mb:.0f} MB' if mb else ''))
+
+    def save_projection(self, kind):
+        it = self.current
+        if it is None:
+            return
+        view = self._stack_view(it)
+        self.stack_panel.read(region=it.crops[self._selected_crop()]
+                              if self._selected_crop() is not None else None)
+        st = view.settings
+        tag = (f'{st.mode}_{st.method_2d}' if st.mode == '2d'
+               else f'3d_{st.method_3d}_{st.axis}{st.angle:.0f}')
+        if kind == 'rotation':
+            tag = f'3d_{st.method_3d}_{st.axis}rotation'
+        default = str(it.path.with_name(f'{item_stem(it)}_{tag}.tif'))
+        path, _ = QFileDialog.getSaveFileName(self, '투영 저장', default, 'TIFF (*.tif)')
+        if not path:
+            return
+        stem = path[:-4] if path.lower().endswith('.tif') else path
+        full = self.stack_panel.save_full.isChecked()
+        if kind == 'rotation':
+            a, b, step = (self.stack_panel.rot_from.value(), self.stack_panel.rot_to.value(),
+                          self.stack_panel.rot_step.value())
+            angles = list(range(a, b + 1, step)) if b >= a else list(range(a, b - 1, -step))
+            n = len(angles)
+        else:
+            n = it.nt if self.stack_panel.save_all_t.isChecked() and it.nt > 1 else 1
+        prog = QProgressDialog('투영 저장 중…', '취소', 0, n, self)
+        prog.setWindowModality(Qt.WindowModality.WindowModal)
+
+        def progress(i, total):
+            prog.setValue(i)
+            QApplication.processEvents()
+            return not prog.wasCanceled()
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            if kind == 'rotation':
+                files = export_rotation(view, stem, angles, self.markers.scale_style(),
+                                        self.markers.time_style(), full_res=full,
+                                        progress=progress)
+            else:
+                files = export_projection(view, stem, self.markers.scale_style(),
+                                          self.markers.time_style(),
+                                          all_times=n > 1, full_res=full, progress=progress)
+        except Exception as exc:
+            traceback.print_exc()
+            QMessageBox.warning(self, '저장 실패', str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+            prog.setValue(n)
+        QMessageBox.information(self, '저장 완료', '\n'.join(files) or '저장한 파일이 없습니다.')
         self.update_preview()
 
     # ---- preview --------------------------------------------------------
@@ -1073,6 +1299,10 @@ class MainWindow(QMainWindow):
         it = self.current
         if it is None:
             return
+        if self._stack_on():
+            self._stack_preview(refit=refit)
+            return
+        self._last_shape = None
         sel = self._selected_crop()
         only = self.show_crop_btn.isChecked() and sel is not None
         if self.roi_panel.show_input() and not only:
@@ -1129,10 +1359,10 @@ class MainWindow(QMainWindow):
         it = self.current
         if it is None or not it.crops:
             return
-        shape = it.image.data.shape[-2:]
+        shape = it.image.shape[-2:]
         n = 0
         for other in self.items:
-            if other is not it and other.image.data.shape[-2:] == shape:
+            if other is not it and other.image.shape[-2:] == shape:
                 other.crops = list(it.crops)
                 n += 1
         self.statusBar().showMessage(f'Crop 영역 {len(it.crops)}개를 이미지 {n}개에 복사했습니다.')
@@ -1231,6 +1461,7 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 errors.append(f'{it.label}: {exc}')
                 traceback.print_exc()
+            it.image.release()
         prog.setValue(len(items))
         msg = f'TIFF {len(files)}개를 저장했습니다.\n{out}'
         if errors:
@@ -1266,6 +1497,7 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 errors.append(f'{it.label}: {exc}')
                 traceback.print_exc()
+            it.image.release()
         prog.setValue(len(items))
         write_csv(Path(out) / 'cell_rois.csv', rows)
         msg = f'이미지 {n_done}개를 이미지별 폴더에 저장했습니다 (TIFF {n_files}개'

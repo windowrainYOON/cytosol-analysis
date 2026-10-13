@@ -640,7 +640,7 @@ class RoiPanel(QWidget):
         if it is None:
             return None
         if it.cells is None:
-            h, w = it.image.data.shape[-2:]
+            h, w = it.image.shape[-2:]
             it.cells = CellRois(np.zeros((h, w), np.int32), None, it.pixel_um)
         return it.cells
 
@@ -811,7 +811,7 @@ class RoiPanel(QWidget):
 
     def load_into(self, it: ImageItem, files):
         """Replace an image's cell ROIs with the ones in files."""
-        h, w = it.image.data.shape[-2:]
+        h, w = it.image.shape[-2:]
         it.cells = CellRois.load(files, (h, w), it.pixel_um)
         if it is self.item:
             self.selected = 0

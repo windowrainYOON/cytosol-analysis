@@ -94,7 +94,7 @@ class FigureCell:
             if self.region is not None:
                 x0, y0, x1, y1 = self.region
                 return y1 - y0, x1 - x0
-            return tuple(self.item.image.data.shape[-2:])
+            return tuple(self.item.image.shape[-2:])
         return self.rgb.shape[:2]
 
     def describe(self) -> str:
