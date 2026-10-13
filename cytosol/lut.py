@@ -45,6 +45,13 @@ class ChannelLUT:
         return cls(**d)
 
 
+def add_colored(rgb: np.ndarray, n: np.ndarray, color) -> None:
+    """rgb += n * color, one color component at a time (no (Y, X, 3) temporary)."""
+    for k, c in enumerate(color):
+        if c:
+            rgb[..., k] += n if c == 1 else n * np.float32(c)
+
+
 def auto_range(plane: np.ndarray, low=0.5, high=99.8) -> tuple[float, float]:
     """Percentile range, ignoring NaNs; falls back to min/max when flat."""
     lo, hi = np.nanpercentile(plane, [low, high])
@@ -117,7 +124,7 @@ class ImageItem:
 
     @property
     def nz(self) -> int:
-        return self.image.data.shape[1]
+        return self.image.shape[1]
 
     @property
     def nt(self) -> int:
@@ -206,12 +213,12 @@ class ImageItem:
                 continue
             if channels is None and not lut.visible:
                 continue
-            rgb += lut.apply(plane)[..., None] * np.asarray(lut.color, np.float32)
-        return np.clip(rgb, 0.0, 1.0)
+            add_colored(rgb, lut.apply(plane), lut.color)
+        return np.clip(rgb, 0.0, 1.0, out=rgb)
 
     def clip_region(self, x0, y0, x1, y1):
         """Clamp a rectangle to the image; None if it is smaller than 2 px."""
-        h, w = self.image.data.shape[-2:]
+        h, w = self.image.shape[-2:]
         x0, x1 = sorted((int(np.clip(round(x0), 0, w)), int(np.clip(round(x1), 0, w))))
         y0, y1 = sorted((int(np.clip(round(y0), 0, h)), int(np.clip(round(y1), 0, h))))
         return None if (x1 - x0 < 2 or y1 - y0 < 2) else (x0, y0, x1, y1)
