@@ -139,7 +139,14 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
    borders instead (as in the mito-tracking project's `cell_roi.py`).
    Cells cut by the image frame are, by default, cut again along a new border
    `안쪽 경계 여백` inside the frame, so no ROI runs along the frame
-   (`제외` drops them, `그대로 두기` keeps them as they are). `모든 이미지` runs the
+   (`제외` drops them, `그대로 두기` keeps them as they are).
+   **핵 threshold / 세포 threshold**: by default Otsu picks them; tick `수동` to
+   set either by hand (spin box or slider), starting from the automatic value.
+   The nucleus threshold is in nucleus-channel values (lightly smoothed), the
+   cell threshold in background-channel values (cells brighter, gaps darker;
+   keep it below `배경 포화값`). `threshold 영역 미리보기` paints what passes
+   each threshold (yellow: cell, blue: nucleus) and updates as you change them.
+   The values used are shown after detection. `모든 이미지` runs the
    same settings on every loaded image, matching channels by name.
 3. **확인 · 수정**: click a cell to select it (or pick it in the list). With
    `더하기 (A)` / `빼기 (S)` drag a freehand area to add it to or remove it from

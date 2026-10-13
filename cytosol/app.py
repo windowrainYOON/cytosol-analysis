@@ -1072,7 +1072,7 @@ class MainWindow(QMainWindow):
             return
         sel = self._selected_crop()
         only = self.show_crop_btn.isChecked() and sel is not None
-        if self.roi_panel.input_view.isChecked() and not only:
+        if self.roi_panel.show_input() and not only:
             rgb = self.roi_panel.preview_rgb(it)
         else:
             rgb = it.composite(it.crops[sel] if only else None)
