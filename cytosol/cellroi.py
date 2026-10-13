@@ -29,7 +29,7 @@ CellRois holds the result as a label image and supports the GUI edits
 from __future__ import annotations
 
 import zipfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -206,46 +206,65 @@ def _cell_threshold(dens, bg, sat, p: RoiParams) -> tuple[float, float]:
     return t01, lo + t01 * span
 
 
-def threshold_preview(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
-                      p: RoiParams | None = None) -> dict:
+class ThresholdPreview:
     """Masks and values of the two thresholds without segmenting, for a live preview.
 
-    Returns {'cell': bool (Y, X), 'nuc': bool (Y, X) or None,
-             'cell_threshold', 'nuc_threshold' (raw units; Otsu where not manual),
-             'saturation'}.
+    The expensive part (saturating, downsampling, smoothing the nucleus
+    channel) runs once here; calling the object with new thresholds is cheap,
+    so a slider can update the preview while it moves.
     """
-    p = p or RoiParams()
-    px_um = px_um or 0.1
-    H, W = bg.shape
-    k = max(1, int(round(p.work_px_um / px_um)))
-    wpx = px_um * k
 
-    def down(a):
-        a = a.astype(np.float32)
-        if k == 1:
-            return a
-        h, w = (H // k) * k, (W // k) * k
-        return a[:h, :w].reshape(h // k, k, w // k, k).mean((1, 3))
+    def __init__(self, bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
+                 p: RoiParams | None = None):
+        self.p = p = p or RoiParams()
+        px_um = px_um or 0.1
+        self.shape = H, W = bg.shape
+        self.k = k = max(1, int(round(p.work_px_um / px_um)))
+        self.wpx = px_um * k
 
-    def up(m):
-        if k > 1:
-            m = np.repeat(np.repeat(m, k, 0), k, 1)
+        def down(a):
+            a = a.astype(np.float32)
+            if k == 1:
+                return a
+            h, w = (H // k) * k, (W // k) * k
+            return a[:h, :w].reshape(h // k, k, w // k, k).mean((1, 3))
+
+        self.bg = bg
+        self.saturation = p.saturation if p.saturation else auto_saturation(bg, px_um, p)
+        self.merged = down(brighten(bg, self.saturation))
+        self.nuc_signal = None if nuc is None else nucleus_signal(down(nuc), self.wpx)
+
+    def _up(self, m):
+        H, W = self.shape
+        if self.k > 1:
+            m = np.repeat(np.repeat(m, self.k, 0), self.k, 1)
         out = np.zeros((H, W), bool)
         out[:m.shape[0], :m.shape[1]] = m[:H, :W]
         return out
 
-    sat = p.saturation if p.saturation else auto_saturation(bg, px_um, p)
-    merged = down(brighten(bg, sat))
-    nmask = nuc_thr = None
-    if nuc is not None:
-        s = nucleus_signal(down(nuc), wpx)
-        nuc_thr = nucleus_threshold(s, p)
-        nmask = s > nuc_thr
-        merged = np.maximum(merged, nmask.astype(np.float32))
-    dens = filters.gaussian(merged, max(p.smooth_um / wpx, 0.5))
-    t01, cell_thr = _cell_threshold(dens, bg, sat, p)
-    return {'cell': up(dens > t01), 'nuc': None if nmask is None else up(nmask),
-            'cell_threshold': cell_thr, 'nuc_threshold': nuc_thr, 'saturation': sat}
+    def __call__(self, nuc_threshold: float | None = None,
+                 cell_threshold: float | None = None) -> dict:
+        """{'cell': bool (Y, X), 'nuc': bool (Y, X) or None,
+            'cell_threshold', 'nuc_threshold' (raw units; Otsu where None),
+            'saturation'}."""
+        p = replace(self.p, nuc_threshold=nuc_threshold, cell_threshold=cell_threshold)
+        merged, nmask, nuc_thr = self.merged, None, None
+        if self.nuc_signal is not None:
+            nuc_thr = nucleus_threshold(self.nuc_signal, p)
+            nmask = self.nuc_signal > nuc_thr
+            merged = np.maximum(merged, nmask.astype(np.float32))
+        dens = filters.gaussian(merged, max(p.smooth_um / self.wpx, 0.5))
+        t01, cell_thr = _cell_threshold(dens, self.bg, self.saturation, p)
+        return {'cell': self._up(dens > t01), 'nuc': None if nmask is None else self._up(nmask),
+                'cell_threshold': cell_thr, 'nuc_threshold': nuc_thr,
+                'saturation': self.saturation}
+
+
+def threshold_preview(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
+                      p: RoiParams | None = None) -> dict:
+    """ThresholdPreview evaluated once at p's thresholds."""
+    p = p or RoiParams()
+    return ThresholdPreview(bg, nuc, px_um, p)(p.nuc_threshold, p.cell_threshold)
 
 
 def segment_cells(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
@@ -509,6 +528,39 @@ class CellRois:
         self.labels[_largest(m)] = l
         self.status[l] = 'ok'
         return l
+
+    def find_nucleus(self, l: int, nuc: np.ndarray, threshold: float | None = None,
+                     min_nucleus_um2: float = RoiParams.min_nucleus_um2) -> bool:
+        """Detect the nucleus of cell l in a nucleus-channel plane (no undo step).
+
+        The lightly smoothed channel is thresholded inside the cell (Otsu over
+        the whole plane when threshold is None, as the detection does); the
+        largest piece that is big enough becomes the cell's nucleus.
+        """
+        cell = self.labels == l
+        if not cell.any():
+            return False
+        px = self.px_um or 0.1
+        ys, xs = np.nonzero(cell)
+        pad = max(4, int(round(2 / px)))
+        y0, x0 = max(ys.min() - pad, 0), max(xs.min() - pad, 0)
+        y1, x1 = ys.max() + pad + 1, xs.max() + pad + 1
+        s = nucleus_signal(nuc[y0:y1, x0:x1], px)
+        if threshold is None:
+            threshold = float(filters.threshold_otsu(nucleus_signal(nuc, px)))
+        m = (s > threshold) & cell[y0:y1, x0:x1]
+        m = ndi.binary_opening(m, morphology.disk(max(1, round(0.4 / px))))
+        m = ndi.binary_fill_holes(m) & cell[y0:y1, x0:x1]
+        if self.nuclei is None:
+            self.nuclei = np.zeros(self.shape, np.int32)
+        self.nuclei[self.nuclei == l] = 0
+        if not m.any():
+            return False
+        m = _largest(m)
+        if m.sum() * px ** 2 < min_nucleus_um2:
+            return False
+        self.nuclei[y0:y1, x0:x1][m] = l
+        return True
 
     def delete(self, l: int):
         self._push()

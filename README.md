@@ -145,12 +145,15 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
    The nucleus threshold is in nucleus-channel values (lightly smoothed), the
    cell threshold in background-channel values (cells brighter, gaps darker;
    keep it below `배경 포화값`). `threshold 영역 미리보기` paints what passes
-   each threshold (yellow: cell, blue: nucleus) and updates as you change them.
+   each threshold (yellow: cell, blue: nucleus) in the main view and follows
+   the sliders live while you drag them; changing a manual threshold turns it on.
    The values used are shown after detection. `모든 이미지` runs the
    same settings on every loaded image, matching channels by name.
 3. **확인 · 수정**: click a cell to select it (or pick it in the list). With
    `더하기 (A)` / `빼기 (S)` drag a freehand area to add it to or remove it from
-   the selected cell; `새 세포 (N)` turns the drawn area into a new cell.
+   the selected cell; `새 세포 (N)` turns the drawn area into a new cell and,
+   with a nucleus channel, finds its nucleus inside it (at the manual nucleus
+   threshold, else the one the detection used, else Otsu).
    `Delete` deletes the selected cell, `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo,
    right-button drag pans in any tool. A cell is always one filled piece
    (ImageJ polygon ROIs cannot have holes), so cut from its border.
