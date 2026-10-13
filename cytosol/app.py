@@ -57,11 +57,12 @@ from .lut import (
     ImageItem,
     apply_lut_to_all,
     export_item,
+    item_stem,
     load_preset,
     save_preset,
 )
 from .render import add_scale_bar
-from .roi_panel import RoiPanel
+from .roi_panel import RoiPanel, write_csv
 
 SUPPORTED = ('.tcf', '.czi', '.oir')
 SLIDER_STEPS = 1000
@@ -670,6 +671,9 @@ class MainWindow(QMainWindow):
         self.exp_channels = QCheckBox('채널별 RGB')
         self.exp_raw = QCheckBox('원본값 스택 (ImageJ, 모든 Z)')
         self.exp_raw.setChecked(True)
+        self.exp_per_image = QCheckBox('이미지별 폴더에 나눠 저장')
+        self.exp_per_image.setChecked(True)
+        self.exp_per_image.setToolTip('폴더 안에 이미지마다 하위 폴더를 만들어 그 이미지의 파일을 넣습니다.')
         exp_btn = QPushButton('모든 이미지 TIFF로 저장…')
         exp_btn.clicked.connect(self.export_all)
         exp_one = QPushButton('현재 이미지만 저장…')
@@ -681,12 +685,16 @@ class MainWindow(QMainWindow):
         row.addWidget(self.exp_full)
         row.addWidget(self.exp_crops)
         el.addLayout(row)
-        for w in (self.exp_composite, self.exp_channels, self.exp_raw):
+        for w in (self.exp_composite, self.exp_channels, self.exp_raw, self.exp_per_image):
             el.addWidget(w)
         row = QHBoxLayout()
         row.addWidget(exp_one)
         row.addWidget(exp_btn)
         el.addLayout(row)
+        all_btn = QPushButton('모든 데이터 일괄 저장 (TIFF + ROI, 이미지별 폴더)…')
+        all_btn.setToolTip('이미지마다 폴더를 하나씩 만들어 그 이미지의 TIFF, ROI, 측정값 CSV를 모두 넣습니다.')
+        all_btn.clicked.connect(self.export_everything)
+        el.addWidget(all_btn)
 
         lut_tab = QWidget()
         rl = QVBoxLayout(lut_tab)
@@ -695,6 +703,8 @@ class MainWindow(QMainWindow):
         rl.addWidget(batch)
         rl.addWidget(exp)
         self.roi_panel = RoiPanel(self)
+        self.exp_per_image.toggled.connect(self.roi_panel.per_image.setChecked)
+        self.roi_panel.per_image.toggled.connect(self.exp_per_image.setChecked)
         roi_scroll = QScrollArea()
         roi_scroll.setWidgetResizable(True)
         roi_scroll.setWidget(self.roi_panel)
@@ -719,6 +729,10 @@ class MainWindow(QMainWindow):
         menu = self.menuBar().addMenu('파일')
         menu.addAction(open_act)
         menu.addAction(export_act)
+        everything_act = QAction('모든 데이터 일괄 저장 (이미지별 폴더)…', self)
+        everything_act.setShortcut(QKeySequence('Ctrl+Shift+E'))
+        everything_act.triggered.connect(self.export_everything)
+        menu.addAction(everything_act)
         fig_act = QAction('Figure 만들기…', self)
         fig_act.setShortcut(QKeySequence('Ctrl+Shift+F'))
         fig_act.triggered.connect(self.open_figure)
@@ -979,13 +993,8 @@ class MainWindow(QMainWindow):
     def export_all(self):
         self._export(self.items)
 
-    def _export(self, items):
-        if not items:
-            return
-        out = QFileDialog.getExistingDirectory(self, '저장할 폴더 선택')
-        if not out:
-            return
-        kwargs = dict(
+    def _export_kwargs(self):
+        return dict(
             full=self.exp_full.isChecked(),
             crops=self.exp_crops.isChecked(),
             composite=self.exp_composite.isChecked(),
@@ -995,6 +1004,15 @@ class MainWindow(QMainWindow):
             scale_um=self.scale_um.value() or None,
             scale_position=self.scale_pos.currentText(),
         )
+
+    def _export(self, items):
+        if not items:
+            return
+        out = QFileDialog.getExistingDirectory(self, '저장할 폴더 선택')
+        if not out:
+            return
+        kwargs = self._export_kwargs()
+        per_image = self.exp_per_image.isChecked()
         prog = QProgressDialog('저장 중…', '취소', 0, len(items), self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
         files, errors = [], []
@@ -1005,12 +1023,51 @@ class MainWindow(QMainWindow):
             prog.setValue(i)
             QApplication.processEvents()
             try:
-                files += export_item(it, out, **kwargs)
+                folder = Path(out) / item_stem(it) if per_image else Path(out)
+                files += export_item(it, folder, **kwargs)
             except Exception as exc:
                 errors.append(f'{it.label}: {exc}')
                 traceback.print_exc()
         prog.setValue(len(items))
         msg = f'TIFF {len(files)}개를 저장했습니다.\n{out}'
+        if errors:
+            msg += '\n\n실패:\n' + '\n'.join(errors)
+        QMessageBox.information(self, '저장 완료', msg)
+
+    def export_everything(self):
+        """Save every image's TIFFs, ROIs and measurements into its own folder."""
+        items = self.items
+        if not items:
+            return
+        out = QFileDialog.getExistingDirectory(self, '저장할 폴더 선택')
+        if not out:
+            return
+        kwargs = self._export_kwargs()
+        prog = QProgressDialog('저장 중…', '취소', 0, len(items), self)
+        prog.setWindowModality(Qt.WindowModality.WindowModal)
+        n_done, n_files, rows, errors = 0, 0, [], []
+        for i, it in enumerate(items):
+            if prog.wasCanceled():
+                break
+            prog.setLabelText(f'저장 중: {it.label}')
+            prog.setValue(i)
+            QApplication.processEvents()
+            folder = Path(out) / item_stem(it)
+            try:
+                n_files += len(export_item(it, folder, **kwargs))
+                if it.cells is not None and len(it.cells):
+                    item_rows = self.roi_panel.save_item(it, folder)
+                    write_csv(folder / f'{item_stem(it)}_cell_rois.csv', item_rows)
+                    rows += item_rows
+                n_done += 1
+            except Exception as exc:
+                errors.append(f'{it.label}: {exc}')
+                traceback.print_exc()
+        prog.setValue(len(items))
+        write_csv(Path(out) / 'cell_rois.csv', rows)
+        msg = f'이미지 {n_done}개를 이미지별 폴더에 저장했습니다 (TIFF {n_files}개'
+        msg += f', ROI 측정 {len(rows)}행).' if rows else ').'
+        msg += f'\n{out}'
         if errors:
             msg += '\n\n실패:\n' + '\n'.join(errors)
         QMessageBox.information(self, '저장 완료', msg)
