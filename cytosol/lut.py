@@ -302,8 +302,25 @@ def _safe(text: str) -> str:
 
 
 def item_stem(item: ImageItem) -> str:
-    """File-name stem for an image; also the name of its per-image folder."""
+    """File-name stem for an image."""
     return _safe(Path(item.label).stem if item.label == item.path.name else item.label)
+
+
+def item_folder(item: ImageItem) -> str:
+    """Name of an image's per-image export folder: <stem>_<image ID>, so
+    images that share a file name never write into the same folder."""
+    iid = item.image_id
+    return f'{item_stem(item)}_{_safe(iid)}' if iid else item_stem(item)
+
+
+def unique_stems(items) -> dict[int, str]:
+    """File-name stem per item (keyed by id(item)) for saving several images
+    into one folder: images whose stems collide get their ID appended."""
+    count: dict[str, int] = {}
+    for it in items:
+        count[item_stem(it)] = count.get(item_stem(it), 0) + 1
+    return {id(it): item_folder(it) if count[item_stem(it)] > 1 else item_stem(it)
+            for it in items}
 
 
 def _imagej_luts(item: ImageItem) -> list[np.ndarray]:
@@ -325,6 +342,7 @@ def export_item(
     scale: ScaleBarStyle | None = None,
     time: TimeStampStyle | None = None,
     all_times: bool = True,
+    stem: str | None = None,
 ) -> list[str]:
     """Write TIFFs for one image; returns the written paths.
 
@@ -340,12 +358,13 @@ def export_item(
     all_times: for a time series, write every timepoint (RGB TIFFs become
     T-frame stacks, the raw stack a TZCYX hyperstack); otherwise only the
     current one.
+    stem: file-name prefix (default item_stem(item)).
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     scale = ScaleBarStyle() if scale is None else scale
     time = TimeStampStyle() if time is None else time
-    stem = item_stem(item)
+    stem = stem or item_stem(item)
     regions = []
     if full:
         regions.append(('full', None))
@@ -453,6 +472,7 @@ def _open_raw(item, region, path: Path, nt: int, res, meta_common, interval):
 
 def export_all(items, out_dir, **kwargs) -> list[str]:
     files = []
+    stems = unique_stems(items)
     for item in items:
-        files += export_item(item, out_dir, **kwargs)
+        files += export_item(item, out_dir, stem=stems[id(item)], **kwargs)
     return files
