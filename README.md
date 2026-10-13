@@ -105,6 +105,26 @@ A GUI for working on a whole set of images at once:
   `<name>/` holding its TIFFs, `<name>_RoiSet.zip` and `<name>_cell_rois.csv`, plus
   a combined `cell_rois.csv` at the top.
 
+### Image ID and folder loading
+
+Every image gets an ID like `A9F3-2596-73B6`, derived from what the microscope
+wrote into the file, so it survives renaming and copying: the TCF `UniqueID`,
+the CZI file GUID, the OIR acquisition time plus channel UUIDs, the OME-TIFF
+`UUID`, or (for anything else) a hash of the file content. It is shown under the
+preview and in the file list tooltip (`cytosol/imageid.py`).
+
+- Every export carries it: TIFFs in their ImageJ `Info` and `Properties`
+  (`CytosolImageID`, plus the original file name as `CytosolSource`; Fiji:
+  Image › Show Info), every ROI in a RoiSet in its properties, and the
+  measurement CSVs in an `image_id` column.
+- **폴더 불러오기…** (File menu, Ctrl+Shift+O; dropping a folder does the same)
+  scans the folder and its subfolders and pairs files by ID: exported TIFFs are
+  listed with their original image; when the original is not there, the best
+  export opens in its place (full raw stack first) and keeps the original's ID;
+  RoiSets are loaded into the image with their ID. ROIs saved before IDs existed
+  are matched by file name (`<name>_RoiSet.zip`).
+- `ROI 불러오기…` asks before loading ROIs whose ID belongs to another image.
+
 ### 세포질 ROI tab (cell / cytosol ROIs)
 
 1. **채널 역할**: pick the nucleus channel (or `없음` when there is none) and the

@@ -71,6 +71,10 @@ class ImageItem:
     # {'nuc': channel index or None, 'bg': channel index}
     cells: object = None
     roi_roles: dict = field(default_factory=dict)
+    # set when one file gives several items (a TCF opened as HT and FL)
+    id_suffix: str = ''
+    # exported files found with this image when a folder was loaded
+    linked: list[Path] = field(default_factory=list)
     _planes: np.ndarray | None = field(default=None, repr=False)
     _planes_z: object = field(default=None, repr=False)
 
@@ -87,6 +91,29 @@ class ImageItem:
     @property
     def channels(self) -> list[str]:
         return self.image.channels
+
+    @property
+    def image_id(self) -> str:
+        """Stable per-acquisition ID (cytosol.imageid), carried by every export."""
+        base = self.image.metadata.get('image_id') or ''
+        return f'{base}-{self.id_suffix}' if self.id_suffix else base
+
+    @property
+    def source_name(self) -> str:
+        """File name of the original acquisition (kept through exported TIFFs)."""
+        return self.image.metadata.get('source_name') or self.path.name
+
+    def id_properties(self) -> dict:
+        """Key/value pairs written into exported TIFFs and ROIs."""
+        from .imageid import ID_KEY, SOURCE_KEY
+
+        return {ID_KEY: self.image_id, SOURCE_KEY: self.source_name}
+
+    def id_metadata(self) -> dict:
+        """ImageJ metadata entries (Info text and Properties) carrying the ID."""
+        props = self.id_properties()
+        return {'Info': '\n'.join(f'{k} = {v}' for k, v in props.items()),
+                'Properties': props}
 
     @property
     def nz(self) -> int:
@@ -388,9 +415,10 @@ def _export_regions(item, regions, composite, per_channel, raw_stack,
             rgb_meta['axes'] = 'TYXS'
             if interval:
                 rgb_meta['finterval'] = interval
+        rgb_meta.update(item.id_metadata())
         tifffile.imwrite(
             path, np.stack(frames) if series else frames[0], photometric='rgb',
-            resolution=res, metadata=rgb_meta or None, imagej=bool(px) or series,
+            resolution=res, metadata=rgb_meta, imagej=True,
         )
         written.append(str(path))
     written += [str(path) for path, _ in raw_jobs]
@@ -411,6 +439,7 @@ def _open_raw(item, region, path: Path, nt: int, res, meta_common, interval):
         'Ranges': tuple(v for lut in item.luts for v in (lut.vmin, lut.vmax)),
         'Labels': list(item.channels),
         **meta_common,
+        **item.id_metadata(),
     }
     vz = item.image.voxel_size_um.get('Z')
     if vz:

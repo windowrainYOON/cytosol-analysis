@@ -430,6 +430,7 @@ def read_czi(path, scene: int | None = None) -> Image:
         img = czi.scenes[scene] if scene is not None else czi
         x = img.asxarray()
         xml = czi.metadata()
+        guid = czi.header.primary_file_guid or czi.header.file_guid
     x = x.squeeze()
     for ax in ('C', 'Z'):
         if ax not in x.dims:
@@ -453,6 +454,8 @@ def read_czi(path, scene: int | None = None) -> Image:
         'objective': x.attrs.get('objective'),
         'channel_info': x.attrs.get('channels'),
         'xml': xml,
+        'file_guid': str(guid) if guid else None,
+        'scene': scene,
     }
     names = [str(c) for c in x.coords['C'].values]
     info = x.attrs.get('channels') or {}
@@ -504,6 +507,8 @@ def _argb_to_rgb(value):
 
 def read_oir(path) -> Image:
     """Read an OIR file via oirfile."""
+    import re
+
     import oirfile
 
     with oirfile.OirFile(path) as oir:
@@ -516,7 +521,10 @@ def read_oir(path) -> Image:
             'scanner': oir.scanner,
             'channel_info': oir.channels,
             'xml': dict(oir.xml_metadata),
+            'channel_ids': sorted({c.id for c in oir.channels if c.id}),
         }
+    m = re.search(r'<base:systemName>([^<]*)', str(meta['xml']))
+    meta['system'] = m.group(1) if m else ''
     for ax in ('C', 'Z'):
         if ax not in x.dims:
             x = x.expand_dims(ax)
@@ -664,6 +672,11 @@ def read_tiff(path) -> Image:
     meta = {'format': 'TIFF', 'axes': axes, 'imagej': {k: v for k, v in ij.items()
                                                         if k not in ('LUTs', 'Ranges')},
             'ome': ome is not None, 'bits': bits}
+    from .imageid import ids_from_imagej
+
+    meta['image_id'], meta['source_name'] = ids_from_imagej(ij)
+    if ome:
+        meta['ome_uuid'] = o['uuid']
     image = Image(data[0], names, vx, meta, colors, times=times,
                   loader=(lambda t: data[t]) if nt > 1 else None)
     return _set_ranges(image, [rng] * nc)
@@ -722,11 +735,12 @@ def _ome_info(xml: str) -> dict:
     """Voxel size, channel names/colors, significant bits and time step from OME-XML."""
     import xml.etree.ElementTree as ET
 
-    out = {'voxel': {}, 'names': [], 'colors': [], 'bits': None, 'dt': None}
+    out = {'voxel': {}, 'names': [], 'colors': [], 'bits': None, 'dt': None, 'uuid': None}
     try:
         root = ET.fromstring(xml)
     except ET.ParseError:
         return out
+    out['uuid'] = root.get('UUID')
     pix = next((e for e in root.iter() if e.tag.endswith('}Pixels') or e.tag == 'Pixels'), None)
     if pix is None:
         return out
@@ -752,16 +766,22 @@ def _ome_info(xml: str) -> dict:
 
 
 def read_image(path, **kwargs) -> Image:
-    """Dispatch on file extension."""
+    """Dispatch on file extension; the image gets its ID (cytosol.imageid)
+    in ``metadata['image_id']``."""
+    from .imageid import assign_id
+
     ext = Path(path).suffix.lower()
     if ext == '.tcf':
         if kwargs.pop('aligned', False):
-            return read_tcf_aligned(path, **kwargs)
-        return read_tcf(path, **kwargs)
-    if ext == '.czi':
-        return read_czi(path, **kwargs)
-    if ext == '.oir':
-        return read_oir(path, **kwargs)
-    if ext in ('.tif', '.tiff'):
-        return read_tiff(path, **kwargs)
-    raise ValueError(f'unsupported file extension: {ext}')
+            image = read_tcf_aligned(path, **kwargs)
+        else:
+            image = read_tcf(path, **kwargs)
+    elif ext == '.czi':
+        image = read_czi(path, **kwargs)
+    elif ext == '.oir':
+        image = read_oir(path, **kwargs)
+    elif ext in ('.tif', '.tiff'):
+        image = read_tiff(path, **kwargs)
+    else:
+        raise ValueError(f'unsupported file extension: {ext}')
+    return assign_id(image, path)

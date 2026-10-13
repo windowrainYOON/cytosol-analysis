@@ -61,6 +61,7 @@ from .lut import (
     load_preset,
     save_preset,
 )
+from .imageid import ROI_EXT, match_roi, plan_pairing
 from .marker_panel import MarkerPanel
 from .roi_panel import RoiPanel, write_csv
 
@@ -92,6 +93,9 @@ def load_items(path: Path, align_tcf: bool = True) -> list[ImageItem]:
                 items.append(ImageItem.load(path, label=f'{path.stem}_{tag}', modality=mod))
         if not items and '2DMIP' in mods:
             items.append(ImageItem.load(path, label=f'{path.stem}_HT', modality='2DMIP'))
+        if len(items) > 1:
+            for it in items:
+                it.id_suffix = it.label.rsplit('_', 1)[-1]
         return items
     return [ImageItem.load(path)]
 
@@ -106,6 +110,13 @@ CELL_COLORS = [QColor(c) for c in (
     '#ff9678', '#96b4ff',
 )]
 LASSO_COLORS = {'add': QColor(80, 255, 120), 'sub': QColor(255, 80, 80), 'new': QColor(80, 220, 255)}
+
+
+def folder_files(folder: Path) -> list[Path]:
+    """Images and ROI files anywhere under folder (hidden files skipped)."""
+    return sorted(q for q in folder.rglob('*')
+                  if q.is_file() and not q.name.startswith('.')
+                  and q.suffix.lower() in SUPPORTED + ROI_EXT)
 
 
 def polygon_path(*polys) -> QPainterPath:
@@ -592,6 +603,11 @@ class MainWindow(QMainWindow):
         self.file_list.currentRowChanged.connect(self._select)
         add_btn = QPushButton('파일 추가…')
         add_btn.clicked.connect(self.add_files_dialog)
+        folder_btn = QPushButton('폴더 불러오기…')
+        folder_btn.setToolTip(
+            '폴더 안의 원본 이미지, 내보낸 TIFF, ROI(.zip/.roi)를 이미지 ID로 짝지어 불러옵니다.\n'
+            '원본이 없으면 내보낸 TIFF(raw 스택 우선)로 열고, ROI는 해당 이미지에 자동으로 붙입니다.')
+        folder_btn.clicked.connect(self.add_folder_dialog)
         rm_btn = QPushButton('목록에서 제거')
         rm_btn.clicked.connect(self.remove_current)
         left = QWidget()
@@ -606,6 +622,7 @@ class MainWindow(QMainWindow):
         )
         ll.addWidget(self.align_tcf)
         ll.addWidget(add_btn)
+        ll.addWidget(folder_btn)
         ll.addWidget(rm_btn)
 
         # left, below files: crop regions of the current image
@@ -775,8 +792,12 @@ class MainWindow(QMainWindow):
         export_act = QAction('TIFF로 일괄 저장…', self)
         export_act.setShortcut(QKeySequence('Ctrl+E'))
         export_act.triggered.connect(self.export_all)
+        folder_act = QAction('폴더 불러오기 (ID로 이미지·TIFF·ROI 짝짓기)…', self)
+        folder_act.setShortcut(QKeySequence('Ctrl+Shift+O'))
+        folder_act.triggered.connect(self.add_folder_dialog)
         menu = self.menuBar().addMenu('파일')
         menu.addAction(open_act)
+        menu.addAction(folder_act)
         menu.addAction(export_act)
         everything_act = QAction('모든 데이터 일괄 저장 (이미지별 폴더)…', self)
         everything_act.setShortcut(QKeySequence('Ctrl+Shift+E'))
@@ -794,38 +815,132 @@ class MainWindow(QMainWindow):
     def add_files_dialog(self):
         files, _ = QFileDialog.getOpenFileNames(
             self, '이미지 파일 선택', '',
-            'Microscopy (*.tcf *.TCF *.czi *.oir *.tif *.tiff *.TIF *.TIFF);;All files (*)',
+            'Microscopy (*.tcf *.TCF *.czi *.oir *.tif *.tiff *.TIF *.TIFF);;'
+            '이미지 + ROI (*.tcf *.TCF *.czi *.oir *.tif *.tiff *.TIF *.TIFF *.zip *.roi);;'
+            'All files (*)',
         )
         self.add_files([Path(f) for f in files])
 
-    def add_files(self, paths):
-        paths = [p for p in paths if p.suffix.lower() in SUPPORTED]
+    def add_folder_dialog(self):
+        folder = QFileDialog.getExistingDirectory(self, '불러올 폴더 선택')
+        if folder:
+            self.add_files(folder_files(Path(folder)), pair=True)
+
+    def _add_item(self, item: ImageItem):
+        self.items.append(item)
+        entry = QListWidgetItem(item.label)
+        self.file_list.addItem(entry)
+        self._update_tooltip(len(self.items) - 1)
+
+    def _update_tooltip(self, row):
+        it = self.items[row]
+        tip = [str(it.path), f'이미지 ID: {it.image_id} '
+               f'({it.image.metadata.get("image_id_source", "")})']
+        if it.source_name != it.path.name:
+            tip.append(f'원본: {it.source_name}')
+        if it.linked:
+            tip.append(f'함께 찾은 내보낸 파일 {len(it.linked)}개:')
+            tip += [f'  {p.name}' for p in it.linked[:20]]
+        if it.cells is not None and len(it.cells):
+            tip.append(f'세포 ROI {len(it.cells)}개')
+        self.file_list.item(row).setToolTip('\n'.join(tip))
+
+    def add_files(self, paths, pair=False):
+        """Open images and attach ROI files to them by image ID.
+
+        ROI files go to the image with their ID (older ROIs without one: by
+        file name) when that image has no ROIs yet. With pair (loading a
+        folder), TIFFs this app exported are grouped by the ID of their
+        original: with the original among the loaded images they are only
+        listed with it, otherwise the best of them (full raw stack first) is
+        opened in its place. Without pair every chosen image is opened.
+        """
+        paths = [p for p in paths if p.suffix.lower() in SUPPORTED + ROI_EXT]
         if not paths:
             return
-        prog = QProgressDialog('불러오는 중…', '취소', 0, len(paths), self)
+        plan = plan_pairing(paths)
+        if not pair:
+            plan['open'] = [p for p in paths if p.suffix.lower() in SUPPORTED]
+            plan['exports'] = {}
+        prog = QProgressDialog('불러오는 중…', '취소', 0, len(plan['open']) + len(plan['exports']),
+                               self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
-        errors = []
-        for i, p in enumerate(paths):
-            if prog.wasCanceled():
-                break
+        errors, notes = [], []
+        n_before = len(self.items)
+
+        def load(p, i):
             prog.setLabelText(f'불러오는 중: {p.name}')
             prog.setValue(i)
             QApplication.processEvents()
             try:
-                for item in load_items(p, self.align_tcf.isChecked()):
-                    self.items.append(item)
-                    entry = QListWidgetItem(item.label)
-                    entry.setToolTip(str(item.path))
-                    self.file_list.addItem(entry)
+                loaded = load_items(p, self.align_tcf.isChecked())
             except Exception as exc:  # keep loading the rest
                 errors.append(f'{p.name}: {exc}')
                 traceback.print_exc()
-        prog.setValue(len(paths))
+                return []
+            for item in loaded:
+                self._add_item(item)
+            return loaded
+
+        i = 0
+        for p in plan['open']:
+            if prog.wasCanceled():
+                break
+            load(p, i)
+            i += 1
+        by_id = {it.image_id: it for it in self.items}
+        for iid, files in plan['exports'].items():
+            if prog.wasCanceled():
+                break
+            if iid not in by_id:
+                for f in files:  # open the best export that loads
+                    loaded = load(f, i)
+                    if loaded:
+                        by_id[iid] = loaded[0]
+                        files = [q for q in files if q != f]
+                        break
+            if iid in by_id:
+                it = by_id[iid]
+                it.linked += [f for f in files if f not in it.linked and f != it.path]
+            i += 1
+        prog.setValue(prog.maximum())
+
+        n_roi = 0
+        for f in plan['rois']:
+            it, how = match_roi(f, self.items, item_stem)
+            if it is None:
+                notes.append(f'{f.name}: {how}')
+                continue
+            if it.cells is not None and len(it.cells):
+                if f not in it.linked:
+                    it.linked.append(f)
+                notes.append(f'{f.name}: {it.label}에 이미 ROI가 있어 건너뜀')
+                continue
+            try:
+                self.roi_panel.load_into(it, [f])
+                it.linked.append(f)
+                n_roi += 1
+            except Exception as exc:
+                errors.append(f'{f.name}: {exc}')
+                traceback.print_exc()
+        for row in range(len(self.items)):
+            self._update_tooltip(row)
+
         if errors:
             QMessageBox.warning(self, '불러오기 실패', '\n'.join(errors))
         if self.current is None and self.items:
             self.file_list.setCurrentRow(0)
-        self.statusBar().showMessage(f'이미지 {len(self.items)}개')
+        elif self.current is not None:
+            self.roi_panel.bind(self.current)
+            self.update_preview()
+        n_linked = sum(len(it.linked) for it in self.items[n_before:])
+        msg = f'이미지 {len(self.items)}개'
+        if n_roi or plan['exports']:
+            msg += f' · ROI {n_roi}개 연결, 내보낸 파일 {n_linked}개 짝지음'
+        if notes:
+            msg += f' · 짝 없는 ROI {len(notes)}개'
+            print('\n'.join(notes))
+        self.statusBar().showMessage(msg)
 
     def remove_current(self):
         row = self.file_list.currentRow()
@@ -848,14 +963,15 @@ class MainWindow(QMainWindow):
             event.acceptProposedAction()
 
     def dropEvent(self, event):
-        paths = []
+        paths, pair = [], False
         for url in event.mimeData().urls():
             p = Path(url.toLocalFile())
             if p.is_dir():
-                paths += sorted(q for q in p.rglob('*') if q.suffix.lower() in SUPPORTED)
+                paths += folder_files(p)
+                pair = True
             else:
                 paths.append(p)
-        self.add_files(paths)
+        self.add_files(paths, pair=pair)
 
     # ---- selection ------------------------------------------------------
 
@@ -887,6 +1003,7 @@ class MainWindow(QMainWindow):
         self.info.setText(
             f'{w}×{h} px, Z {z}, C {c}' + (f', T {it.nt}' if it.nt > 1 else '')
             + (f', {px:.4f} µm/px' if px else ', 픽셀 크기 없음')
+            + f', ID {it.image_id}'
         )
         self.update_preview(refit=True)
 

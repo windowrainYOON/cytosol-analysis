@@ -1,7 +1,8 @@
 """Smoke test for a built app: ``"Cytosol Viewer" --selftest OUT_DIR``.
 
 Runs the main code paths on a synthetic two-channel image (readers import,
-LUT/TIFF export, cell ROI detection and ImageJ export, figure export, the main
+LUT/TIFF export, cell ROI detection and ImageJ export, image-ID pairing of
+exports, figure export, the main
 window) so a packaged build can be checked without a real data file.
 Writes the outputs and ``selftest.log`` into OUT_DIR; exit code 0 = passed.
 """
@@ -29,7 +30,8 @@ def _synthetic_item():
     data = np.stack([nuc, bg])[:, None] + rng.normal(0, 3, (2, 1, 256, 256))
     image = Image(data=np.clip(data, 0, None).astype(np.uint16), channels=['DAPI', 'GFP'],
                   voxel_size_um={'Z': None, 'Y': 0.2, 'X': 0.2},
-                  colors=[(0.0, 0.3, 1.0), (0.0, 1.0, 0.0)])
+                  colors=[(0.0, 0.3, 1.0), (0.0, 1.0, 0.0)],
+                  metadata={'image_id': 'SELF-TEST-0001'})
     item = ImageItem(path=Path('selftest.tif'), image=image, label='selftest')
     item.reset_luts()
     item.add_crop(10, 10, 120, 120)
@@ -65,9 +67,12 @@ def run(out_dir) -> int:
 
     item = _synthetic_item()
 
+    export_item_files = []
+
     def tiff_export():
         from .lut import export_item
-        return len(export_item(item, out / 'export', per_channel=True))
+        export_item_files[:] = export_item(item, out / 'export', per_channel=True)
+        return len(export_item_files)
 
     def time_series_export():
         from .io import Image
@@ -86,8 +91,22 @@ def run(out_dir) -> int:
         planes = item.planes()
         rois = segment_cells(planes[1], planes[0], item.pixel_um)
         item.cells = rois
-        rois.save(out / 'selftest_RoiSet.zip')
+        rois.save(out / 'selftest_RoiSet.zip', properties=item.id_properties())
         return f'{len(rois)} cells'
+
+    def image_id_pairing():
+        from .app import load_items
+        from .imageid import plan_pairing, roi_id, tiff_id
+        files = [Path(f) for f in export_item_files]
+        ids = {tiff_id(f)[0] for f in files} | {roi_id(out / 'selftest_RoiSet.zip')}
+        if ids != {item.image_id}:
+            raise AssertionError(f'IDs in exports: {ids}')
+        plan = plan_pairing(files + [out / 'selftest_RoiSet.zip'])
+        best = plan['exports'][item.image_id][0]
+        back = load_items(best)[0]
+        if back.image_id != item.image_id or back.image.data.shape != item.image.data.shape:
+            raise AssertionError(f'reloaded {best.name}: {back.image_id}')
+        return f'{item.image_id} in {len(files)} TIFFs + RoiSet, reopened {best.name}'
 
     def figure():
         from .figure import FigureSpec, fill_row_by_channels, save_figure
@@ -112,6 +131,7 @@ def run(out_dir) -> int:
     step('TIFF export', tiff_export)
     step('time-series export', time_series_export)
     step('cell ROIs + RoiSet.zip', cell_rois)
+    step('image ID in exports + pairing', image_id_pairing)
     step('figure export', figure)
     step('main window', window)
 

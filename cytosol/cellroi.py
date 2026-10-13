@@ -529,15 +529,18 @@ class CellRois:
                     out.append(_polygon_roi(c, f'cyto{l:03d}'))
         return out
 
-    def save(self, path, cells=True, nuclei=True, cytosol=True) -> list[str]:
+    def save(self, path, cells=True, nuclei=True, cytosol=True, properties=None) -> list[str]:
         """Write ROIs. ``*.zip``: one ImageJ RoiSet (ROI Manager > Open);
-        ``*.roi``: one .roi file per ROI, named ``<stem>_<roi>.roi`` in that folder."""
+        ``*.roi``: one .roi file per ROI, named ``<stem>_<roi>.roi`` in that folder.
+        properties: key/value pairs stored in every ROI (the image ID)."""
         import roifile
 
         path = Path(path)
         rois = self.to_imagej(cells, nuclei, cytosol)
         if not rois:
             raise ValueError('저장할 ROI가 없습니다.')
+        for r in rois:
+            r.properties = dict(properties or {})
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.suffix.lower() == '.zip':
             if path.exists():
