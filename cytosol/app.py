@@ -64,6 +64,7 @@ from .lut import (
 from .imageid import ROI_EXT, match_roi, plan_pairing
 from .marker_panel import MarkerPanel
 from .roi_panel import RoiPanel, write_csv
+from .version import __version__
 
 SUPPORTED = ('.tcf', '.czi', '.oir', '.tif', '.tiff')
 SLIDER_STEPS = 1000
@@ -591,7 +592,7 @@ class ChannelPanel(QGroupBox):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('Cytosol Viewer')
+        self.setWindowTitle(f'Cytosol Viewer {__version__}')
         self.resize(1400, 900)
         self.setAcceptDrops(True)
         self.items: list[ImageItem] = []
@@ -1274,6 +1275,7 @@ def main(argv=None):
     argv = sys.argv if argv is None else argv
     app = QApplication(argv)
     app.setApplicationName('Cytosol Viewer')
+    app.setApplicationVersion(__version__)
     icon = Path(__file__).parent / 'assets' / 'icon.png'
     if icon.exists():
         app.setWindowIcon(QIcon(str(icon)))
