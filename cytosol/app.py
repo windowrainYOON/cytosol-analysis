@@ -57,9 +57,11 @@ from .lut import (
     ImageItem,
     apply_lut_to_all,
     export_item,
+    item_folder,
     item_stem,
     load_preset,
     save_preset,
+    unique_stems,
 )
 from .imageid import ROI_EXT, match_roi, plan_pairing
 from .marker_panel import MarkerPanel
@@ -735,7 +737,7 @@ class MainWindow(QMainWindow):
         self.exp_all_t.setChecked(True)
         self.exp_per_image = QCheckBox('이미지별 폴더에 나눠 저장')
         self.exp_per_image.setChecked(True)
-        self.exp_per_image.setToolTip('폴더 안에 이미지마다 하위 폴더를 만들어 그 이미지의 파일을 넣습니다.')
+        self.exp_per_image.setToolTip('폴더 안에 이미지마다 하위 폴더(이미지 이름_이미지 ID)를 만들어 그 이미지의 파일을 넣습니다.')
         exp_btn = QPushButton('모든 이미지 TIFF로 저장…')
         exp_btn.clicked.connect(self.export_all)
         exp_one = QPushButton('현재 이미지만 저장…')
@@ -1211,6 +1213,7 @@ class MainWindow(QMainWindow):
             return
         kwargs = self._export_kwargs()
         per_image = self.exp_per_image.isChecked()
+        stems = unique_stems(items)
         prog = QProgressDialog('저장 중…', '취소', 0, len(items), self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
         files, errors = [], []
@@ -1221,8 +1224,10 @@ class MainWindow(QMainWindow):
             prog.setValue(i)
             QApplication.processEvents()
             try:
-                folder = Path(out) / item_stem(it) if per_image else Path(out)
-                files += export_item(it, folder, **kwargs)
+                if per_image:
+                    files += export_item(it, Path(out) / item_folder(it), **kwargs)
+                else:
+                    files += export_item(it, Path(out), stem=stems[id(it)], **kwargs)
             except Exception as exc:
                 errors.append(f'{it.label}: {exc}')
                 traceback.print_exc()
@@ -1250,7 +1255,7 @@ class MainWindow(QMainWindow):
             prog.setLabelText(f'저장 중: {it.label}')
             prog.setValue(i)
             QApplication.processEvents()
-            folder = Path(out) / item_stem(it)
+            folder = Path(out) / item_folder(it)
             try:
                 n_files += len(export_item(it, folder, **kwargs))
                 if it.cells is not None and len(it.cells):

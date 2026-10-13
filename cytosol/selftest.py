@@ -108,6 +108,22 @@ def run(out_dir) -> int:
             raise AssertionError(f'reloaded {best.name}: {back.image_id}')
         return f'{item.image_id} in {len(files)} TIFFs + RoiSet, reopened {best.name}'
 
+    def same_name_export():
+        from dataclasses import replace
+
+        from .lut import export_all, export_item, item_folder
+        twin = _synthetic_item()
+        twin.image = replace(twin.image, metadata={'image_id': 'SELF-TEST-0002'})
+        folders = {item_folder(it) for it in (item, twin)}
+        if len(folders) != 2:
+            raise AssertionError(f'per-image folders collide: {folders}')
+        for it in (item, twin):
+            export_item(it, out / 'same_name' / item_folder(it), crops=False, raw_stack=False)
+        flat = export_all([item, twin], out / 'same_name_flat', crops=False, raw_stack=False)
+        if len(set(flat)) != 2:
+            raise AssertionError(f'flat export overwrote: {flat}')
+        return ', '.join(sorted(folders))
+
     def figure():
         from .figure import FigureSpec, fill_row_by_channels, save_figure
         spec = FigureSpec()
@@ -132,6 +148,7 @@ def run(out_dir) -> int:
     step('time-series export', time_series_export)
     step('cell ROIs + RoiSet.zip', cell_rois)
     step('image ID in exports + pairing', image_id_pairing)
+    step('same-name images, separate folders', same_name_export)
     step('figure export', figure)
     step('main window', window)
 

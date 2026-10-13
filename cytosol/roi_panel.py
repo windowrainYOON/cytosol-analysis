@@ -40,7 +40,7 @@ from .cellroi import (
     threshold_preview,
 )
 from .imageid import roi_id
-from .lut import ImageItem, item_stem, match_channel
+from .lut import ImageItem, item_folder, item_stem, match_channel, unique_stems
 
 EDGE_LABELS = [
     ('trim', '안쪽 경계로 자르기'),
@@ -716,9 +716,10 @@ class RoiPanel(QWidget):
     def _stem(self, item):
         return item_stem(item)
 
-    def save_item(self, it, folder) -> list[dict]:
+    def save_item(self, it, folder, stem=None) -> list[dict]:
         """Write <stem>_RoiSet.zip into folder; returns the measurement rows."""
-        it.cells.save(Path(folder) / f'{self._stem(it)}_RoiSet.zip', **self._save_kwargs(it))
+        stem = stem or self._stem(it)
+        it.cells.save(Path(folder) / f'{stem}_RoiSet.zip', **self._save_kwargs(it))
         return [{'image': it.label, 'image_id': it.image_id, **r}
                 for r in it.cells.measurements()]
 
@@ -792,11 +793,13 @@ class RoiPanel(QWidget):
             return
         per_image = self.per_image.isChecked()
         rows, errors = [], []
+        stems = unique_stems(items)
         for it in items:
-            folder = Path(out) / self._stem(it) if per_image else Path(out)
+            folder = Path(out) / item_folder(it) if per_image else Path(out)
+            stem = None if per_image else stems[id(it)]
             try:
                 folder.mkdir(parents=True, exist_ok=True)
-                item_rows = self.save_item(it, folder)
+                item_rows = self.save_item(it, folder, stem)
                 if per_image:
                     write_csv(folder / f'{self._stem(it)}_cell_rois.csv', item_rows)
                 rows += item_rows
