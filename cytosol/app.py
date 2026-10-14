@@ -21,6 +21,7 @@ from PySide6.QtGui import (
     QPainterPath,
     QPen,
     QPixmap,
+    QShortcut,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -31,6 +32,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QGraphicsPathItem,
+    QGridLayout,
     QGraphicsPixmapItem,
     QGraphicsRectItem,
     QGraphicsScene,
@@ -507,7 +509,9 @@ class ChannelPanel(QGroupBox):
         self.lo, self.hi = 0.0, 1.0
         self.steps = SLIDER_STEPS
 
-        self.visible = QCheckBox('표시')
+        # placed in the shared row under the LUT section title (see visibility_row)
+        self.visible = QCheckBox()
+        self.visible.setToolTip('이 채널을 미리보기와 내보내기 합성 이미지에 표시')
         self.color_btn = QPushButton()
         self.color_btn.setFixedWidth(40)
         self.auto_btn = QPushButton('Auto')
@@ -539,7 +543,6 @@ class ChannelPanel(QGroupBox):
         self.gamma.setValue(1.0)
 
         top = QHBoxLayout()
-        top.addWidget(self.visible)
         top.addWidget(self.color_btn)
         top.addStretch()
         top.addWidget(self.auto_btn)
@@ -605,6 +608,7 @@ class ChannelPanel(QGroupBox):
         self.range_hi.setText(fmt(self.hi))
         self.range_note.setText(f'파일 범위 ({note})' if note else '데이터 범위')
         self.setTitle(item.channels[self.index])
+        self.visible.setText(item.channels[self.index])
         self.hist.set_data(plane, self.lo, self.hi)
         self.refresh()
 
@@ -618,7 +622,15 @@ class ChannelPanel(QGroupBox):
         self.min_slider.setValue(self._to_slider(lut.vmin))
         self.max_slider.setValue(self._to_slider(lut.vmax))
         self.gamma.setValue(lut.gamma)
-        self.color_btn.setStyleSheet(f'background-color: {qcolor(lut.color).name()};')
+        color = qcolor(lut.color).name()
+        self.color_btn.setStyleSheet(f'background-color: {color};')
+        swatch = QPixmap(16, 16)
+        swatch.fill(QColor(color))
+        qp = QPainter(swatch)
+        qp.setPen(QPen(QColor('gray'), 1))
+        qp.drawRect(0, 0, 15, 15)  # white channels stay visible on a light background
+        qp.end()
+        self.visible.setIcon(QIcon(swatch))
         self.hist.set_lut(lut.vmin, lut.vmax, lut.color)
         self._busy = False
 
@@ -668,6 +680,48 @@ class ChannelPanel(QGroupBox):
         self.changed.emit()
 
 
+class VisibilityRow(QWidget):
+    """The channel panels' 표시 checkboxes in one row, plus all on / all off."""
+
+    COLUMNS = 2
+
+    def __init__(self):
+        super().__init__()
+        self.panels: list[ChannelPanel] = []
+        box = QGroupBox('채널 표시')
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(box)
+        lay = QVBoxLayout(box)
+        self.boxes = QGridLayout()
+        lay.addLayout(self.boxes)
+        buttons = QHBoxLayout()
+        buttons.addStretch()
+        on = QPushButton('모두 켜기')
+        off = QPushButton('모두 끄기')
+        on.clicked.connect(lambda: self.set_all(True))
+        off.clicked.connect(lambda: self.set_all(False))
+        buttons.addWidget(on)
+        buttons.addWidget(off)
+        lay.addLayout(buttons)
+
+    def set_panels(self, panels):
+        for p in self.panels:
+            p.visible.setParent(None)
+            p.visible.deleteLater()
+        self.panels = list(panels)
+        for i, p in enumerate(self.panels):
+            self.boxes.addWidget(p.visible, i // self.COLUMNS, i % self.COLUMNS)
+
+    def set_all(self, on: bool):
+        if not self.panels or self.panels[0].item is None:
+            return
+        for p in self.panels:
+            p.lut.visible = on
+            p.refresh()
+        self.panels[0].changed.emit()  # one redraw for all channels
+
+
 # ---------------------------------------------------------------------------
 # main window
 # ---------------------------------------------------------------------------
@@ -685,7 +739,13 @@ class MainWindow(QMainWindow):
 
         # left: file list
         self.file_list = QListWidget()
+        self.file_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.file_list.setToolTip('Shift/Ctrl(⌘)+클릭으로 여러 개 선택, Delete 키로 목록에서 제거')
         self.file_list.currentRowChanged.connect(self._select)
+        for key in (QKeySequence.StandardKey.Delete, QKeySequence(Qt.Key.Key_Backspace)):
+            sc = QShortcut(key, self.file_list)
+            sc.setContext(Qt.ShortcutContext.WidgetShortcut)
+            sc.activated.connect(self.remove_selected)
         add_btn = QPushButton('파일 추가…')
         add_btn.clicked.connect(self.add_files_dialog)
         folder_btn = QPushButton('폴더 불러오기…')
@@ -694,7 +754,8 @@ class MainWindow(QMainWindow):
             '원본이 없으면 내보낸 TIFF(raw 스택 우선)로 열고, ROI는 해당 이미지에 자동으로 붙입니다.')
         folder_btn.clicked.connect(self.add_folder_dialog)
         rm_btn = QPushButton('목록에서 제거')
-        rm_btn.clicked.connect(self.remove_current)
+        rm_btn.setToolTip('선택한 이미지를 모두 목록에서 제거합니다 (파일은 지우지 않습니다).')
+        rm_btn.clicked.connect(self.remove_selected)
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.addWidget(QLabel('이미지 (TCF / CZI / OIR / TIF, 끌어다 놓기 가능)'))
@@ -894,6 +955,8 @@ class MainWindow(QMainWindow):
         lut_tab = QWidget()
         rl = QVBoxLayout(lut_tab)
         rl.addWidget(QLabel('채널 LUT'))
+        self.visibility = VisibilityRow()
+        rl.addWidget(self.visibility)
         rl.addWidget(scroll, 1)
         rl.addWidget(batch)
         rl.addWidget(exp)
@@ -1100,26 +1163,47 @@ class MainWindow(QMainWindow):
             print('\n'.join(notes))
         self.statusBar().showMessage(msg)
 
-    def remove_current(self):
-        row = self.file_list.currentRow()
-        if row < 0:
+    def remove_selected(self):
+        """Remove every selected image (or the current one) from the list."""
+        rows = sorted({i.row() for i in self.file_list.selectedIndexes()}, reverse=True)
+        if not rows and self.file_list.currentRow() >= 0:
+            rows = [self.file_list.currentRow()]
+        if not rows:
             return
-        removed = self.items.pop(row)
-        self.stack_views.pop(id(removed), None)
-        removed.image.release()
-        self.file_list.takeItem(row)
+        current_removed = False
+        self.file_list.blockSignals(True)  # don't load images on the way
+        for row in rows:
+            removed = self.items.pop(row)
+            current_removed |= removed is self.current
+            self.stack_views.pop(id(removed), None)
+            removed.image.release()
+            self.file_list.takeItem(row)
+            if self.figure_win is not None:
+                self.figure_win.spec.forget_item(removed)
+        self.file_list.blockSignals(False)
         if self.figure_win is not None:
-            self.figure_win.spec.forget_item(removed)
             self.figure_win.refresh_sources()
-        if not self.items:
+        self.file_list.clearSelection()
+        if self.items:
+            row = self.items.index(self.current) if not current_removed \
+                else min(rows[-1], len(self.items) - 1)
+            self.file_list.blockSignals(True)
+            self.file_list.setCurrentRow(row)
+            self.file_list.blockSignals(False)
+            if current_removed:
+                self.current = None
+                self._select(row)
+        else:
             self.current = None
             self._build_panels()
+            self._build_stack_panels()
             self.profile_panel.bind(None)
             self.coloc_panel.bind(None)
             self.canvas.show_line(None)
             self.roi_panel.bind(None)
             self.roi_panel.draw_overlay(hidden=True)
             self.canvas.pix.setPixmap(QPixmap())
+        self.statusBar().showMessage(f'이미지 {len(rows)}개를 목록에서 제거했습니다.')
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -1174,15 +1258,15 @@ class MainWindow(QMainWindow):
             p.setParent(None)
             p.deleteLater()
         self.panels = []
-        if self.current is None:
-            return
-        for i in range(len(self.current.channels)):
-            panel = ChannelPanel(i)
-            panel.bind(self.current)
-            panel.changed.connect(self.update_preview)
-            panel.applyAll.connect(self.apply_channel_to_all)
-            self.channel_box.insertWidget(self.channel_box.count() - 1, panel)
-            self.panels.append(panel)
+        if self.current is not None:
+            for i in range(len(self.current.channels)):
+                panel = ChannelPanel(i)
+                panel.bind(self.current)
+                panel.changed.connect(self.update_preview)
+                panel.applyAll.connect(self.apply_channel_to_all)
+                self.channel_box.insertWidget(self.channel_box.count() - 1, panel)
+                self.panels.append(panel)
+        self.visibility.set_panels(self.panels)
 
     def _t_preview_label(self, t):
         it = self.current
@@ -1286,16 +1370,16 @@ class MainWindow(QMainWindow):
             p.setParent(None)
             p.deleteLater()
         self.stack_panels = []
-        if self.current is None:
-            return
-        view = self._stack_view(self.current)
-        for i in range(len(self.current.channels)):
-            panel = ChannelPanel(i)
-            panel.all_btn.hide()
-            panel.bind(view)
-            panel.changed.connect(self._stack_lut_edited)
-            self.stack_panel.lut_box.addWidget(panel)
-            self.stack_panels.append(panel)
+        if self.current is not None:
+            view = self._stack_view(self.current)
+            for i in range(len(self.current.channels)):
+                panel = ChannelPanel(i)
+                panel.all_btn.hide()
+                panel.bind(view)
+                panel.changed.connect(self._stack_lut_edited)
+                self.stack_panel.lut_box.addWidget(panel)
+                self.stack_panels.append(panel)
+        self.stack_panel.visibility.set_panels(self.stack_panels)
 
     def _stack_lut_edited(self):
         view = self.stack_views.get(id(self.current))
