@@ -1,5 +1,6 @@
 """Line profile tab: draw a line on the image, plot every channel's raw
-intensity along it (ImageJ RGB Profiler style), save the plot and a CSV."""
+intensity along it (ImageJ RGB Profiler style), save the plot and a CSV
+(each with the line as an ImageJ .roi and the image with the line drawn on it)."""
 
 from __future__ import annotations
 
@@ -20,7 +21,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .lineprofile import Profile, draw_profile, line_profile, write_profile_csv
+from .lineprofile import (Profile, draw_profile, line_overlay, line_profile, write_line_roi,
+                          write_profile_csv)
 
 
 class ProfilePanel(QWidget):
@@ -93,6 +95,11 @@ class ProfilePanel(QWidget):
         row.addWidget(csv_btn)
         row.addWidget(png_btn)
         pl.addLayout(row)
+        self.with_roi = QCheckBox('저장할 때 선 ROI(.roi)와 선이 그려진 이미지(.png)도 함께 저장')
+        self.with_roi.setChecked(True)
+        self.with_roi.setToolTip('같은 폴더에 <이름>_line.roi (ImageJ 직선 ROI, 선 두께 포함)와 '
+                                 '<이름>_image.png (현재 LUT로 표시한 이미지 위에 선)을 저장합니다.')
+        pl.addWidget(self.with_roi)
         lay.addWidget(plot_box, 1)
 
         self._timer = QTimer(self)
@@ -187,7 +194,9 @@ class ProfilePanel(QWidget):
         extra = dict(it.id_properties(), plane=self._z_text())
         try:
             write_profile_csv(path, self.profile, extra)
+            self._save_companions(path)
         except Exception as exc:
+            traceback.print_exc()
             QMessageBox.warning(self, '저장 실패', str(exc))
 
     def save_plot(self):
@@ -204,9 +213,31 @@ class ProfilePanel(QWidget):
         try:
             save_profile_figure(path, self.profile, self._colors(), self._visible(),
                                 self.normalize.isChecked())
+            self._save_companions(path)
         except Exception as exc:
             traceback.print_exc()
             QMessageBox.warning(self, '저장 실패', str(exc))
+
+    def _save_companions(self, path) -> list[str]:
+        """<stem>_line.roi and <stem>_image.png next to a saved CSV / plot."""
+        if not self.with_roi.isChecked() or self.profile is None:
+            return []
+        return save_profile_companions(path, self.item, self.profile)
+
+
+def save_profile_companions(path, item, prof: Profile) -> list[str]:
+    """Write the line as an ImageJ ROI and the current view (LUTs applied,
+    current z and timepoint) with the line drawn on it, named after ``path``."""
+    from PIL import Image
+
+    path = Path(path)
+    base = path.with_suffix('')
+    roi = write_line_roi(f'{base}_line.roi', prof, name=path.stem,
+                         properties=item.id_properties())
+    img = line_overlay(item.composite(), prof.line, prof.width)
+    png = f'{base}_image.png'
+    Image.fromarray(img).save(png)
+    return [roi, png]
 
 
 def save_profile_figure(path, prof, colors, visible=None, normalize=False, size=(5, 3.5)):

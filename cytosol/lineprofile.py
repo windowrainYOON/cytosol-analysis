@@ -177,3 +177,78 @@ def draw_profile(ax, prof: Profile, colors, visible=None, normalize=False):
     ax.grid(True, color='0.85', lw=0.6)
     if ax.lines:
         ax.legend(fontsize=8, frameon=False, loc='best')
+
+
+def line_roi(prof: Profile, name: str = 'profile', properties: dict | None = None):
+    """The profile line as an ImageJ straight-line ROI (subpixel coordinates,
+    stroke width = line width), so File > Open in ImageJ gives the same profile."""
+    import roifile
+
+    x0, y0, x1, y1 = (float(v) for v in prof.line)
+    roi = roifile.ImagejRoi()
+    roi.roitype = roifile.ROI_TYPE.LINE
+    roi.options |= roifile.ROI_OPTIONS.SUB_PIXEL_RESOLUTION
+    roi.x1, roi.y1, roi.x2, roi.y2 = x0, y0, x1, y1
+    roi.left, roi.top = int(math.floor(min(x0, x1))), int(math.floor(min(y0, y1)))
+    roi.right = int(math.floor(max(x0, x1))) + 1
+    roi.bottom = int(math.floor(max(y0, y1))) + 1
+    roi.stroke_width = int(prof.width) if prof.width > 1 else 0
+    roi.name = name
+    if properties:
+        roi.properties = {str(k): str(v) for k, v in properties.items()}
+    return roi
+
+
+def write_line_roi(path, prof: Profile, name: str = 'profile',
+                   properties: dict | None = None) -> str:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line_roi(prof, name, properties).tofile(path)
+    return str(path)
+
+
+def read_line_roi(path):
+    """(x0, y0, x1, y1), width of a .roi file holding one straight line; None otherwise."""
+    import roifile
+
+    path = Path(path)
+    if path.suffix.lower() != '.roi':
+        return None
+    try:
+        r = roifile.ImagejRoi.fromfile(path)
+    except Exception:
+        return None
+    if isinstance(r, list) or r.roitype != roifile.ROI_TYPE.LINE:
+        return None
+    return (float(r.x1), float(r.y1), float(r.x2), float(r.y2)), max(int(r.stroke_width), 1)
+
+
+def line_overlay(rgb: np.ndarray, line, width: int = 1, color=(255, 220, 0),
+                 min_size: int = 1000) -> np.ndarray:
+    """uint8 RGB image (0..1 float or uint8 in) with the profile line drawn on it.
+
+    Small images are enlarged (nearest neighbour, whole factor) so the long side
+    is at least ``min_size`` px and the line stays thin; a width > 1 line also
+    gets its band outline, as on the canvas.
+    """
+    from PIL import Image, ImageDraw
+
+    a = np.asarray(rgb)
+    if a.dtype != np.uint8:
+        a = (np.clip(a, 0.0, 1.0) * 255 + 0.5).astype(np.uint8)
+    h, w = a.shape[:2]
+    s = max(1, -(-min_size // max(h, w)))  # ceil
+    im = Image.fromarray(a, 'RGB')
+    if s > 1:
+        im = im.resize((w * s, h * s), Image.NEAREST)
+    draw = ImageDraw.Draw(im)
+    lw = max(2, round(max(im.size) / 600))
+    x0, y0, x1, y1 = (float(v) * s for v in line)
+    length = math.hypot(x1 - x0, y1 - y0)
+    if width > 1 and length > 0:
+        half = width * s / 2
+        nx, ny = -(y1 - y0) / length * half, (x1 - x0) / length * half
+        band = [(x0 + nx, y0 + ny), (x1 + nx, y1 + ny), (x1 - nx, y1 - ny), (x0 - nx, y0 - ny)]
+        draw.line(band + band[:1], fill=color, width=max(1, lw // 2))
+    draw.line([(x0, y0), (x1, y1)], fill=color, width=lw)
+    return np.asarray(im)

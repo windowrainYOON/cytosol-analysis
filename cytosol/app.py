@@ -69,6 +69,7 @@ from .lut import (
 from .coloc_panel import ColocPanel, write_coloc_csv
 from .imageid import ROI_EXT, match_roi, plan_pairing
 from .marker_panel import MarkerPanel
+from .lineprofile import read_line_roi
 from .profile_panel import ProfilePanel
 from .movie import RGB_FORMATS, wants_mp4
 from .roi_panel import RoiPanel, write_csv
@@ -1131,6 +1132,12 @@ class MainWindow(QMainWindow):
             it, how = match_roi(f, self.items, item_stem)
             if it is None:
                 notes.append(f'{f.name}: {how}')
+                continue
+            line = read_line_roi(f)
+            if line is not None:  # a line saved from the profile tab: restore it
+                it.profile_line = line[0]
+                if f not in it.linked:
+                    it.linked.append(f)
                 continue
             if it.cells is not None and len(it.cells):
                 if f not in it.linked:

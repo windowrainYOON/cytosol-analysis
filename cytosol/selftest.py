@@ -133,8 +133,12 @@ def run(out_dir) -> int:
         return f'{n} frames {meta["size"]}, ffmpeg {imageio_ffmpeg.get_ffmpeg_version()}'
 
     def line_profile_step():
-        from .lineprofile import line_profile, write_profile_csv
-        from .profile_panel import save_profile_figure
+        import roifile
+        from PIL import Image
+        from . import imageid
+        from .imageid import ID_KEY
+        from .lineprofile import line_profile, read_line_roi, write_profile_csv
+        from .profile_panel import save_profile_companions, save_profile_figure
         planes = item.planes()
         # across the nucleus at (70, 70): DAPI high in the middle, low at the ends
         prof = line_profile(planes, (30, 70, 110, 70), width=3, pixel_um=item.pixel_um,
@@ -147,6 +151,19 @@ def run(out_dir) -> int:
         for ext in ('png', 'pdf'):
             save_profile_figure(out / f'selftest_profile.{ext}', prof,
                                 [lut.color for lut in item.luts])
+        roi_path, png_path = save_profile_companions(out / 'selftest_profile.png', item, prof)
+        roi = roifile.ImagejRoi.fromfile(roi_path)
+        if (roi.roitype != roifile.ROI_TYPE.LINE or roi.stroke_width != 3
+                or not np.allclose([roi.x1, roi.y1, roi.x2, roi.y2], prof.line)
+                or roi.properties.get(ID_KEY) != item.image_id):
+            raise AssertionError(f'line ROI read back as {roi}')
+        if read_line_roi(roi_path) != (tuple(prof.line), 3):
+            raise AssertionError(f'line ROI reads back as {read_line_roi(roi_path)}')
+        if imageid.roi_id(roi_path) != item.image_id:
+            raise AssertionError('line ROI lost the image ID')
+        overlay = np.asarray(Image.open(png_path))
+        if overlay.shape[2] != 3 or overlay.shape[1] % planes.shape[-1]:
+            raise AssertionError(f'overlay image {overlay.shape}')
         return f'{len(prof.distance)} samples over {prof.length:.1f} {prof.unit}'
 
     def cell_rois():
