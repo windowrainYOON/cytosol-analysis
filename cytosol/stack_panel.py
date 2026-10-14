@@ -154,6 +154,10 @@ class StackPanel(QWidget):
         pull.clicked.connect(self._pull)
         ll.addWidget(self.linked)
         ll.addWidget(pull)
+        from .app import VisibilityRow  # noqa: PLC0415  (app imports this module)
+
+        self.visibility = VisibilityRow()
+        ll.addWidget(self.visibility)
         self.lut_box = QVBoxLayout()
         ll.addLayout(self.lut_box)
         lay.addWidget(lut_box)

@@ -298,6 +298,33 @@ def run(out_dir) -> int:
             raise AssertionError('no profile after drawing a line')
         if not win.canvas._line_items:
             raise AssertionError('profile line not drawn on the canvas')
+        # channel 표시 checkboxes gathered in one row; all off / all on
+        row = win.visibility
+        if [p.visible.text() for p in row.panels] != list(win.current.channels):
+            raise AssertionError('visibility row not labelled with the channel names')
+        row.set_all(False)
+        if any(lut.visible for lut in win.current.luts) or any(
+                p.visible.isChecked() for p in row.panels):
+            raise AssertionError('"all off" left a channel visible')
+        row.set_all(True)
+        if not all(lut.visible for lut in win.current.luts):
+            raise AssertionError('"all on" left a channel hidden')
+        # multi-select removal
+        win.add_files([out / 'selftest.TCF'])
+        win.add_files([out / 'selftest.TCF'])
+        n = len(win.items)
+        win.file_list.clearSelection()
+        win.file_list.setCurrentRow(n - 1)
+        win.file_list.item(n - 2).setSelected(True)
+        win.remove_selected()
+        app.processEvents()
+        if len(win.items) != n - 2 or win.file_list.count() != n - 2 \
+                or win.current is not win.items[-1]:
+            raise AssertionError('multi-select removal')
+        win.file_list.selectAll()
+        win.remove_selected()
+        if win.items or win.current is not None or row.panels:
+            raise AssertionError('removing every image left state behind')
         win.close()
 
     step('readers import', readers)
