@@ -73,7 +73,17 @@ A GUI for working on a whole set of images at once:
   under the image; each timepoint is read from the file when selected. Export
   writes every timepoint (RGB TIFFs become T-frame stacks with the time stamp
   on each frame, the raw stack a TZCYX hyperstack) unless
-  **타임시리즈는 모든 시점 저장** is off.
+  **타임시리즈는 모든 시점 저장** is off. **타임시리즈 RGB 형식** writes those RGB
+  outputs as a TIFF stack, an **MP4** movie (H.264, one frame per timepoint at
+  the chosen fps, ffmpeg bundled via imageio-ffmpeg) or both; the raw stack
+  stays TIFF.
+- **라인 프로파일 tab** (like ImageJ's RGB Profiler): press **라인 프로파일 (선 그리기)**
+  above the image and drag a line (Shift: horizontal, vertical or 45°). The tab
+  plots each channel's raw intensity along the line against distance in µm, in
+  the channel colors, for the current Z (or MIP) and timepoint, and follows
+  Z/T/LUT changes. Line width (pixels averaged across the line), hide channels
+  hidden in the LUT, per-channel 0–1 normalization; **CSV 저장** (distance + one
+  column per channel) and **그래프 저장** (PNG/TIFF 300 dpi, PDF, SVG).
 - **마커 tab**: size marker (scale bar) and time-series marker (time stamp).
   Each has on/off, text on/off, font size, marker length/thickness, text-marker
   gap, edge margin, position and color; the time stamp also has the unit
@@ -107,7 +117,8 @@ A GUI for working on a whole set of images at once:
     both ways (a sum's range is scaled by the slice count), off gives the
     projection its own LUT.
   - Saving: the current projection (RGB with markers + float32 ImageJ stack,
-    optionally every timepoint) or a 3D rotation series as a TIFF stack.
+    optionally every timepoint) or a 3D rotation series as a TIFF stack; choose
+    **MP4** in the save dialog to get a movie instead (frame rate in the tab).
 - **Crop** regions per image: press `Crop 추가 (드래그)` and drag on the image;
   repeat for more regions. Each region is listed, numbered on the image, can be
   previewed alone, deleted, or copied to every image with the same pixel size.

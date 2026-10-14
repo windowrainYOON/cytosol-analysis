@@ -113,7 +113,41 @@ def run(out_dir) -> int:
         ts = ImageItem(path=Path('selftest_t.tif'), image=image, label='selftest_t')
         ts.reset_luts()
         files = export_item(ts, out / 'export_t', time=TimeStampStyle(bar=True))
-        return f'{len(files)} files, t restored to {ts.t}'
+        movies = export_item(ts, out / 'export_t_mp4', crops=False, raw_stack=False,
+                             rgb_format='mp4', fps=5)
+        if [Path(f).suffix for f in movies] != ['.mp4'] or Path(movies[0]).stat().st_size < 1000:
+            raise AssertionError(f'MP4 export: {movies}')
+        return f'{len(files)} files + {Path(movies[0]).name}, t restored to {ts.t}'
+
+    def mp4_odd_size():
+        import imageio_ffmpeg
+
+        from .movie import write_mp4
+        frames = [np.full((51, 77, 3), 40 * k, np.uint8) for k in range(4)]
+        path = write_mp4(out / 'selftest_odd.mp4', frames, fps=2)
+        reader = imageio_ffmpeg.read_frames(path)
+        meta = next(reader)
+        n = sum(1 for _ in reader)
+        if n != 4 or tuple(meta['size']) != (78, 52):
+            raise AssertionError(f'read back {n} frames of {meta["size"]}')
+        return f'{n} frames {meta["size"]}, ffmpeg {imageio_ffmpeg.get_ffmpeg_version()}'
+
+    def line_profile_step():
+        from .lineprofile import line_profile, write_profile_csv
+        from .profile_panel import save_profile_figure
+        planes = item.planes()
+        # across the nucleus at (70, 70): DAPI high in the middle, low at the ends
+        prof = line_profile(planes, (30, 70, 110, 70), width=3, pixel_um=item.pixel_um,
+                            channels=item.channels)
+        mid = prof.values[0, len(prof.distance) // 2]
+        if not (mid > 500 > prof.values[0, 0]) or not np.isclose(prof.length, 16.0):
+            raise AssertionError(f'profile mid {mid}, ends {prof.values[0, 0]}, '
+                                 f'length {prof.length}')
+        write_profile_csv(out / 'selftest_profile.csv', prof)
+        for ext in ('png', 'pdf'):
+            save_profile_figure(out / f'selftest_profile.{ext}', prof,
+                                [lut.color for lut in item.luts])
+        return f'{len(prof.distance)} samples over {prof.length:.1f} {prof.unit}'
 
     def cell_rois():
         from .cellroi import segment_cells
@@ -222,6 +256,10 @@ def run(out_dir) -> int:
             raise AssertionError('3D refresh did not apply the LUT')
         files = export_projection(view, out / 'stack' / 'selftest_3d')
         files += export_rotation(view, out / 'stack' / 'selftest_rot', range(0, 90, 30))
+        files += export_rotation(view, out / 'stack' / 'selftest_rot', range(0, 90, 30),
+                                 movie_fps=5)
+        if not files[-1].endswith('.mp4'):
+            raise AssertionError(f'rotation MP4: {files[-1]}')
         return f'3D {res.shape}, {len(files)} files'
 
     def window():
@@ -248,12 +286,26 @@ def run(out_dir) -> int:
         app.processEvents()
         if win.current.image.volume_loaded:
             raise AssertionError('volume kept after leaving the stack tab')
+        win.line_btn.setChecked(True)
+        app.processEvents()
+        if win.right_tabs.currentIndex() != win.profile_tab or not win.canvas.line_mode:
+            raise AssertionError('line profile mode did not open its tab')
+        win.canvas.lineDrawn.emit(5.0, 5.0, 50.0, 40.0)
+        win.profile_panel.width.setValue(3)
+        win.profile_panel.refresh()
+        prof = win.profile_panel.profile
+        if prof is None or prof.values.shape[0] != len(win.current.channels):
+            raise AssertionError('no profile after drawing a line')
+        if not win.canvas._line_items:
+            raise AssertionError('profile line not drawn on the canvas')
         win.close()
 
     step('readers import', readers)
     step('HDF5 non-ASCII path', hdf5_unicode_path)
     step('TIFF export', tiff_export)
     step('time-series export', time_series_export)
+    step('MP4 (odd frame size)', mp4_odd_size)
+    step('line profile', line_profile_step)
     step('cell ROIs + RoiSet.zip', cell_rois)
     step('image ID in exports + pairing', image_id_pairing)
     step('same-name images, separate folders', same_name_export)

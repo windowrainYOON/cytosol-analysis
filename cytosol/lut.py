@@ -82,6 +82,8 @@ class ImageItem:
     id_suffix: str = ''
     # exported files found with this image when a folder was loaded
     linked: list[Path] = field(default_factory=list)
+    # line for the intensity profile, (x0, y0, x1, y1) in pixels
+    profile_line: tuple | None = None
     _planes: np.ndarray | None = field(default=None, repr=False)
     _planes_z: object = field(default=None, repr=False)
 
@@ -350,6 +352,8 @@ def export_item(
     time: TimeStampStyle | None = None,
     all_times: bool = True,
     stem: str | None = None,
+    rgb_format: str = 'tif',
+    fps: float = 10.0,
 ) -> list[str]:
     """Write TIFFs for one image; returns the written paths.
 
@@ -366,6 +370,9 @@ def export_item(
     T-frame stacks, the raw stack a TZCYX hyperstack); otherwise only the
     current one.
     stem: file-name prefix (default item_stem(item)).
+    rgb_format: for a series of timepoints, write the RGB outputs as 'tif'
+    (T-frame stack), 'mp4' (H.264 movie at fps) or 'both'. A single
+    timepoint always gives a TIFF; the raw stack is always a TIFF.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -379,11 +386,12 @@ def export_item(
         regions += [(f'crop{k}', r) for k, r in enumerate(item.crops, 1)]
     times = list(range(item.nt)) if all_times and item.nt > 1 else [item.t]
     return _export_regions(item, [(r, out_dir / f'{stem}_{tag}') for tag, r in regions],
-                           composite, per_channel, raw_stack, scale, time, times)
+                           composite, per_channel, raw_stack, scale, time, times,
+                           rgb_format, fps)
 
 
 def _export_regions(item, regions, composite, per_channel, raw_stack,
-                    scale, time, times) -> list[str]:
+                    scale, time, times, rgb_format='tif', fps=10.0) -> list[str]:
     """Write every output of every region in one pass over the timepoints.
 
     Loading a timepoint (and, for TCF, aligning HT and FL) is the slow part,
@@ -435,7 +443,13 @@ def _export_regions(item, regions, composite, per_channel, raw_stack,
             del mm
     raw_jobs = [(path, region) for path, region, _ in raw_jobs]
 
+    from .movie import wants_mp4, wants_tif, write_mp4
+
     for path, region, chans, frames in rgb_jobs:
+        if series and wants_mp4(rgb_format):
+            written.append(write_mp4(path.with_suffix('.mp4'), frames, fps))
+            if not wants_tif(rgb_format):
+                continue
         rgb_meta = dict(meta_common)
         if series:
             rgb_meta['axes'] = 'TYXS'
