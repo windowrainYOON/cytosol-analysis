@@ -11,3 +11,4 @@ PySide6     # desktop app
 scipy
 scikit-image  # cell ROI segmentation
 roifile     # ImageJ .roi / RoiSet.zip
+imageio-ffmpeg  # MP4 export (bundled ffmpeg binary)

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QColorDialog,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -46,6 +47,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSlider,
+    QSpinBox,
     QSplitter,
     QTabWidget,
     QVBoxLayout,
@@ -64,6 +66,8 @@ from .lut import (
 )
 from .imageid import ROI_EXT, match_roi, plan_pairing
 from .marker_panel import MarkerPanel
+from .profile_panel import ProfilePanel
+from .movie import RGB_FORMATS, wants_mp4
 from .roi_panel import RoiPanel, write_csv
 from .stack import StackView, export_projection, export_rotation
 from .stack_panel import StackPanel
@@ -143,6 +147,7 @@ class Canvas(QGraphicsView):
     """
 
     cropDrawn = Signal(float, float, float, float)
+    lineDrawn = Signal(float, float, float, float)
     cellClicked = Signal(float, float)
     lassoDrawn = Signal(str, object)
 
@@ -176,6 +181,11 @@ class Canvas(QGraphicsView):
         self.scene().addItem(self._lasso_item)
         self._pan_from = None
         self._press_view = None
+        # line profile: the line being drawn and the one shown
+        self.line_mode = False
+        self._line_origin = None
+        self._line_items = []
+        self._line = None  # (x0, y0, x1, y1, width) in scene coordinates
 
     def set_image(self, qimg: QImage, refit=False):
         self.pix.setPixmap(QPixmap.fromImage(qimg))
@@ -260,8 +270,49 @@ class Canvas(QGraphicsView):
                 self.scene().addItem(it)
                 self._cell_items.append(it)
 
+    def show_line(self, line=None, width=1):
+        """Draw the profile line (scene coordinates); width > 1 also shows its band."""
+        for it in self._line_items:
+            self.scene().removeItem(it)
+        self._line_items = []
+        self._line = None if line is None else (*line, width)
+        if line is None:
+            return
+        x0, y0, x1, y1 = line
+        items = []
+        length = float(np.hypot(x1 - x0, y1 - y0))
+        if width > 1 and length > 0:
+            nx, ny = -(y1 - y0) / length * width / 2, (x1 - x0) / length * width / 2
+            band = QPainterPath(QPointF(x0 + nx, y0 + ny))
+            for px, py in ((x1 + nx, y1 + ny), (x1 - nx, y1 - ny), (x0 - nx, y0 - ny)):
+                band.lineTo(px, py)
+            band.closeSubpath()
+            b = QGraphicsPathItem(band)
+            pen = QPen(QColor(255, 220, 0, 160))
+            pen.setCosmetic(True)
+            pen.setWidthF(1)
+            b.setPen(pen)
+            b.setBrush(QColor(255, 220, 0, 40))
+            items.append(b)
+        path = QPainterPath(QPointF(x0, y0))
+        path.lineTo(x1, y1)
+        ln = QGraphicsPathItem(path)
+        pen = QPen(QColor(255, 220, 0))
+        pen.setCosmetic(True)
+        pen.setWidthF(2)
+        ln.setPen(pen)
+        items.append(ln)
+        for it in items:
+            it.setZValue(25)
+            self.scene().addItem(it)
+            self._line_items.append(it)
+
+    def set_line_mode(self, on: bool):
+        self.line_mode = on
+        self._apply_mode()
+
     def _drawing(self):
-        return self.crop_mode or self.roi_tool in LASSO_COLORS
+        return self.crop_mode or self.line_mode or self.roi_tool in LASSO_COLORS
 
     def _apply_mode(self):
         drawing = self._drawing()
@@ -296,6 +347,11 @@ class Canvas(QGraphicsView):
             self.rect_item.setRect(QRectF(self._origin, self._origin))
             self.rect_item.show()
             return
+        if self.line_mode and btn == Qt.MouseButton.LeftButton:
+            self._line_origin = (pos.x(), pos.y())
+            width = self._line[4] if self._line else 1
+            self.show_line((*self._line_origin, pos.x(), pos.y()), width)
+            return
         if self.roi_tool in LASSO_COLORS and btn == Qt.MouseButton.LeftButton:
             self._lasso = [(pos.x(), pos.y())]
             col = LASSO_COLORS[self.roi_tool]
@@ -324,6 +380,18 @@ class Canvas(QGraphicsView):
             p = self.mapToScene(event.position().toPoint())
             self.rect_item.setRect(QRectF(self._origin, p).normalized())
             return
+        if self.line_mode and self._line_origin is not None:
+            p = self.mapToScene(event.position().toPoint())
+            x0, y0 = self._line_origin
+            x1, y1 = p.x(), p.y()
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                # Shift: horizontal, vertical or 45°, as in ImageJ
+                dx, dy = x1 - x0, y1 - y0
+                ang = round(np.degrees(np.arctan2(dy, dx)) / 45) * 45
+                r = float(np.hypot(dx, dy))
+                x1, y1 = x0 + r * np.cos(np.radians(ang)), y0 + r * np.sin(np.radians(ang))
+            self.show_line((x0, y0, x1, y1), self._line[4] if self._line else 1)
+            return
         if self._lasso is not None:
             p = self.mapToScene(event.position().toPoint())
             self._lasso.append((p.x(), p.y()))
@@ -340,6 +408,16 @@ class Canvas(QGraphicsView):
             r = self.rect_item.rect()
             self._origin = None
             self.cropDrawn.emit(r.left(), r.top(), r.right(), r.bottom())
+            return
+        if self.line_mode and self._line_origin is not None:
+            self._line_origin = None
+            if self._line is not None:
+                x0, y0, x1, y1, _ = self._line
+                scale = self.transform().m11() or 1.0
+                if np.hypot(x1 - x0, y1 - y0) * scale >= 3:
+                    self.lineDrawn.emit(x0, y0, x1, y1)
+                    return
+            self.lineDrawn.emit(-1, -1, -1, -1)  # a click: no line
             return
         if self._lasso is not None:
             pts = np.asarray(self._lasso, float)
@@ -680,6 +758,10 @@ class MainWindow(QMainWindow):
         self.crop_btn.toggled.connect(self.canvas.set_crop_mode)
         self.show_crop_btn = QCheckBox('선택한 Crop만 보기')
         self.show_crop_btn.toggled.connect(lambda _: self.update_preview(refit=True))
+        self.line_btn = QPushButton('라인 프로파일 (선 그리기)')
+        self.line_btn.setCheckable(True)
+        self.line_btn.setToolTip('이미지 위에서 드래그해 선을 그리면 채널별 강도 그래프를 '
+                                 '‘라인 프로파일’ 탭에 보여줍니다. Shift: 수평·수직·45°.')
         fit_btn = QPushButton('화면 맞춤')
         fit_btn.clicked.connect(self.canvas.fit)
         self.t_slider = QSlider(Qt.Orientation.Horizontal)
@@ -695,6 +777,7 @@ class MainWindow(QMainWindow):
         bar1 = QHBoxLayout()
         bar1.addWidget(self.show_crop_btn)
         bar1.addStretch()
+        bar1.addWidget(self.line_btn)
         bar1.addWidget(fit_btn)
         self.t_row = QWidget()
         tl = QHBoxLayout(self.t_row)
@@ -761,23 +844,43 @@ class MainWindow(QMainWindow):
         self.exp_raw.setChecked(True)
         self.exp_all_t = QCheckBox('타임시리즈는 모든 시점 저장 (끄면 현재 시점만)')
         self.exp_all_t.setChecked(True)
+        self.exp_format = QComboBox()
+        for key, name in RGB_FORMATS.items():
+            self.exp_format.addItem(name, key)
+        self.exp_format.setToolTip(
+            '타임시리즈(모든 시점 저장)의 합성·채널별 RGB를 TIFF 스택, MP4 동영상, 또는 둘 다로 저장합니다.\n'
+            '시점이 하나인 이미지는 항상 TIFF로, 원본값 스택은 항상 TIFF로 저장됩니다.')
+        self.exp_fps = QSpinBox()
+        self.exp_fps.setRange(1, 60)
+        self.exp_fps.setValue(10)
+        self.exp_fps.setSuffix(' fps')
+        self.exp_fps.setToolTip('MP4 동영상의 초당 프레임 수 (프레임 = 시점)')
+        self.exp_format.currentIndexChanged.connect(
+            lambda _: self.exp_fps.setEnabled(wants_mp4(self.exp_format.currentData())))
+        self.exp_fps.setEnabled(False)
+        self.exp_all_t.toggled.connect(self.exp_format.setEnabled)
         self.exp_per_image = QCheckBox('이미지별 폴더에 나눠 저장')
         self.exp_per_image.setChecked(True)
         self.exp_per_image.setToolTip('폴더 안에 이미지마다 하위 폴더(이미지 이름_이미지 ID)를 만들어 그 이미지의 파일을 넣습니다.')
-        exp_btn = QPushButton('모든 이미지 TIFF로 저장…')
+        exp_btn = QPushButton('모든 이미지 저장…')
         exp_btn.clicked.connect(self.export_all)
         exp_one = QPushButton('현재 이미지만 저장…')
         exp_one.clicked.connect(self.export_current)
-        exp = QGroupBox('TIFF 일괄 저장')
+        exp = QGroupBox('일괄 저장 (TIFF / MP4)')
         el = QVBoxLayout(exp)
         row = QHBoxLayout()
         row.addWidget(QLabel('범위:'))
         row.addWidget(self.exp_full)
         row.addWidget(self.exp_crops)
         el.addLayout(row)
-        for w in (self.exp_composite, self.exp_channels, self.exp_raw, self.exp_all_t,
-                  self.exp_per_image):
+        for w in (self.exp_composite, self.exp_channels, self.exp_raw, self.exp_all_t):
             el.addWidget(w)
+        row = QHBoxLayout()
+        row.addWidget(QLabel('타임시리즈 RGB 형식:'))
+        row.addWidget(self.exp_format, 1)
+        row.addWidget(self.exp_fps)
+        el.addLayout(row)
+        el.addWidget(self.exp_per_image)
         row = QHBoxLayout()
         row.addWidget(exp_one)
         row.addWidget(exp_btn)
@@ -816,6 +919,13 @@ class MainWindow(QMainWindow):
         stack_scroll.setWidgetResizable(True)
         stack_scroll.setWidget(self.stack_panel)
         self.stack_tab = right.addTab(stack_scroll, '스택')
+        self.profile_panel = ProfilePanel()
+        self.profile_panel.changed.connect(self._draw_profile_line)
+        self.profile_tab = right.addTab(self.profile_panel, '라인 프로파일')
+        self.canvas.lineDrawn.connect(self._line_drawn)
+        self.line_btn.toggled.connect(self._line_mode)
+        self.profile_panel.draw_btn.toggled.connect(self.line_btn.setChecked)
+        self.crop_btn.toggled.connect(lambda on: on and self.line_btn.setChecked(False))
         right.currentChanged.connect(self._tab_changed)
         self.right_tabs = right
         self._last_shape = None
@@ -998,6 +1108,8 @@ class MainWindow(QMainWindow):
         if not self.items:
             self.current = None
             self._build_panels()
+            self.profile_panel.bind(None)
+            self.canvas.show_line(None)
             self.roi_panel.bind(None)
             self.roi_panel.draw_overlay(hidden=True)
             self.canvas.pix.setPixmap(QPixmap())
@@ -1039,6 +1151,7 @@ class MainWindow(QMainWindow):
         self._refresh_crop_list(select=0)
         self.stack_panel.bind(self._stack_view(it))
         self._build_stack_panels()
+        self.profile_panel.bind(it)
         c, z, h, w = it.image.shape
         px = it.pixel_um
         self.info.setText(
@@ -1186,6 +1299,8 @@ class MainWindow(QMainWindow):
 
     def _tab_changed(self, _):
         it = self.current
+        if self._stack_on():
+            self.line_btn.setChecked(False)  # projections have their own geometry
         if not self._stack_on() and it is not None:
             it.image.release()
         self._sync_z_widgets()
@@ -1233,6 +1348,7 @@ class MainWindow(QMainWindow):
         self._last_shape = shape
         self.canvas.show_crops([])
         self.roi_panel.draw_overlay(hidden=True)
+        self.canvas.show_line(None)
         self.stack_panel.set_stale(three and view.lut_stale())
         if three:
             self.stack_panel.status.setText(
@@ -1265,10 +1381,14 @@ class MainWindow(QMainWindow):
         if kind == 'rotation':
             tag = f'3d_{st.method_3d}_{st.axis}rotation'
         default = str(it.path.with_name(f'{item_stem(it)}_{tag}.tif'))
-        path, _ = QFileDialog.getSaveFileName(self, '투영 저장', default, 'TIFF (*.tif)')
+        path, flt = QFileDialog.getSaveFileName(self, '투영 저장', default,
+                                                'TIFF (*.tif);;MP4 동영상 (*.mp4)')
         if not path:
             return
-        stem = path[:-4] if path.lower().endswith('.tif') else path
+        movie = path.lower().endswith('.mp4') or ('mp4' in flt.lower()
+                                                  and not path.lower().endswith('.tif'))
+        stem = path[:-4] if path.lower().endswith(('.tif', '.mp4')) else path
+        fps = self.stack_panel.fps.value() if movie else None
         full = self.stack_panel.save_full.isChecked()
         if kind == 'rotation':
             a, b, step = (self.stack_panel.rot_from.value(), self.stack_panel.rot_to.value(),
@@ -1290,11 +1410,12 @@ class MainWindow(QMainWindow):
             if kind == 'rotation':
                 files = export_rotation(view, stem, angles, self.markers.scale_style(),
                                         self.markers.time_style(), full_res=full,
-                                        progress=progress)
+                                        progress=progress, movie_fps=fps)
             else:
                 files = export_projection(view, stem, self.markers.scale_style(),
                                           self.markers.time_style(),
-                                          all_times=n > 1, full_res=full, progress=progress)
+                                          all_times=n > 1, full_res=full, progress=progress,
+                                          movie_fps=fps)
         except Exception as exc:
             traceback.print_exc()
             QMessageBox.warning(self, '저장 실패', str(exc))
@@ -1335,6 +1456,47 @@ class MainWindow(QMainWindow):
             self.canvas.fit()
         self.canvas.show_crops([] if only else it.crops, sel)
         self.roi_panel.draw_overlay(hidden=only)
+        self._draw_profile_line()
+        self.profile_panel.schedule()
+
+    # ---- line profile ---------------------------------------------------
+
+    def _view_offset(self):
+        """Image-pixel origin of what the canvas shows (a crop when 'only crop' is on)."""
+        it = self.current
+        sel = self._selected_crop()
+        if it is not None and self.show_crop_btn.isChecked() and sel is not None:
+            return it.crops[sel][:2]
+        return 0, 0
+
+    def _line_mode(self, on):
+        self.profile_panel.draw_btn.setChecked(on)
+        if on:
+            self.crop_btn.setChecked(False)
+            if self.right_tabs.currentIndex() != self.profile_tab:
+                self.right_tabs.setCurrentIndex(self.profile_tab)  # also leaves the stack tab
+        self.canvas.set_line_mode(on)
+
+    def _line_drawn(self, x0, y0, x1, y1):
+        it = self.current
+        if it is None or self._stack_on():
+            self.canvas.show_line(None)
+            return
+        if x0 >= 0:
+            ox, oy = self._view_offset()
+            self.profile_panel.set_line((x0 + ox, y0 + oy, x1 + ox, y1 + oy))
+        self._draw_profile_line()
+
+    def _draw_profile_line(self):
+        it = self.current
+        line = getattr(it, 'profile_line', None)
+        if line is None or self._stack_on():
+            self.canvas.show_line(None)
+            return
+        ox, oy = self._view_offset()
+        x0, y0, x1, y1 = line
+        self.canvas.show_line((x0 - ox, y0 - oy, x1 - ox, y1 - oy),
+                              self.profile_panel.width.value())
 
     # ---- crop -----------------------------------------------------------
 
@@ -1452,6 +1614,8 @@ class MainWindow(QMainWindow):
             scale=self.markers.scale_style(),
             time=self.markers.time_style(),
             all_times=self.exp_all_t.isChecked(),
+            rgb_format=self.exp_format.currentData(),
+            fps=self.exp_fps.value(),
         )
 
     def _export(self, items):
@@ -1482,7 +1646,7 @@ class MainWindow(QMainWindow):
                 traceback.print_exc()
             it.image.release()
         prog.setValue(len(items))
-        msg = f'TIFF {len(files)}개를 저장했습니다.\n{out}'
+        msg = f'파일 {len(files)}개를 저장했습니다.\n{out}'
         if errors:
             msg += '\n\n실패:\n' + '\n'.join(errors)
         QMessageBox.information(self, '저장 완료', msg)
@@ -1519,7 +1683,7 @@ class MainWindow(QMainWindow):
             it.image.release()
         prog.setValue(len(items))
         write_csv(Path(out) / 'cell_rois.csv', rows)
-        msg = f'이미지 {n_done}개를 이미지별 폴더에 저장했습니다 (TIFF {n_files}개'
+        msg = f'이미지 {n_done}개를 이미지별 폴더에 저장했습니다 (파일 {n_files}개'
         msg += f', ROI 측정 {len(rows)}행).' if rows else ').'
         msg += f'\n{out}'
         if errors:

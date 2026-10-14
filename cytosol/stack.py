@@ -513,12 +513,14 @@ class StackView:
 
 
 def export_projection(view: StackView, path_stem, scale=None, time=None, all_times=False,
-                      full_res=True, progress=None) -> list[str]:
+                      full_res=True, progress=None, movie_fps=None) -> list[str]:
     """Write <stem>_composite.tif (RGB with LUTs and markers) and <stem>_raw.tif
     (float32 ImageJ stack of the projected values, carrying the LUTs).
 
     all_times: one frame per timepoint. full_res: a 3D projection at full XY
     resolution instead of the preview step. progress(i, n) -> False cancels.
+    movie_fps: write the frames as <stem>.mp4 at this frame rate instead
+    (only when there are several frames; a single frame stays TIFF).
     """
     import tifffile
 
@@ -545,11 +547,11 @@ def export_projection(view: StackView, path_stem, scale=None, time=None, all_tim
     finally:
         item.set_t(start_t)
     return _write_projection(view, path_stem, rgb_frames, raw_frames, pix, len(times) > 1,
-                             tifffile, _imagej_luts)
+                             tifffile, _imagej_luts, movie_fps=movie_fps)
 
 
 def export_rotation(view: StackView, path_stem, angles, scale=None, time=None, full_res=True,
-                    progress=None) -> list[str]:
+                    progress=None, movie_fps=None) -> list[str]:
     """3D projection at every angle in ``angles`` as one RGB (and raw) stack."""
     import tifffile
 
@@ -568,11 +570,11 @@ def export_rotation(view: StackView, path_stem, angles, scale=None, time=None, f
         rgb_frames.append((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
         raw_frames.append(res)
     return _write_projection(view, path_stem, rgb_frames, raw_frames, pix, len(rgb_frames) > 1,
-                             tifffile, _imagej_luts, frame_axis='Z')
+                             tifffile, _imagej_luts, frame_axis='Z', movie_fps=movie_fps)
 
 
 def _write_projection(view, path_stem, rgb_frames, raw_frames, pix, series, tifffile, luts_fn,
-                      frame_axis='T'):
+                      frame_axis='T', movie_fps=None):
     from pathlib import Path
 
     if not rgb_frames:
@@ -580,6 +582,9 @@ def _write_projection(view, path_stem, rgb_frames, raw_frames, pix, series, tiff
     item = view.item
     stem = str(path_stem)
     Path(stem).parent.mkdir(parents=True, exist_ok=True)
+    if movie_fps and series:
+        from .movie import write_mp4
+        return [write_mp4(f'{stem}.mp4', rgb_frames, movie_fps)]
     res = (1.0 / pix, 1.0 / pix) if pix else None
     meta = {'unit': 'um'} if pix else {}
     meta.update(item.id_metadata())

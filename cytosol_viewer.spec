@@ -12,9 +12,12 @@ hiddenimports = (
     + ['h5py', 'tifffile', 'xarray', 'roifile',
        # figure export picks the backend by file type at save time
        'matplotlib.backends.backend_pdf', 'matplotlib.backends.backend_svg',
-       'matplotlib.backends.backend_ps']
+       'matplotlib.backends.backend_ps',
+       # line profile plot embedded in the window
+       'matplotlib.backends.backend_qtagg', 'imageio_ffmpeg']
 )
-datas = collect_data_files('skimage') + [('cytosol/assets', 'cytosol/assets')]
+# imageio-ffmpeg ships the ffmpeg binary used for MP4 export
+datas = collect_data_files('skimage') + collect_data_files('imageio_ffmpeg', include_py_files=False) + [('cytosol/assets', 'cytosol/assets')]
 
 a = Analysis(
     ['cytosol_viewer.py'],
