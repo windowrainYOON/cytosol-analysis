@@ -234,6 +234,15 @@ class ImageItem:
             self.crops.append(region)
         return region
 
+    def move_crop(self, index, dx, dy):
+        """Shift crop ``index`` by (dx, dy) pixels, same size, kept inside the image."""
+        x0, y0, x1, y1 = self.crops[index]
+        h, w = self.image.shape[-2:]
+        dx = int(np.clip(round(dx), -x0, w - x1))
+        dy = int(np.clip(round(dy), -y0, h - y1))
+        self.crops[index] = (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
+        return self.crops[index]
+
 
 def match_channel(item: ImageItem, name: str, index: int, like: ImageItem | None = None):
     """Index of the 'same channel' in another image, or None.

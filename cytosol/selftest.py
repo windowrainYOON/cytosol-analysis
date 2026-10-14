@@ -326,10 +326,48 @@ def run(out_dir) -> int:
         app.processEvents()
         if win.current.z != 3 or win.stack_views[id(win.current)].result is None:
             raise AssertionError('Z slider / stack tab did not update')
+        # 3D view: right-drag turns (up-down switches to the X axis from 0°)
+        if not win.canvas.view3d:
+            raise AssertionError('3D view not draggable')
+        win.canvas.rotateStarted.emit()
+        win.canvas.rotateDragged.emit('X', 40.0)
+        sp = win.stack_panel
+        if sp.axis.currentData() != 'X' or sp.angle_spin.value() != 20:
+            raise AssertionError(f'3D drag: {sp.axis.currentData()} {sp.angle_spin.value()}')
+        win.canvas.rotateDragged.emit('X', 100.0)
+        if sp.angle_spin.value() != 50:
+            raise AssertionError('3D drag did not follow the mouse')
         win.right_tabs.setCurrentIndex(0)
         app.processEvents()
         if win.current.image.volume_loaded:
             raise AssertionError('volume kept after leaving the stack tab')
+        if win.canvas.view3d:
+            raise AssertionError('3D drag mode left on outside the stack tab')
+        # crop regions: drag one to move it (kept inside the image, same size)
+        h, w = win.current.image.shape[-2:]
+        win._crop_drawn(2, 2, 12, 10)
+        win.canvas.cropMoved.emit(0, 5, 3)
+        if win.current.crops[0] != (7, 5, 17, 13):
+            raise AssertionError(f'crop move: {win.current.crops[0]}')
+        win.canvas.cropMoved.emit(0, 10 * w, -10 * h)
+        if win.current.crops[0] != (w - 10, 0, w, 8):
+            raise AssertionError(f'crop move not clamped: {win.current.crops[0]}')
+        win.clear_crops()
+        # rectangle zoom
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+        win.canvas.fit()
+        before = win.canvas.transform().m11()
+        win.zoom_btn.setChecked(True)
+        vp = win.canvas.viewport()
+        c = vp.rect().center()
+        QTest.mousePress(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, c)
+        QTest.mouseMove(vp, c + QPoint(20, 20))
+        QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                           c + QPoint(20, 20))
+        if win.zoom_btn.isChecked() or win.canvas.transform().m11() <= before * 2:
+            raise AssertionError('rectangle zoom')
+        win.canvas.fit()
         win.line_btn.setChecked(True)
         app.processEvents()
         if win.right_tabs.currentIndex() != win.profile_tab or not win.canvas.line_mode:

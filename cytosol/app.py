@@ -148,9 +148,17 @@ class Canvas(QGraphicsView):
 
     ROI tools: 'select' (click selects a cell, drag pans), 'add' / 'sub' / 'new'
     (drag draws a freehand area). The right or middle button always pans.
+    Dragging inside a crop region moves it. Zoom mode (or Shift + drag) zooms
+    into the dragged rectangle. In the 3D view the image can be dragged
+    anywhere and the right button turns it (``rotateDragged``).
     """
 
     cropDrawn = Signal(float, float, float, float)
+    cropMoved = Signal(int, int, int)  # index, dx, dy (image pixels)
+    cropPicked = Signal(int)
+    zoomDone = Signal()
+    rotateStarted = Signal()
+    rotateDragged = Signal(str, float)  # axis 'Y' / 'X', screen pixels from the press
     lineDrawn = Signal(float, float, float, float)
     cellClicked = Signal(float, float)
     lassoDrawn = Signal(str, object)
@@ -190,12 +198,56 @@ class Canvas(QGraphicsView):
         self._line_origin = None
         self._line_items = []
         self._line = None  # (x0, y0, x1, y1, width) in scene coordinates
+        # crop regions shown (dragging one moves it)
+        self._crops = []
+        self._crop_sel = None
+        self._crop_shapes = {}  # index -> (rect item, text item, text origin)
+        self._crop_drag = None  # [index, press scene pos, moved]
+        # rectangle zoom
+        self.zoom_mode = False
+        self._zoom_origin = None
+        self.zoom_item = QGraphicsRectItem()
+        zpen = QPen(QColor(255, 255, 255), 0)
+        zpen.setCosmetic(True)
+        zpen.setWidth(1)
+        zpen.setStyle(Qt.PenStyle.DashLine)
+        self.zoom_item.setPen(zpen)
+        self.zoom_item.setBrush(QColor(255, 255, 255, 30))
+        self.zoom_item.setZValue(30)
+        self.zoom_item.hide()
+        self.scene().addItem(self.zoom_item)
+        # 3D view: free panning, right-drag turns
+        self.view3d = False
+        self._rot = None  # (press position, locked axis or None)
 
     def set_image(self, qimg: QImage, refit=False):
         self.pix.setPixmap(QPixmap.fromImage(qimg))
-        self.scene().setSceneRect(QRectF(self.pix.pixmap().rect()))
+        self._scene_rect()
         if refit or not self._fitted:
             self.fit()
+
+    def _scene_rect(self):
+        r = QRectF(self.pix.pixmap().rect())
+        if self.view3d:  # room around the image so it can be dragged anywhere
+            m = max(r.width(), r.height()) * 2
+            r = r.adjusted(-m, -m, m, m)
+        self.scene().setSceneRect(r)
+
+    def set_view3d(self, on: bool):
+        """3D projection view: left-drag moves the image freely, right-drag turns it."""
+        if on == self.view3d:
+            return
+        self.view3d = on
+        policy = (Qt.ScrollBarPolicy.ScrollBarAlwaysOff if on
+                  else Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(policy)
+        self.setVerticalScrollBarPolicy(policy)
+        self._scene_rect()
+        self.fit()
+
+    def set_zoom_mode(self, on: bool):
+        self.zoom_mode = on
+        self._apply_mode()
 
     def fit(self):
         if not self.pix.pixmap().isNull():
@@ -207,6 +259,10 @@ class Canvas(QGraphicsView):
         for it in self._region_items:
             self.scene().removeItem(it)
         self._region_items = []
+        self._crops = list(crops)
+        self._crop_sel = selected
+        self._crop_shapes = {}
+        self._crop_drag = None
         self.rect_item.hide()
         for k, (x0, y0, x1, y1) in enumerate(crops):
             sel = k == selected
@@ -226,6 +282,7 @@ class Canvas(QGraphicsView):
             t.setFont(font)
             t.setPos(x0 + 2, y0 + 2)
             t.setZValue(11)
+            self._crop_shapes[k] = (r, t, QPointF(x0 + 2, y0 + 2))
             for it in (r, t):
                 self.scene().addItem(it)
                 self._region_items.append(it)
@@ -316,7 +373,20 @@ class Canvas(QGraphicsView):
         self._apply_mode()
 
     def _drawing(self):
-        return self.crop_mode or self.line_mode or self.roi_tool in LASSO_COLORS
+        return (self.zoom_mode or self.crop_mode or self.line_mode
+                or self.roi_tool in LASSO_COLORS)
+
+    def _crop_at(self, pos):
+        """Index of the crop region under a scene point (the selected one first)."""
+        order = list(range(len(self._crops) - 1, -1, -1))
+        if self._crop_sel is not None and self._crop_sel in order:
+            order.remove(self._crop_sel)
+            order.insert(0, self._crop_sel)
+        for k in order:
+            x0, y0, x1, y1 = self._crops[k]
+            if x0 <= pos.x() <= x1 and y0 <= pos.y() <= y1:
+                return k
+        return None
 
     def _apply_mode(self):
         drawing = self._drawing()
@@ -341,11 +411,23 @@ class Canvas(QGraphicsView):
 
     def mousePressEvent(self, event):
         btn = event.button()
+        if btn == Qt.MouseButton.RightButton and self.view3d:
+            self._rot = (event.position(), None)
+            self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
+            self.rotateStarted.emit()
+            return
         if btn in (Qt.MouseButton.RightButton, Qt.MouseButton.MiddleButton):
             self._pan_from = event.position()
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
             return
         pos = self.mapToScene(event.position().toPoint())
+        shift = event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+        if btn == Qt.MouseButton.LeftButton and (
+                self.zoom_mode or (shift and not self._drawing())):
+            self._zoom_origin = pos
+            self.zoom_item.setRect(QRectF(pos, pos))
+            self.zoom_item.show()
+            return
         if self.crop_mode and btn == Qt.MouseButton.LeftButton:
             self._origin = pos
             self.rect_item.setRect(QRectF(self._origin, self._origin))
@@ -369,11 +451,46 @@ class Canvas(QGraphicsView):
             self._lasso_item.setPath(QPainterPath())
             self._lasso_item.show()
             return
+        if btn == Qt.MouseButton.LeftButton and not self._drawing():
+            k = self._crop_at(pos)
+            if k is not None:
+                self._crop_drag = [k, pos, False]
+                self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+                return
         if btn == Qt.MouseButton.LeftButton:
             self._press_view = event.position()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self._rot is not None:
+            start, axis = self._rot
+            d = event.position() - start
+            if axis is None and d.manhattanLength() >= 4:
+                # the first clear direction picks the axis for this drag
+                axis = 'Y' if abs(d.x()) >= abs(d.y()) else 'X'
+                self._rot = (start, axis)
+            if axis is not None:
+                self.rotateDragged.emit(axis, d.x() if axis == 'Y' else d.y())
+            return
+        if self._zoom_origin is not None:
+            p = self.mapToScene(event.position().toPoint())
+            self.zoom_item.setRect(QRectF(self._zoom_origin, p).normalized())
+            return
+        if self._crop_drag is not None:
+            k, start, _ = self._crop_drag
+            p = self.mapToScene(event.position().toPoint())
+            dx, dy = round(p.x() - start.x()), round(p.y() - start.y())
+            self._crop_drag[2] = self._crop_drag[2] or dx != 0 or dy != 0
+            r, t, origin = self._crop_shapes[k]
+            r.setPos(dx, dy)
+            t.setPos(origin + QPointF(dx, dy))
+            return
+        if (not event.buttons() and not self._drawing() and self._crops
+                and self._pan_from is None):
+            p = self.mapToScene(event.position().toPoint())
+            over = self._crop_at(p) is not None
+            self.viewport().setCursor(Qt.CursorShape.SizeAllCursor if over
+                                      else Qt.CursorShape.OpenHandCursor)
         if self._pan_from is not None:
             d = event.position() - self._pan_from
             self._pan_from = event.position()
@@ -404,6 +521,31 @@ class Canvas(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self._rot is not None:
+            self._rot = None
+            self._apply_mode()
+            return
+        if self._zoom_origin is not None:
+            r = self.zoom_item.rect()
+            self._zoom_origin = None
+            self.zoom_item.hide()
+            scale = self.transform().m11() or 1.0
+            if min(r.width(), r.height()) * scale >= 4:
+                self.fitInView(r, Qt.AspectRatioMode.KeepAspectRatio)
+                self._fitted = True
+            self.zoomDone.emit()
+            return
+        if self._crop_drag is not None:
+            k, start, moved = self._crop_drag
+            self._crop_drag = None
+            self._apply_mode()
+            p = self.mapToScene(event.position().toPoint())
+            if moved:
+                self.cropMoved.emit(k, round(p.x() - start.x()), round(p.y() - start.y()))
+            else:  # a click: select this crop (and a cell under it in the ROI tab)
+                self.cropPicked.emit(k)
+                self.cellClicked.emit(p.x(), p.y())
+            return
         if self._pan_from is not None:
             self._pan_from = None
             self._apply_mode()
@@ -775,7 +917,8 @@ class MainWindow(QMainWindow):
         # left, below files: crop regions of the current image
         self.crop_list = QListWidget()
         self.crop_list.setMaximumHeight(160)
-        self.crop_list.currentRowChanged.connect(lambda _: self.update_preview(refit=True))
+        self.crop_list.currentRowChanged.connect(
+            lambda _: self.update_preview(refit=self.show_crop_btn.isChecked()))
         self.crop_btn = QPushButton('Crop 추가 (드래그)')
         self.crop_btn.setCheckable(True)
         del_crop = QPushButton('선택 삭제')
@@ -783,7 +926,8 @@ class MainWindow(QMainWindow):
         clear_crop = QPushButton('전체 삭제')
         clear_crop.clicked.connect(self.clear_crops)
         crop_all = QPushButton('같은 크기 이미지에 복사')
-        crop_all.setToolTip('이 이미지의 crop 영역들을 크기가 같은 다른 이미지에 복사')
+        crop_all.setToolTip('이 이미지의 crop 영역들을 크기가 같은 다른 이미지에 복사.\n'
+                            '복사한 뒤 각 이미지에서 영역 안을 드래그하면 위치를 옮길 수 있습니다.')
         crop_all.clicked.connect(self.crop_to_all)
         crop_box = QGroupBox('Crop 영역 (각각 따로 저장)')
         cbl = QVBoxLayout(crop_box)
@@ -803,6 +947,8 @@ class MainWindow(QMainWindow):
         # center: canvas + view controls
         self.canvas = Canvas()
         self.canvas.cropDrawn.connect(self._crop_drawn)
+        self.canvas.cropMoved.connect(self._crop_moved)
+        self.canvas.cropPicked.connect(self._crop_picked)
         # Z: vertical slider left of the image (bottom = first slice)
         self.z_slider = QSlider(Qt.Orientation.Vertical)
         self.z_slider.setMinimum(1)
@@ -827,6 +973,12 @@ class MainWindow(QMainWindow):
                                  '‘라인 프로파일’ 탭에 보여줍니다. Shift: 수평·수직·45°.')
         fit_btn = QPushButton('화면 맞춤')
         fit_btn.clicked.connect(self.canvas.fit)
+        self.zoom_btn = QPushButton('영역 확대')
+        self.zoom_btn.setCheckable(True)
+        self.zoom_btn.setToolTip('누른 뒤 이미지 위에서 사각형을 드래그하면 그 영역을 확대합니다.\n'
+                                 '버튼 없이 Shift + 드래그로도 됩니다. 원래대로: 화면 맞춤.')
+        self.zoom_btn.toggled.connect(self.canvas.set_zoom_mode)
+        self.canvas.zoomDone.connect(lambda: self.zoom_btn.setChecked(False))
         self.t_slider = QSlider(Qt.Orientation.Horizontal)
         self.t_slider.setTracking(False)  # load a timepoint on release, not while dragging
         self.t_slider.valueChanged.connect(self._t_changed)
@@ -841,6 +993,7 @@ class MainWindow(QMainWindow):
         bar1.addWidget(self.show_crop_btn)
         bar1.addStretch()
         bar1.addWidget(self.line_btn)
+        bar1.addWidget(self.zoom_btn)
         bar1.addWidget(fit_btn)
         self.t_row = QWidget()
         tl = QHBoxLayout(self.t_row)
@@ -978,6 +1131,8 @@ class MainWindow(QMainWindow):
         self.stack_panel.changed.connect(self.update_preview)
         self.stack_panel.saveRequested.connect(self.save_projection)
         self.stack_panel.refreshRequested.connect(self._refresh_3d)
+        self.canvas.rotateStarted.connect(self.stack_panel.begin_drag)
+        self.canvas.rotateDragged.connect(self.stack_panel.drag_rotate)
         self.stack_panels: list[ChannelPanel] = []
         self.stack_views: dict[int, StackView] = {}
         stack_scroll = QScrollArea()
@@ -1413,6 +1568,7 @@ class MainWindow(QMainWindow):
         self.stack_panel.read(region=it.crops[self._selected_crop()]
                               if self._selected_crop() is not None else None)
         three = view.settings.mode == '3d'
+        self.canvas.set_view3d(three)
         # what has to be (re)built: 2D needs the volume for every new projection,
         # 3D only when its structure changes (not for a new angle)
         rebuild = view.raw3d_key != view.struct_key() if three else view.key() != view.result_key
@@ -1542,6 +1698,7 @@ class MainWindow(QMainWindow):
             self._stack_preview(refit=refit)
             return
         self._last_shape = None
+        self.canvas.set_view3d(False)
         sel = self._selected_crop()
         only = self.show_crop_btn.isChecked() and sel is not None
         if self.roi_panel.show_input() and not only:
@@ -1620,6 +1777,19 @@ class MainWindow(QMainWindow):
         if region:
             self.statusBar().showMessage(f'Crop {len(self.current.crops)} 추가')
         self.update_preview()
+
+    def _crop_moved(self, k, dx, dy):
+        it = self.current
+        if it is None or k >= len(it.crops):
+            return
+        x0, y0, x1, y1 = it.move_crop(k, dx, dy)
+        self._refresh_crop_list(select=k)
+        self.statusBar().showMessage(f'Crop {k + 1} 이동: x {x0}–{x1}, y {y0}–{y1}')
+        self.update_preview()
+
+    def _crop_picked(self, k):
+        if k != self.crop_list.currentRow():
+            self.crop_list.setCurrentRow(k)
 
     def delete_crop(self):
         sel = self._selected_crop()
