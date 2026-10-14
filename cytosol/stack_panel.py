@@ -40,6 +40,7 @@ class StackPanel(QWidget):
         super().__init__(parent)
         self.view: StackView | None = None
         self._busy = False
+        self._drag = None
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(30)
@@ -141,6 +142,11 @@ class StackPanel(QWidget):
             'LUT의 Min/Max/Gamma를 바꾼 뒤 이 버튼을 누르면 3D에 반영됩니다 (색과 표시는 바로 반영).')
         self.refresh_btn.clicked.connect(self.refreshRequested.emit)
         f3.addRow(self.refresh_btn)
+        hint = QLabel('이미지 위에서 왼쪽 드래그: 위치 이동 · 오른쪽 드래그: 회전 '
+                      '(좌우 = Y축, 위아래 = X축)')
+        hint.setStyleSheet('color: gray; font-size: 11px;')
+        hint.setWordWrap(True)
+        f3.addRow(hint)
         lay.addWidget(self.box_3d)
 
         # LUT
@@ -320,6 +326,26 @@ class StackPanel(QWidget):
             self.angle.setValue(v)
             self.angle.blockSignals(False)
         self._edited()
+
+    def begin_drag(self):
+        """A right-drag on the 3D view starts (see drag_rotate)."""
+        self._drag = None
+
+    def drag_rotate(self, axis, pixels):
+        """Turn the 3D view by a mouse drag: left-right about the Y axis,
+        up-down about the X axis, 0.5 degree per screen pixel. Switching axis
+        starts the new axis from the front view (one axis at a time)."""
+        if not self.mode_3d.isChecked():
+            return
+        if self._drag is None or self._drag[0] != axis:
+            if self.axis.currentData() != axis:
+                self.axis.setCurrentIndex(self.axis.findData(axis))
+                base = 0
+            else:
+                base = self.angle_spin.value()
+            self._drag = (axis, base)
+        a = (self._drag[1] + pixels * 0.5 + 180) % 360 - 180
+        self.angle_spin.setValue(int(round(a)))
 
     def _all_z(self):
         self.z0.setValue(self.z0.minimum())
