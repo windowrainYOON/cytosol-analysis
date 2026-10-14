@@ -64,6 +64,7 @@ from .lut import (
     save_preset,
     unique_stems,
 )
+from .coloc_panel import ColocPanel, write_coloc_csv
 from .imageid import ROI_EXT, match_roi, plan_pairing
 from .marker_panel import MarkerPanel
 from .profile_panel import ProfilePanel
@@ -922,6 +923,11 @@ class MainWindow(QMainWindow):
         self.profile_panel = ProfilePanel()
         self.profile_panel.changed.connect(self._draw_profile_line)
         self.profile_tab = right.addTab(self.profile_panel, '라인 프로파일')
+        self.coloc_panel = ColocPanel(self)
+        coloc_scroll = QScrollArea()
+        coloc_scroll.setWidgetResizable(True)
+        coloc_scroll.setWidget(self.coloc_panel)
+        right.addTab(coloc_scroll, 'Coloc 2')
         self.canvas.lineDrawn.connect(self._line_drawn)
         self.line_btn.toggled.connect(self._line_mode)
         self.profile_panel.draw_btn.toggled.connect(self.line_btn.setChecked)
@@ -1109,6 +1115,7 @@ class MainWindow(QMainWindow):
             self.current = None
             self._build_panels()
             self.profile_panel.bind(None)
+            self.coloc_panel.bind(None)
             self.canvas.show_line(None)
             self.roi_panel.bind(None)
             self.roi_panel.draw_overlay(hidden=True)
@@ -1152,6 +1159,7 @@ class MainWindow(QMainWindow):
         self.stack_panel.bind(self._stack_view(it))
         self._build_stack_panels()
         self.profile_panel.bind(it)
+        self.coloc_panel.bind(it)
         c, z, h, w = it.image.shape
         px = it.pixel_um
         self.info.setText(
@@ -1662,7 +1670,7 @@ class MainWindow(QMainWindow):
         kwargs = self._export_kwargs()
         prog = QProgressDialog('저장 중…', '취소', 0, len(items), self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
-        n_done, n_files, rows, errors = 0, 0, [], []
+        n_done, n_files, rows, errors, coloc = 0, 0, [], [], []
         for i, it in enumerate(items):
             if prog.wasCanceled():
                 break
@@ -1676,6 +1684,9 @@ class MainWindow(QMainWindow):
                     item_rows = self.roi_panel.save_item(it, folder)
                     write_csv(folder / f'{item_stem(it)}_cell_rois.csv', item_rows)
                     rows += item_rows
+                if it.coloc:
+                    write_coloc_csv(folder / f'{item_stem(it)}_coloc2.csv', it.coloc)
+                    coloc += it.coloc
                 n_done += 1
             except Exception as exc:
                 errors.append(f'{it.label}: {exc}')
@@ -1683,6 +1694,7 @@ class MainWindow(QMainWindow):
             it.image.release()
         prog.setValue(len(items))
         write_csv(Path(out) / 'cell_rois.csv', rows)
+        write_coloc_csv(Path(out) / 'coloc2.csv', coloc)
         msg = f'이미지 {n_done}개를 이미지별 폴더에 저장했습니다 (파일 {n_files}개'
         msg += f', ROI 측정 {len(rows)}행).' if rows else ').'
         msg += f'\n{out}'

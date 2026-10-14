@@ -157,6 +157,33 @@ def run(out_dir) -> int:
         rois.save(out / 'selftest_RoiSet.zip', properties=item.id_properties())
         return f'{len(rois)} cells'
 
+    def coloc2():
+        from .coloc import Coloc2Settings, ValueType, run_coloc2
+        from .coloc_panel import ColocRecord, region_mask, save_pdf_report, write_coloc_csv
+        planes = item.planes()
+        cells = item.cells
+        recs = []
+        for l in cells.ids():
+            for key in ('cell', 'cyto'):
+                m = region_mask(cells, l, key)
+                res = run_coloc2(planes[0], planes[1], m,
+                                 Coloc2Settings(costes_randomisations=5, display_images=True),
+                                 ValueType.for_dtype('uint16'), ('DAPI', 'GFP'), f'{key}{l:03d}')
+                recs.append(ColocRecord(item.label, item.image_id, item.source_name, 0, 'MIP',
+                                        f'{key}{l:03d}', key, l, 'DAPI', 'GFP', int(m.sum()), res))
+        r = recs[0].result
+        names = [n for n, _, _ in r.values]
+        for need in ("Pearson's R value (no threshold)", "Manders' tM1 (Above autothreshold of Ch2)",
+                     "Kendall's Tau-b rank correlation value", 'Costes P-Value'):
+            if need not in names:
+                raise AssertionError(f'missing {need}')
+        if len(r.histograms) != 3:
+            raise AssertionError(f'{len(r.histograms)} histograms')
+        n = write_coloc_csv(out / 'selftest_coloc2.csv', recs)
+        save_pdf_report(out / 'selftest_coloc2.pdf', recs[0])
+        item.coloc = recs
+        return f'{n} ROIs, cell001 r = {r.value("Pearson\'s R value (no threshold)"):.3f}'
+
     def image_id_pairing():
         from .app import load_items
         from .imageid import plan_pairing, roi_id, tiff_id
@@ -298,6 +325,13 @@ def run(out_dir) -> int:
             raise AssertionError('no profile after drawing a line')
         if not win.canvas._line_items:
             raise AssertionError('profile line not drawn on the canvas')
+        win.coloc_panel.whole.setChecked(True)
+        win.coloc_panel.nrand.setValue(3)
+        win.coloc_panel._run([win.current])
+        win.coloc_panel.bind(win.current)
+        if not win.current.coloc or win.coloc_panel.table.rowCount() != len(win.current.coloc):
+            raise AssertionError('Coloc 2 tab produced no results')
+        win.coloc_panel._draw()
         win.close()
 
     step('readers import', readers)
@@ -307,6 +341,7 @@ def run(out_dir) -> int:
     step('MP4 (odd frame size)', mp4_odd_size)
     step('line profile', line_profile_step)
     step('cell ROIs + RoiSet.zip', cell_rois)
+    step('Coloc 2 per cell ROI', coloc2)
     step('image ID in exports + pairing', image_id_pairing)
     step('same-name images, separate folders', same_name_export)
     step('figure export', figure)
