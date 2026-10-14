@@ -84,6 +84,8 @@ class ImageItem:
     linked: list[Path] = field(default_factory=list)
     # line for the intensity profile, (x0, y0, x1, y1) in pixels
     profile_line: tuple | None = None
+    # Coloc 2 results (cytosol.coloc_panel.ColocRecord), newest run
+    coloc: list = field(default_factory=list)
     _planes: np.ndarray | None = field(default=None, repr=False)
     _planes_z: object = field(default=None, repr=False)
 

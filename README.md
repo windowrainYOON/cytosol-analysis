@@ -2,6 +2,17 @@
 
 Microscopy image-based cytosol ROI determination and analysis.
 
+## Methods statement
+
+For a paper's Methods section (update this sentence whenever an analysis
+feature is added):
+
+> Line intensity profiles and per-cell colocalization (Pearson's, Spearman's
+> and Kendall's correlations, Manders' coefficients with Costes' automatic
+> threshold, Li's ICQ and Costes' significance test) were analysed with the
+> algorithms of the ImageJ Plot Profile/RGB Profiler and the Fiji Coloc 2
+> plugin, respectively.
+
 ## Reading raw files
 
 `cytosol.io.read_image(path)` opens Tomocube `.TCF`, Zeiss `.czi`,
@@ -84,6 +95,30 @@ A GUI for working on a whole set of images at once:
   Z/T/LUT changes. Line width (pixels averaged across the line), hide channels
   hidden in the LUT, per-channel 0–1 normalization; **CSV 저장** (distance + one
   column per channel) and **그래프 저장** (PNG/TIFF 300 dpi, PDF, SVG).
+  The samples are ImageJ's (Plot Profile, which RGB Profiler plots per
+  channel): bilinear interpolation, round(length) + 1 points, width > 1
+  averaged across the line as ImageJ straightens it; identical values for
+  width 1, within 4e-5 relative for wider lines.
+- **Coloc 2 tab** (Fiji's Coloc 2, ported line by line from its source):
+  colocalization of two channels in each cell ROI of the 세포질 ROI tab, per
+  region (`세포 전체`, `세포질 (핵 제외)`, `핵`), `선택한 세포만` or
+  `이미지 전체 (ROI 없음)`, on the current Z plane or the whole Z stack (the 2D
+  ROI through every slice, as Coloc 2 does with a 2D mask on a stack), for the
+  current or every timepoint. Same options as the plugin: threshold regression
+  (Costes / Bisection), Li histograms, Li ICQ, Spearman, Manders, Kendall tau,
+  2D intensity histogram, Costes significance test (PSF, randomisations), and
+  the same values, warnings and plots (2D histogram with the regression line
+  and thresholds, Li plots, shuffled image). **현재 이미지** / **모든 이미지**
+  run it, a row of the results table shows that cell's plots and values and
+  selects the cell in the image. **CSV 저장** writes one row per cell, region
+  and timepoint with every value; **모든 이미지 CSV**, **그래프 저장** and a
+  **PDF** report (like the plugin's) are there too, and `내보내기` adds
+  `<name>_coloc2.csv` per image and `coloc2.csv` for the set. From Python:
+  `cytosol.coloc.run_coloc2(ch1, ch2, mask, Coloc2Settings(), ValueType.for_dtype(ch1.dtype))`.
+  Checked against the Coloc 2 code itself (`scripts/imagej_reference`): every
+  value except the Costes randomisation agrees to about 1e-10 relative; the
+  Costes test is random in both, and the shuffled mean/SD agree within that
+  spread.
 - **마커 tab**: size marker (scale bar) and time-series marker (time stamp).
   Each has on/off, text on/off, font size, marker length/thickness, text-marker
   gap, edge margin, position and color; the time stamp also has the unit

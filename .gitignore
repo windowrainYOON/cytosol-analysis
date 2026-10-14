@@ -6,3 +6,4 @@ __pycache__/
 format-check/
 figures/
 .venv-win/
+selftest-out/

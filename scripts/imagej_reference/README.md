@@ -1,0 +1,24 @@
+# ImageJ reference comparisons
+
+Run the original ImageJ / Fiji code headless on the same data as `cytosol`
+and print the differences.
+
+- `Coloc2Reference.java` runs Fiji Coloc 2's algorithm classes
+  (`sc.fiji.coloc.algorithms`: InputCheck, AutoThresholdRegression,
+  PearsonsCorrelation, Li, Spearman, Manders, Kendall, Histogram2D,
+  CostesSignificanceTest) on raw files written by `compare_coloc2.py`.
+- `ProfileReference.java` gets ImageJ's line profile (`ProfilePlot`, what
+  Plot Profile and RGB Profiler plot) for `compare_profile.py`.
+
+Build: compile the sources of
+[Colocalisation_Analysis](https://github.com/fiji/Colocalisation_Analysis)
+(`src/main/java/sc/fiji/coloc/{algorithms,gadgets,results}`) together with
+the few imglib2-algorithm / imglib2-roi classes they use (Gaussian,
+multithreading helpers) and these two files against `ij-1.54f.jar` and
+`imglib2-6.1.0.jar`, e.g. `javac -d build -cp ij.jar:imglib2.jar ...`. Then
+
+    python scripts/imagej_reference/compare_coloc2.py ij.jar:imglib2.jar:build
+    python scripts/imagej_reference/compare_profile.py ij.jar:imglib2.jar:build
+
+`COLOC2_REAL=<dir>` (with `a.npy`, `b.npy`, `masks.npz`) adds a real image
+and its ROI masks to the Coloc 2 cases.

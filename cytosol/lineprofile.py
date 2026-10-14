@@ -1,4 +1,4 @@
-"""Line intensity profiles (like ImageJ's RGB Profiler, on the raw channel values).
+"""Line intensity profiles (ImageJ's line profile / RGB Profiler, on the raw channel values).
 
 GUI-independent: the profile tab of the app and scripts both use this.
 """
@@ -6,6 +6,7 @@ GUI-independent: the profile tab of the app and scripts both use this.
 from __future__ import annotations
 
 import csv
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,31 +24,109 @@ class Profile:
 
     @property
     def length(self) -> float:
-        return float(self.distance[-1]) if len(self.distance) else 0.0
+        """Length of the line (µm or px); samples are 1 px apart, so
+        distance[-1] is that length rounded to whole pixels."""
+        x0, y0, x1, y1 = self.line
+        scale = float(self.distance[1] - self.distance[0]) if len(self.distance) > 1 else 1.0
+        return float(np.hypot(x1 - x0, y1 - y0)) * scale
+
+
+def _java_round(x: float) -> int:
+    return int(math.floor(x + 0.5))
+
+
+def interpolated_value(plane: np.ndarray, x, y) -> np.ndarray:
+    """ImageProcessor.getInterpolatedValue: bilinear, pixel centers at integer
+    coordinates, edge pixels repeated up to one pixel outside, 0 beyond."""
+    h, w = plane.shape
+    x = np.asarray(x, np.float64)
+    y = np.asarray(y, np.float64)
+    xb = np.trunc(x).astype(np.int64)  # Java (int): toward zero
+    yb = np.trunc(y).astype(np.int64)
+    fx = np.maximum(x - xb, 0.0)
+    fy = np.maximum(y - yb, 0.0)
+    x0, x1 = np.clip(xb, 0, w - 1), np.clip(xb + 1, 0, w - 1)
+    y0, y1 = np.clip(yb, 0, h - 1), np.clip(yb + 1, 0, h - 1)
+    p = plane.astype(np.float64, copy=False)
+    ll, lr = p[y0, x0], p[y0, x1]
+    ul, ur = p[y1, x0], p[y1, x1]
+    upper = ul + fx * (ur - ul)
+    lower = ll + fx * (lr - ll)
+    v = lower + fy * (upper - lower)
+    outside = (x < -1.0) | (x >= w) | (y < -1.0) | (y >= h)
+    return np.where(outside, 0.0, v)
+
+
+def _imagej_samples(shape, line, width):
+    """Sample points of ImageJ's straight-line profile (ProfilePlot / Line.getPixels).
+
+    width 1: ImageProcessor.getLine, round(length) + 1 points (the step is
+    length / round(length)). Wider: Straightener.straightenLine, points 1 px
+    apart along the line (round(length) + 1 of them) and, at each, ``width``
+    points 1 px apart across it; their values are averaged.
+    Returns (xs, ys) of shape (N,) or (N, width).
+    """
+    h, w = shape
+    x1, y1, x2, y2 = line
+    if width <= 1:
+        dx, dy = x2 - x1, y2 - y1
+        n = _java_round(math.sqrt(dx * dx + dy * dy))
+        xinc = dx / n if n > 0 else 0.0
+        yinc = dy / n if n > 0 else 0.0
+        if not ((xinc == 0 and n == h) or (yinc == 0 and n == w)):
+            n += 1
+        # rx += xinc, accumulated like the Java loop
+        xs = np.cumsum(np.r_[x1, np.full(max(n - 1, 0), xinc)])[:n]
+        ys = np.cumsum(np.r_[y1, np.full(max(n - 1, 0), yinc)])[:n]
+        return xs, ys
+    # Line -> 2-point polyline (float coordinates) -> points 1 px apart
+    fx1, fy1, fx2, fy2 = (float(np.float32(v)) for v in line)
+    length = math.hypot(fx2 - fx1, fy2 - fy1)
+    npts = _java_round(length) + 1
+    step = length / (npts - 1) if npts > 1 else 0.0
+    t = np.arange(npts) * step / length if length > 0 else np.zeros(npts)
+    px = (fx1 + t * (fx2 - fx1)).astype(np.float32).astype(np.float64)
+    py = (fy1 + t * (fy2 - fy1)).astype(np.float32).astype(np.float64)
+    # the point before each one (the first extrapolated back one step)
+    prev_x = np.r_[px[0] - (px[1] - px[0]) if npts > 1 else px[0], px[:-1]]
+    prev_y = np.r_[py[0] - (py[1] - py[0]) if npts > 1 else py[0], py[:-1]]
+    dx = px - prev_x
+    dy = prev_y - py
+    seg = np.sqrt(dx * dx + dy * dy).astype(np.float32).astype(np.float64)
+    with np.errstate(all='ignore'):
+        dx, dy = dx / seg, dy / seg
+    j = np.arange(width)
+    xs = (px - dy * (width - 1) / 2.0)[:, None] + dy[:, None] * j[None, :]
+    ys = (py - dx * (width - 1) / 2.0)[:, None] + dx[:, None] * j[None, :]
+    return xs, ys
 
 
 def line_profile(planes: np.ndarray, line, width: int = 1, pixel_um: float | None = None,
                  channels=None) -> Profile:
     """Sample every channel of (C, Y, X) planes along line = (x0, y0, x1, y1).
 
-    One sample per pixel of length (end points included), bilinear
-    interpolation; width > 1 averages that many pixels perpendicular to the
-    line, as ImageJ does for a wide line.
+    Same samples and values as ImageJ's line profile (Analyze > Plot Profile,
+    the profile RGB Profiler draws per channel): bilinear interpolation with
+    pixel centers at integer coordinates, round(length) + 1 points, and for
+    width > 1 the mean of ``width`` points across the line at each position.
+    Distances are i x pixel size, as on ImageJ's plot.
     """
-    from skimage.measure import profile_line
-
     x0, y0, x1, y1 = (float(v) for v in line)
     width = max(int(width), 1)
+    planes = np.asarray(planes)
     rows = []
-    for plane in planes:
-        rows.append(profile_line(np.asarray(plane, np.float32), (y0, x0), (y1, x1),
-                                 linewidth=width, order=1, mode='reflect',
-                                 reduce_func=np.mean))
-    values = np.stack(rows) if rows else np.zeros((0, 0), np.float32)
+    if len(planes):
+        xs, ys = _imagej_samples(planes.shape[-2:], (x0, y0, x1, y1), width)
+        for plane in planes:
+            v = interpolated_value(np.asarray(plane, np.float32), xs, ys)
+            if v.ndim == 2:
+                with np.errstate(all='ignore'):
+                    v = np.nanmean(v, axis=1)
+            rows.append(v)
+    values = np.stack(rows) if rows else np.zeros((0, 0), np.float64)
     n = values.shape[1] if values.ndim == 2 else 0
-    length_px = float(np.hypot(x1 - x0, y1 - y0))
     scale = pixel_um if pixel_um else 1.0
-    distance = np.linspace(0.0, length_px * scale, n) if n else np.zeros(0)
+    distance = np.arange(n) * scale
     names = list(channels) if channels is not None else [f'C{i}' for i in range(len(rows))]
     return Profile(distance, values, names, 'µm' if pixel_um else 'px',
                    (x0, y0, x1, y1), width)
