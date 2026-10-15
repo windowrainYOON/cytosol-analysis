@@ -398,6 +398,22 @@ def run(out_dir) -> int:
         row.set_all(True)
         if not all(lut.visible for lut in win.current.luts):
             raise AssertionError('"all on" left a channel hidden')
+        # Figure window: each cell gets its own channel combination
+        win.open_figure()
+        fw = win.figure_win
+        fw.table.setCurrentCell(0, 0)
+        fw.src_combo.setCurrentIndex(fw.src_combo.findData(win.items.index(win.current)))
+        cell = fw.current_cell()
+        if cell.channels is not None or len(fw.chan_checks) != len(win.current.channels):
+            raise AssertionError('figure cell channel checkboxes')
+        fw._set_all_channels(False)
+        fw.chan_checks[-1].setChecked(True)
+        if cell.channels != [len(win.current.channels) - 1] or fw.merged_chk.isChecked():
+            raise AssertionError(f'figure cell channel pick: {cell.channels}')
+        fw.merged_chk.setChecked(True)
+        if cell.channels is not None:
+            raise AssertionError('figure cell did not go back to the main window channels')
+        fw.close()
         # multi-select removal
         win.add_files([out / 'selftest.TCF'])
         win.add_files([out / 'selftest.TCF'])

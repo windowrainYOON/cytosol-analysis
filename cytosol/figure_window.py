@@ -19,11 +19,11 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -244,11 +244,26 @@ class FigureWindow(QMainWindow):
         file_btn.clicked.connect(self._load_file)
         self.region_combo = QComboBox()
         self.region_combo.currentIndexChanged.connect(self._region_changed)
-        self.merged_chk = QCheckBox('합성 (메인 창에서 표시 중인 채널)')
+        self.merged_chk = QCheckBox('메인 창 표시 채널 따르기')
+        self.merged_chk.setToolTip('켜면 메인 창의 채널 표시 상태를 그대로 사용합니다.\n'
+                                   '아래 채널 체크박스를 바꾸면 이 칸만의 조합으로 바뀝니다.')
         self.merged_chk.toggled.connect(self._channels_changed)
-        self.chan_list = QListWidget()
-        self.chan_list.setMaximumHeight(100)
-        self.chan_list.itemChanged.connect(self._channels_changed)
+        # one checkbox per channel (color swatch + name), any combination per cell
+        self.chan_box = QGroupBox('채널 조합')
+        chan_lay = QVBoxLayout(self.chan_box)
+        self.chan_grid = QGridLayout()
+        chan_lay.addLayout(self.chan_grid)
+        self.chan_checks: list[QCheckBox] = []
+        chan_buttons = QHBoxLayout()
+        chan_buttons.addWidget(self.merged_chk)
+        chan_buttons.addStretch()
+        all_on = QPushButton('모두 켜기')
+        all_off = QPushButton('모두 끄기')
+        all_on.clicked.connect(lambda: self._set_all_channels(True))
+        all_off.clicked.connect(lambda: self._set_all_channels(False))
+        chan_buttons.addWidget(all_on)
+        chan_buttons.addWidget(all_off)
+        chan_lay.addLayout(chan_buttons)
 
         fill_row = QPushButton('이 행을 채널별 + Merged로 채우기')
         fill_row.setToolTip('선택한 이미지/영역의 각 채널을 열마다 넣고 마지막 열에 합성 이미지')
@@ -270,8 +285,7 @@ class FigureWindow(QMainWindow):
         lay = QVBoxLayout(box)
         lay.addWidget(self.cell_title)
         lay.addLayout(form)
-        lay.addWidget(self.merged_chk)
-        lay.addWidget(self.chan_list)
+        lay.addWidget(self.chan_box)
         row = QHBoxLayout()
         row.addWidget(fill_row)
         row.addWidget(name_cols)
@@ -590,12 +604,15 @@ class FigureWindow(QMainWindow):
 
     def _fill_region_and_channels(self, cell):
         self.region_combo.clear()
-        self.chan_list.clear()
+        for chk in self.chan_checks:
+            chk.setParent(None)
+            chk.deleteLater()
+        self.chan_checks = []
         has_item = cell.item is not None
         self.region_combo.setEnabled(has_item)
-        self.chan_list.setEnabled(has_item)
-        self.merged_chk.setEnabled(has_item)
+        self.chan_box.setEnabled(has_item)
         if not has_item:
+            self.merged_chk.setChecked(False)
             return
         self.region_combo.addItem('전체 이미지', None)
         for k, reg in enumerate(cell.item.crops, 1):
@@ -607,13 +624,37 @@ class FigureWindow(QMainWindow):
         self.region_combo.setCurrentIndex(max(idx, 0))
         self.merged_chk.setChecked(cell.channels is None)
         for i, name in enumerate(cell.item.channels):
-            li = QListWidgetItem(name)
-            li.setFlags(li.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            chk = QCheckBox(name)
+            swatch = QPixmap(16, 16)
+            swatch.fill(_qcolor(cell.item.luts[i].color))
+            chk.setIcon(QIcon(swatch))
             on = cell.item.luts[i].visible if cell.channels is None else i in cell.channels
-            li.setCheckState(Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
-            li.setForeground(_qcolor(color_label(cell.item, i)))
-            self.chan_list.addItem(li)
-        self.chan_list.setEnabled(cell.channels is not None)
+            chk.setChecked(on)
+            chk.toggled.connect(self._channel_toggled)
+            self.chan_grid.addWidget(chk, i // 2, i % 2)
+            self.chan_checks.append(chk)
+
+    def _checked_channels(self):
+        return [i for i, chk in enumerate(self.chan_checks) if chk.isChecked()]
+
+    def _channel_toggled(self, *_):
+        if self._busy:
+            return
+        # picking channels by hand gives this cell its own combination
+        self._busy = True
+        self.merged_chk.setChecked(False)
+        self._busy = False
+        self._channels_changed()
+
+    def _set_all_channels(self, on: bool):
+        if not self.chan_checks:
+            return
+        self._busy = True
+        for chk in self.chan_checks:
+            chk.setChecked(on)
+        self.merged_chk.setChecked(False)
+        self._busy = False
+        self._channels_changed()
 
     def _cell_changed(self, insets_valid=True):
         cell = self.current_cell()
@@ -666,10 +707,13 @@ class FigureWindow(QMainWindow):
             return
         if self.merged_chk.isChecked():
             cell.channels = None
+            # show what the main window displays now
+            self._busy = True
+            for i, chk in enumerate(self.chan_checks):
+                chk.setChecked(cell.item.luts[i].visible)
+            self._busy = False
         else:
-            cell.channels = [i for i in range(self.chan_list.count())
-                             if self.chan_list.item(i).checkState() == Qt.CheckState.Checked]
-        self.chan_list.setEnabled(cell.channels is not None)
+            cell.channels = self._checked_channels()
         self._cell_changed()
 
     def _load_file(self):
@@ -708,8 +752,12 @@ class FigureWindow(QMainWindow):
         for c, cell in enumerate(self.spec.cells[r]):
             if cell.item is None:
                 continue
-            if cell.channels is None or len(cell.channels) > 1:
+            n_ch = len(cell.item.channels)
+            if cell.channels is None or len(cell.channels) == n_ch:
                 self.spec.cols[c].text, self.spec.cols[c].color = 'Merged', None
+            elif len(cell.channels) > 1:
+                names = [cell.item.channels[k] for k in cell.channels]
+                self.spec.cols[c].text, self.spec.cols[c].color = ' + '.join(names), None
             elif len(cell.channels) == 1:
                 k = cell.channels[0]
                 self.spec.cols[c].text = cell.item.channels[k]
