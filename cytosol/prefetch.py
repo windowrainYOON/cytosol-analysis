@@ -1,24 +1,22 @@
-"""Background read-ahead of a time series.
+"""Background loading of timepoints while the T slider is dragged.
 
-While an image with several timepoints is shown, a worker thread reads the
-plane of the current Z (or MIP) for every timepoint, nearest to the current
-one first, and keeps them in memory up to a byte budget. Dragging the T
-slider then only has to draw a plane that is already there.
+A worker thread reads the plane of the current Z (or MIP) for the timepoint
+the slider points at, so the window never freezes during a drag: when the
+slider moves on before a read finishes, only the newest position is read
+next. The last few planes are kept, so going back and forth is instant;
+nothing else is read ahead, so memory use stays small.
 """
 
 from __future__ import annotations
 
 import threading
-import time
 import traceback
+from collections import OrderedDict
 
 import numpy as np
 from PySide6.QtCore import QObject, Signal
 
-BUDGET_BYTES = 2 << 30  # planes kept in memory for one image and Z
-# after switching image or Z, wait this long before reading ahead, so browsing
-# Z (which reads from the same file) does not queue behind the worker
-START_DELAY_S = 0.4
+KEEP = 4  # recent planes kept for one image and Z
 
 
 def plane_at(image, t: int, z) -> np.ndarray:
@@ -34,52 +32,49 @@ def plane_at(image, t: int, z) -> np.ndarray:
 
 
 class TimeCache(QObject):
-    """Planes of every timepoint of one image at one Z, read ahead in a thread."""
+    """Loads the wanted timepoint of one image at one Z in a thread."""
 
-    ready = Signal(object, int)  # item, t: that timepoint's plane is now cached
+    ready = Signal(object, int)  # item, t: that timepoint's plane is now loaded
 
-    def __init__(self, budget: int = BUDGET_BYTES, parent=None):
+    def __init__(self, keep: int = KEEP, parent=None):
         super().__init__(parent)
-        self.budget = budget
+        self.keep = keep
         self._cv = threading.Condition()
         self._item = None
         self._z = None
-        self._center = 0
-        self._store: dict[int, np.ndarray] = {}
-        self._failed: set[int] = set()
-        self._plane_bytes = 0
-        self._not_before = 0.0
-        threading.Thread(target=self._run, name='time-read-ahead', daemon=True).start()
+        self._want = None  # timepoint to load next (the newest slider position)
+        self._store: OrderedDict[int, np.ndarray] = OrderedDict()
+        threading.Thread(target=self._run, name='time-loader', daemon=True).start()
 
     # ---- main thread ------------------------------------------------------
 
     def follow(self, item, t: int | None = None):
-        """Read ahead for item at its current Z around timepoint t (None: stop)."""
+        """Load timepoint t (None: just track item and its Z) of item; None stops."""
         with self._cv:
             if item is None or item.nt < 2:
-                self._item, self._z = None, None
+                self._item, self._z, self._want = None, None, None
                 self._store.clear()
             else:
                 if item is not self._item or item.z != self._z:
                     self._item, self._z = item, item.z
                     self._store.clear()
-                    self._failed.clear()
-                    self._not_before = time.monotonic() + START_DELAY_S
-                self._center = item.t if t is None else int(t)
-                self._trim()
+                self._want = None if t is None else int(t)
             self._cv.notify()
 
     def get(self, item, t: int):
-        """The cached plane of timepoint t at the item's current Z, or None."""
+        """The loaded plane of timepoint t at the item's current Z, or None."""
         with self._cv:
             if item is self._item and item.z == self._z:
-                return self._store.get(int(t))
+                planes = self._store.get(int(t))
+                if planes is not None:
+                    self._store.move_to_end(int(t))
+                return planes
         return None
 
     def put(self, item, t: int, z, planes: np.ndarray):
-        """Offer a plane read elsewhere (kept when it is the one being read ahead)."""
+        """Keep a plane read elsewhere (the current timepoint)."""
         with self._cv:
-            if item is self._item and z == self._z and int(t) in self._window():
+            if item is self._item and z == self._z:
                 self._keep(int(t), planes)
 
     def cached(self, item) -> int:
@@ -88,62 +83,30 @@ class TimeCache(QObject):
 
     # ---- shared ------------------------------------------------------------
 
-    def _capacity(self) -> int:
-        if not self._plane_bytes:
-            return 1
-        return max(1, self.budget // self._plane_bytes)
-
-    def _window(self) -> list[int]:
-        """Timepoints to keep, nearest to the current one first."""
-        nt = self._item.nt
-        order = sorted(range(nt), key=lambda t: (abs(t - self._center), t < self._center))
-        return order[:self._capacity()]
-
-    def _trim(self):
-        if self._item is None:
-            return
-        keep = set(self._window())
-        for t in [t for t in self._store if t not in keep]:
-            del self._store[t]
-
     def _keep(self, t, planes):
-        self._plane_bytes = self._plane_bytes or planes.nbytes
         self._store[t] = planes
-        self._trim()
+        self._store.move_to_end(t)
+        while len(self._store) > self.keep:
+            self._store.popitem(last=False)
 
     # ---- worker thread -------------------------------------------------------
-
-    def _next(self):
-        """(item, z, t) to read next, or None when everything wanted is cached."""
-        if self._item is None:
-            return None
-        for t in self._window():
-            if t not in self._store and t not in self._failed:
-                return self._item, self._z, t
-        return None
 
     def _run(self):
         while True:
             with self._cv:
-                while True:
-                    job = self._next()
-                    wait = self._not_before - time.monotonic()
-                    if job is not None and wait <= 0:
-                        break
-                    self._cv.wait(wait if job is not None else None)
-            item, z, t = job
+                while self._item is None or self._want is None or self._want in self._store:
+                    self._cv.wait()
+                item, z, t = self._item, self._z, self._want
             try:
                 planes = np.asarray(plane_at(item.image, t, z), np.float32)
             except Exception:
                 traceback.print_exc()
                 with self._cv:
-                    if item is self._item:
-                        self._failed.add(t)
+                    if item is self._item and self._want == t:
+                        self._want = None
                 continue
             with self._cv:
                 if item is not self._item or z != self._z:
                     continue
                 self._keep(t, planes)
-                stored = t in self._store
-            if stored:
-                self.ready.emit(item, t)
+            self.ready.emit(item, t)

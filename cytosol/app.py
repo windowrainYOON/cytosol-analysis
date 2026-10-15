@@ -991,8 +991,8 @@ class MainWindow(QMainWindow):
         self.zoom_btn.toggled.connect(self.canvas.set_zoom_mode)
         self.canvas.zoomDone.connect(lambda: self.zoom_btn.setChecked(False))
         self.t_slider = QSlider(Qt.Orientation.Horizontal)
-        # while dragging, timepoints already read ahead (TimeCache) are drawn
-        # at once; histograms and the line profile follow when it stops
+        # while dragging, timepoints are read in a thread (TimeCache) and drawn
+        # as they arrive; histograms and the line profile follow when it stops
         self.t_slider.valueChanged.connect(self._t_value)
         self.t_slider.sliderReleased.connect(lambda: self._t_changed(self.t_slider.value()))
         self.tcache = TimeCache(parent=self)
@@ -1469,7 +1469,7 @@ class MainWindow(QMainWindow):
             self._t_changed(t)
 
     def _t_scrub(self, t):
-        """While dragging: draw timepoint t if it is in memory, else wait for it."""
+        """While dragging: draw timepoint t if it is loaded, else load it in the background."""
         it = self.current
         if it is None:
             return
@@ -1495,7 +1495,7 @@ class MainWindow(QMainWindow):
         if it is None:
             return
         self._t_want = None
-        self.tcache.follow(it, t)
+        self.tcache.follow(it)  # read here, not in the background
         if t != it.t:
             cached = self.tcache.get(it, t) is not None
             if not cached:
@@ -1572,7 +1572,7 @@ class MainWindow(QMainWindow):
         if z == it.z:
             return
         it.z = z
-        self.tcache.follow(it)  # read the other timepoints of this Z ahead
+        self.tcache.follow(it)  # planes loaded for the old Z no longer apply
         self._z_label()
         try:
             for p in self.panels:

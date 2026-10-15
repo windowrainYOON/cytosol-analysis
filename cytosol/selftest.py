@@ -287,20 +287,22 @@ def run(out_dir) -> int:
         item.z = 5
         tc = TimeCache()
         item.time_cache = tc
-        tc.follow(item)
         t0 = time.perf_counter()
-        while tc.cached(item) < item.nt:
-            if time.perf_counter() - t0 > 30:
-                raise AssertionError(f'read ahead {tc.cached(item)}/{item.nt} timepoints')
-            time.sleep(0.02)
         for t in range(item.nt):
+            tc.follow(item, t)
+            while tc.get(item, t) is None:
+                if time.perf_counter() - t0 > 30:
+                    raise AssertionError(f'background load of t={t} did not finish')
+                time.sleep(0.01)
             if not np.array_equal(tc.get(item, t), plane_at(item.image, t, 5)):
-                raise AssertionError(f'read-ahead plane at t={t} differs')
+                raise AssertionError(f'background plane at t={t} differs')
+        if tc.cached(item) > tc.keep:
+            raise AssertionError(f'kept {tc.cached(item)} planes, limit {tc.keep}')
         item.set_t(3)
         if not np.array_equal(item.planes(), item.image.data[:, 5]):
-            raise AssertionError('cached plane differs from the volume')
+            raise AssertionError('loaded plane differs from the volume')
         tc.follow(None)
-        return f'{item.nt} timepoints read ahead in {(time.perf_counter() - t0) * 1000:.0f} ms'
+        return f'{item.nt} timepoints loaded in the background in {(time.perf_counter() - t0) * 1000:.0f} ms'
 
     def projections():
         from .io import Image
@@ -515,7 +517,7 @@ def run(out_dir) -> int:
     step('same-name images, separate folders', same_name_export)
     step('figure export', figure)
     step('lazy TCF planes', lazy_tcf)
-    step('time-series read-ahead', read_ahead)
+    step('time-series background load', read_ahead)
     step('Z-stack projections', projections)
     step('main window', window)
 
