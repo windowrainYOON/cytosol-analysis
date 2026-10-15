@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -47,9 +48,13 @@ from .figure import (
     color_label,
     fill_row_by_channels,
     figure_to_array,
+    inset_from_image,
+    inset_to_image,
     installed_families,
+    read_inset_rois,
     render_cell,
     save_figure,
+    write_inset_rois,
 )
 
 THUMB = 110
@@ -305,6 +310,7 @@ class FigureWindow(QMainWindow):
         self.cell_canvas.cropDrawn.connect(self._inset_drawn)
         self.inset_btn = QPushButton('확대 영역 그리기 (드래그)')
         self.inset_btn.setCheckable(True)
+        self.inset_btn.setToolTip('누른 뒤 이미지 위에서 드래그합니다. Shift + 드래그: 정사각형.')
         self.inset_btn.toggled.connect(self.cell_canvas.set_crop_mode)
         self.inset_list = QListWidget()
         self.inset_list.setMaximumHeight(70)
@@ -332,6 +338,24 @@ class FigureWindow(QMainWindow):
         row_btn.clicked.connect(lambda: self._insets_to('row'))
         col_btn = QPushButton('이 열 전체에 적용')
         col_btn.clicked.connect(lambda: self._insets_to('col'))
+        save_roi = QPushButton('ROI 저장…')
+        save_roi.setToolTip('선택한 확대 영역을 ImageJ .roi로 저장 (.zip을 고르면 이 칸의 모든 영역).\n'
+                            '좌표는 원본 이미지 기준이라 ImageJ에서 그대로 열 수 있습니다.')
+        save_roi.clicked.connect(self._save_inset_roi)
+        load_roi = QPushButton('ROI 불러오기…')
+        load_roi.setToolTip('ImageJ .roi / RoiSet .zip의 영역(사각형 범위)을 이 칸의 확대 영역으로 추가')
+        load_roi.clicked.connect(self._load_inset_roi)
+        copy_btn = QPushButton('영역 복사')
+        copy_btn.setToolTip('선택한 확대 영역(위치, 크기, 표시 방식)을 복사')
+        copy_btn.clicked.connect(self._copy_inset)
+        self.paste_btn = QPushButton('붙여넣기')
+        self.paste_btn.setToolTip('복사한 영역을 지금 선택한 칸에 붙여넣기 (원본 이미지의 같은 위치)')
+        self.paste_btn.clicked.connect(self._paste_inset)
+        self.paste_many_btn = QPushButton('여러 칸에 붙여넣기…')
+        self.paste_many_btn.setToolTip('복사한 영역을 고른 여러 이미지 칸에 한꺼번에 붙여넣기')
+        self.paste_many_btn.clicked.connect(self._paste_inset_many)
+        self._inset_clip = None  # (rect in source-image pixels, Inset template)
+        self._update_paste_buttons()
 
         form = QFormLayout()
         form.addRow('표시 방식', self.placement)
@@ -347,6 +371,15 @@ class FigureWindow(QMainWindow):
         row.addWidget(del_btn)
         row.addWidget(row_btn)
         row.addWidget(col_btn)
+        lay.addLayout(row)
+        row = QHBoxLayout()
+        row.addWidget(save_roi)
+        row.addWidget(load_roi)
+        lay.addLayout(row)
+        row = QHBoxLayout()
+        row.addWidget(copy_btn)
+        row.addWidget(self.paste_btn)
+        row.addWidget(self.paste_many_btn)
         lay.addLayout(row)
         return box
 
@@ -845,6 +878,173 @@ class FigureWindow(QMainWindow):
             self.rebuild_table()
         self._refresh_inset_list(select=len(cell.insets) - 1)
         self._cell_changed()
+
+    # ---- .roi files and copy / paste ------------------------------------
+
+    def _new_inset(self, rect, template=None):
+        t = template
+        return Inset(rect, t.corner if t else self.corner.currentData(),
+                     t.size if t else self.inset_size.value() / 100,
+                     t.placement if t else self.placement.currentData(),
+                     t.offset if t else (0, 1))
+
+    def _add_insets(self, cell, rects, template=None, current=True) -> tuple[int, int]:
+        """Add insets for source-image rects to cell; (added, put inside instead of a cell)."""
+        added, blocked = 0, 0
+        for rect in rects:
+            local = inset_from_image(cell, rect)
+            if local is None:
+                continue
+            ins = self._new_inset(local, template)
+            cell.insets.append(ins)
+            added += 1
+            if ins.placement != 'cell':
+                continue
+            if current:
+                self._link_default(cell, ins)
+            elif not self.spec.link_inset(cell, ins, overwrite=False):
+                ins.placement = 'inside'
+                blocked += 1
+        return added, blocked
+
+    def _save_inset_roi(self):
+        cell = self.current_cell()
+        ins = self._current_inset()
+        if cell.empty or ins is None:
+            QMessageBox.information(self, '확대 영역', '저장할 확대 영역을 먼저 그리거나 고르세요.')
+            return
+        base = Path(cell.item.label if cell.item is not None else (cell.name or 'inset')).stem
+        k = self.inset_list.currentRow() + 1
+        path, flt = QFileDialog.getSaveFileName(
+            self, '확대 영역 ROI 저장', f'{base}_inset{k}.roi',
+            'ImageJ ROI (*.roi);;이 칸의 모든 영역 RoiSet (*.zip)')
+        if not path:
+            return
+        if Path(path).suffix.lower() not in ('.roi', '.zip'):
+            path += '.zip' if 'zip' in flt else '.roi'
+        if Path(path).suffix.lower() == '.zip':
+            rects = [inset_to_image(cell, i.rect) for i in cell.insets]
+            names = [f'{base}_inset{j}' for j in range(1, len(rects) + 1)]
+        else:
+            rects = [inset_to_image(cell, ins.rect)]
+            names = [f'{base}_inset{k}']
+        try:
+            write_inset_rois(path, rects, names)
+        except Exception as exc:
+            traceback.print_exc()
+            QMessageBox.warning(self, '저장 실패', str(exc))
+            return
+        self.statusBar().showMessage(f'확대 영역 {len(rects)}개 저장: {path}')
+
+    def _load_inset_roi(self):
+        cell = self.current_cell()
+        if cell.empty or cell.is_zoom:
+            QMessageBox.information(self, '확대 영역', '먼저 이미지가 있는 칸을 고르세요.')
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, '확대 영역 ROI 불러오기', '', 'ImageJ ROI (*.roi *.zip);;All files (*)')
+        if not path:
+            return
+        try:
+            rects = read_inset_rois(path)
+        except Exception as exc:
+            traceback.print_exc()
+            QMessageBox.warning(self, '불러오기 실패', str(exc))
+            return
+        n, _ = self._add_insets(cell, rects)
+        if not n:
+            QMessageBox.information(self, '확대 영역', 'ROI 영역이 이 이미지 안에 없습니다.')
+            return
+        self.rebuild_table()
+        self._refresh_inset_list(select=len(cell.insets) - 1)
+        self._cell_changed()
+        self.statusBar().showMessage(f'확대 영역 {n}개 불러옴: {path}')
+
+    def _update_paste_buttons(self):
+        on = self._inset_clip is not None
+        self.paste_btn.setEnabled(on)
+        self.paste_many_btn.setEnabled(on)
+
+    def _copy_inset(self):
+        cell = self.current_cell()
+        ins = self._current_inset()
+        if cell.empty or ins is None:
+            QMessageBox.information(self, '확대 영역', '복사할 확대 영역을 먼저 고르세요.')
+            return
+        self._inset_clip = (inset_to_image(cell, ins.rect), ins.copy())
+        self._update_paste_buttons()
+        x0, y0, x1, y1 = self._inset_clip[0]
+        self.statusBar().showMessage(f'확대 영역 복사: x {x0}–{x1}, y {y0}–{y1}')
+
+    def _paste_inset(self):
+        if self._inset_clip is None:
+            return
+        cell = self.current_cell()
+        if cell.empty or cell.is_zoom:
+            QMessageBox.information(self, '확대 영역', '붙여넣을 이미지 칸을 고르세요.')
+            return
+        rect, template = self._inset_clip
+        n, _ = self._add_insets(cell, [rect], template)
+        if not n:
+            QMessageBox.information(self, '확대 영역', '복사한 영역이 이 이미지 안에 없습니다.')
+            return
+        self.rebuild_table()
+        self._refresh_inset_list(select=len(cell.insets) - 1)
+        self._cell_changed()
+        self.statusBar().showMessage('확대 영역을 붙여넣었습니다.')
+
+    def _paste_inset_many(self):
+        if self._inset_clip is None:
+            return
+        cells = [(r, c, cell) for r, row in enumerate(self.spec.cells)
+                 for c, cell in enumerate(row) if not cell.empty and not cell.is_zoom]
+        if not cells:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle('여러 칸에 붙여넣기')
+        lst = QListWidget()
+        cur = self.current_cell()
+        for r, c, cell in cells:
+            desc = cell.describe().replace('\n', ' · ')
+            it = QListWidgetItem(f'행 {r + 1}, 열 {c + 1}: {desc}')
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Unchecked if cell is cur else Qt.CheckState.Checked)
+            lst.addItem(it)
+        replace = QCheckBox('그 칸의 기존 확대 영역 지우고 넣기')
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel('복사한 영역을 넣을 칸 (원본 이미지의 같은 위치):'))
+        lay.addWidget(lst)
+        lay.addWidget(replace)
+        lay.addWidget(buttons)
+        dlg.resize(460, 360)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        rect, template = self._inset_clip
+        n, missed, blocked = 0, 0, 0
+        for k, (_, _, cell) in enumerate(cells):
+            if lst.item(k).checkState() != Qt.CheckState.Checked:
+                continue
+            if replace.isChecked():
+                for old in cell.insets:
+                    olds = self.spec.zoom_cells(old)
+                    self.spec.unlink_inset(old)
+                    self._drop_empty_lines(olds)
+                cell.insets = []
+            added, b = self._add_insets(cell, [rect], template, current=False)
+            n += added
+            missed += 1 - added
+            blocked += b
+        self.rebuild_table()
+        msg = f'확대 영역을 칸 {n}개에 붙여넣었습니다.'
+        if missed:
+            msg += f' {missed}개 칸은 영역이 이미지 밖이라 건너뛰었습니다.'
+        if blocked:
+            msg += f' 넣을 칸이 이미 차 있어서 {blocked}개는 이미지 안에 넣었습니다.'
+        self.statusBar().showMessage(msg)
 
     # ---- inset in its own cell ------------------------------------------
 
