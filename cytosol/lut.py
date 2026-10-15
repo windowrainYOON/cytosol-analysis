@@ -86,6 +86,8 @@ class ImageItem:
     profile_line: tuple | None = None
     # Coloc 2 results (cytosol.coloc_panel.ColocRecord), newest run
     coloc: list = field(default_factory=list)
+    # cytosol.prefetch.TimeCache that reads this image's timepoints ahead
+    time_cache: object = field(default=None, repr=False)
     _planes: np.ndarray | None = field(default=None, repr=False)
     _planes_z: object = field(default=None, repr=False)
 
@@ -150,7 +152,14 @@ class ImageItem:
         """(C, Y, X) for the current z and timepoint (cached)."""
         key = (self.z, self.image.t)
         if self._planes is None or self._planes_z != key:
-            self._planes = project(self.image, self.z).astype(np.float32)
+            tc = self.time_cache
+            cached = tc.get(self, self.image.t) if tc is not None else None
+            if cached is not None:
+                self._planes = cached.astype(np.float32)
+            else:
+                self._planes = project(self.image, self.z).astype(np.float32)
+                if tc is not None:
+                    tc.put(self, self.image.t, self.z, self._planes)
             self._planes_z = key
         return self._planes
 

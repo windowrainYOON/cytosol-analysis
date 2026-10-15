@@ -81,7 +81,10 @@ A GUI for working on a whole set of images at once:
   the HT volume). Turn off **TCF: HT와 FL을 정렬해 한 이미지로** to get HT and
   FL as two entries instead (`read_image(path, aligned=True)` from Python).
 - **Time series** (TCF, CZI, OIR with a T axis, together with Z): a **T** slider
-  under the image; each timepoint is read from the file when selected. Export
+  under the image. While an image is shown, the other timepoints of the
+  current Z (or MIP) are read ahead in the background (up to 2 GB), so
+  dragging the slider redraws at once; histograms and the line profile follow
+  when it stops. TCF fluorescence is read only for the slices a plane needs. Export
   writes every timepoint (RGB TIFFs become T-frame stacks with the time stamp
   on each frame, the raw stack a TZCYX hyperstack) unless
   **타임시리즈는 모든 시점 저장** is off. **타임시리즈 RGB 형식** writes those RGB

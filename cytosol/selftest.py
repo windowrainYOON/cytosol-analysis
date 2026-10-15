@@ -264,6 +264,44 @@ def run(out_dir) -> int:
             raise AssertionError('plane at t=1 differs from the volume')
         return f'4 planes in {dt * 1000:.0f} ms, planes == volume at t 0 and 1'
 
+    def read_ahead():
+        import time
+
+        from scipy import ndimage as ndi
+
+        from .io import _FlMapper
+        from .lut import ImageItem
+        from .prefetch import TimeCache, plane_at
+        # the fast FL resampling gives ndimage's pixels
+        hg = {'nx': 64, 'ny': 60, 'nz': 12, 'rx': 0.2, 'ry': 0.2, 'rz': 0.5}
+        fg = {'nx': 48, 'ny': 45, 'nz': 5, 'rx': 0.2667, 'ry': 0.2667, 'rz': 0.6}
+        m = _FlMapper(hg, fg, 0.5, shift_px=(0.3, -0.7))
+        src = np.random.default_rng(3).random((45, 48)).astype(np.float32)
+        ref = ndi.affine_transform(src, [m.sy, m.sx], offset=[m.oy, m.ox],
+                                   output_shape=m.shape, order=1)
+        if not np.allclose(m.xy(src), ref, atol=1e-5):
+            raise AssertionError('fast FL resampling differs from ndimage')
+        path = out / 'selftest_t4.TCF'
+        _synthetic_tcf(path, nt=4)
+        item = ImageItem.load(path, aligned=True)
+        item.z = 5
+        tc = TimeCache()
+        item.time_cache = tc
+        tc.follow(item)
+        t0 = time.perf_counter()
+        while tc.cached(item) < item.nt:
+            if time.perf_counter() - t0 > 30:
+                raise AssertionError(f'read ahead {tc.cached(item)}/{item.nt} timepoints')
+            time.sleep(0.02)
+        for t in range(item.nt):
+            if not np.array_equal(tc.get(item, t), plane_at(item.image, t, 5)):
+                raise AssertionError(f'read-ahead plane at t={t} differs')
+        item.set_t(3)
+        if not np.array_equal(item.planes(), item.image.data[:, 5]):
+            raise AssertionError('cached plane differs from the volume')
+        tc.follow(None)
+        return f'{item.nt} timepoints read ahead in {(time.perf_counter() - t0) * 1000:.0f} ms'
+
     def projections():
         from .io import Image
         from .lut import ImageItem
@@ -307,6 +345,8 @@ def run(out_dir) -> int:
         return f'3D {res.shape}, {len(files)} files'
 
     def window():
+        import time
+
         from PySide6.QtWidgets import QApplication
 
         from .app import MainWindow
@@ -316,6 +356,18 @@ def run(out_dir) -> int:
         win.show()
         app.processEvents()
         win.add_files([out / 'selftest.TCF'])
+        # dragging T draws read-ahead timepoints; releasing settles on the last one
+        win.t_slider.setSliderDown(True)
+        win.t_slider.setValue(1)
+        t0 = time.perf_counter()
+        while win.current.t != 1 and time.perf_counter() - t0 < 30:
+            app.processEvents()
+            time.sleep(0.01)
+        win.t_slider.setSliderDown(False)
+        win.t_slider.sliderReleased.emit()
+        app.processEvents()
+        if win.current.t != 1:
+            raise AssertionError('dragging the T slider did not show t=2')
         win.z_slider.setValue(4)
         win._z_changed()
         win.right_tabs.setCurrentIndex(win.stack_tab)
@@ -444,6 +496,7 @@ def run(out_dir) -> int:
     step('same-name images, separate folders', same_name_export)
     step('figure export', figure)
     step('lazy TCF planes', lazy_tcf)
+    step('time-series read-ahead', read_ahead)
     step('Z-stack projections', projections)
     step('main window', window)
 
