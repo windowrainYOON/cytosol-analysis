@@ -582,3 +582,83 @@ __all__ = [
     'CORNERS', 'Label', 'Inset', 'FigureCell', 'FigureSpec', 'render_cell', 'render_figure',
     'figure_to_array', 'save_figure', 'fill_row_by_channels', 'color_label', 'parse_color',
 ]
+
+
+# ---- inset regions as ImageJ ROIs / between cells ---------------------------
+
+def cell_origin(cell: FigureCell) -> tuple[int, int]:
+    """(x, y) of the cell image's top-left corner in its source image."""
+    if cell.item is not None and cell.region is not None:
+        return int(cell.region[0]), int(cell.region[1])
+    return 0, 0
+
+
+def inset_to_image(cell: FigureCell, rect) -> tuple[int, int, int, int]:
+    """Inset rect (cell pixels) -> source-image pixels, so a crop's inset keeps its place."""
+    ox, oy = cell_origin(cell)
+    x0, y0, x1, y1 = rect
+    return x0 + ox, y0 + oy, x1 + ox, y1 + oy
+
+
+def inset_from_image(cell: FigureCell, rect, min_px=3):
+    """Source-image rect -> inset rect in this cell's pixels, clipped to the cell.
+
+    When the rect lies outside the cell (e.g. a crop of another part of the
+    image), the same position relative to the cell's corner is used instead.
+    Returns None when nothing usable is left.
+    """
+    H, W = cell.shape()
+    ox, oy = cell_origin(cell)
+
+    def clip(x0, y0, x1, y1):
+        x0, x1 = sorted((int(np.clip(x0, 0, W)), int(np.clip(x1, 0, W))))
+        y0, y1 = sorted((int(np.clip(y0, 0, H)), int(np.clip(y1, 0, H))))
+        if x1 - x0 < min_px or y1 - y0 < min_px:
+            return None
+        return x0, y0, x1, y1
+
+    x0, y0, x1, y1 = (int(round(v)) for v in rect)
+    return clip(x0 - ox, y0 - oy, x1 - ox, y1 - oy) or clip(x0, y0, x1, y1)
+
+
+def write_inset_rois(path, rects, names=None) -> str:
+    """Rectangles (source-image pixels) as an ImageJ .roi (one) or RoiSet .zip."""
+    import roifile
+
+    path = Path(path)
+    rois = []
+    for k, (x0, y0, x1, y1) in enumerate(rects):
+        roi = roifile.ImagejRoi()
+        roi.roitype = roifile.ROI_TYPE.RECT
+        roi.version = 228
+        roi.left, roi.top, roi.right, roi.bottom = int(x0), int(y0), int(x1), int(y1)
+        roi.name = names[k] if names else f'inset{k + 1:02d}'
+        rois.append(roi)
+    if path.suffix.lower() == '.zip':
+        if path.exists():
+            path.unlink()  # roiwrite appends to an existing zip
+        roifile.roiwrite(path, rois)
+    else:
+        if len(rois) != 1:
+            raise ValueError('.roi holds one region; use .zip for several')
+        rois[0].tofile(path)
+    return str(path)
+
+
+def read_inset_rois(path) -> list[tuple[int, int, int, int]]:
+    """Bounding rectangles of the ROIs in an ImageJ .roi or RoiSet .zip."""
+    import roifile
+
+    path = Path(path)
+    if path.suffix.lower() == '.zip':
+        rois = roifile.roiread(path)
+    else:
+        rois = roifile.ImagejRoi.fromfile(path)
+    if not isinstance(rois, list):
+        rois = [rois]
+    out = []
+    for r in rois:
+        x0, y0, x1, y1 = int(r.left), int(r.top), int(r.right), int(r.bottom)
+        if x1 > x0 and y1 > y0:
+            out.append((x0, y0, x1, y1))
+    return out

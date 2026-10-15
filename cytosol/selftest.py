@@ -465,6 +465,25 @@ def run(out_dir) -> int:
         fw.merged_chk.setChecked(True)
         if cell.channels is not None:
             raise AssertionError('figure cell did not go back to the main window channels')
+        # inset region: .roi round trip and copy / paste into another cell
+        from .figure import FigureCell, Inset, read_inset_rois, write_inset_rois
+
+        cell.insets = [Inset((4, 5, 20, 21))]
+        fw._refresh_inset_list(select=0)
+        write_inset_rois(out / 'selftest_inset.roi', [(4, 5, 20, 21)])
+        if read_inset_rois(out / 'selftest_inset.roi') != [(4, 5, 20, 21)]:
+            raise AssertionError('inset .roi round trip')
+        fw._copy_inset()
+        fw.spec.add_col()
+        other = fw.spec.cells[0][-1]
+        other.copy_from(FigureCell(item=win.current))
+        fw.rebuild_table()
+        if fw._inset_clip is None:
+            raise AssertionError('inset copy')
+        fw.table.setCurrentCell(0, fw.spec.ncols - 1)
+        fw._paste_inset()
+        if [i.rect for i in other.insets] != [(4, 5, 20, 21)]:
+            raise AssertionError(f'inset paste: {[i.rect for i in other.insets]}')
         fw.close()
         # multi-select removal
         win.add_files([out / 'selftest.TCF'])

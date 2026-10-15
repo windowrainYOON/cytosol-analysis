@@ -500,7 +500,15 @@ class Canvas(QGraphicsView):
             return
         if self.crop_mode and self._origin is not None:
             p = self.mapToScene(event.position().toPoint())
-            self.rect_item.setRect(QRectF(self._origin, p).normalized())
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                # Shift: a square, as in ImageJ (whole pixels so it stays square)
+                o = QPointF(round(self._origin.x()), round(self._origin.y()))
+                dx, dy = p.x() - o.x(), p.y() - o.y()
+                side = round(max(abs(dx), abs(dy)))
+                p = o + QPointF(side if dx >= 0 else -side, side if dy >= 0 else -side)
+                self.rect_item.setRect(QRectF(o, p).normalized())
+            else:
+                self.rect_item.setRect(QRectF(self._origin, p).normalized())
             return
         if self.line_mode and self._line_origin is not None:
             p = self.mapToScene(event.position().toPoint())
@@ -922,6 +930,8 @@ class MainWindow(QMainWindow):
             lambda _: self.update_preview(refit=self.show_crop_btn.isChecked()))
         self.crop_btn = QPushButton('Crop 추가 (드래그)')
         self.crop_btn.setCheckable(True)
+        self.crop_btn.setToolTip('누른 뒤 이미지 위에서 드래그해 Crop 영역을 그립니다. '
+                                 'Shift + 드래그: 정사각형.')
         del_crop = QPushButton('선택 삭제')
         del_crop.clicked.connect(self.delete_crop)
         clear_crop = QPushButton('전체 삭제')
