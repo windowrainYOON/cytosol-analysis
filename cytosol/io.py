@@ -9,6 +9,7 @@ read from the file's metadata.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -372,6 +373,7 @@ def read_tcf(path, modality: str = '3D', timepoint: int = 0) -> Image:
             'group': ga,
         }
     planes = _LRU(PLANE_CACHE)
+    lock = threading.Lock()  # the time-series read-ahead calls in from its own thread
 
     def loader(t):
         with h5py.File(path, 'r') as f:
@@ -381,7 +383,8 @@ def read_tcf(path, modality: str = '3D', timepoint: int = 0) -> Image:
         def make():
             with h5py.File(path, 'r') as f:
                 return _tcf_read_plane(f, modality, frames[t], z)
-        return planes.get((t, z), make)
+        with lock:
+            return planes.get((t, z), make)
 
     t0 = times[0] if times else 0.0
     return _set_ranges(Image(None, channels, vx, meta, colors,
@@ -418,6 +421,7 @@ class _FlMapper:
         h, f = ht_grid, fl_grid
         zf = f['nz'] if zf is None else zf
         self.shape = (h['ny'], h['nx'])
+        self.shape_z = h['nz']
         self.sy, self.sx = h['ry'] / f['ry'], h['rx'] / f['rx']
         self.oy = (f['ny'] - 1) / 2 - self.sy * (h['ny'] - 1) / 2 + shift_px[0]
         self.ox = (f['nx'] - 1) / 2 - self.sx * (h['nx'] - 1) / 2 + shift_px[1]
@@ -430,12 +434,41 @@ class _FlMapper:
             self.jf = list((zpos - fl_z0_um) / f['rz'] - 0.5)
         self.covered = [k for k, v in enumerate(self.jf) if -0.5 <= v <= zf - 0.5]
         self.need = sorted({j for k in self.covered for j in self.weights(k)[:2]})
+        self._taps = {}  # input (ny, nx) -> per axis the linear interpolation taps
+        # HT slices whose FL max equals the max over all covered slices: along
+        # each pair of FL slices the blend is linear in the weight, so per pixel
+        # its max is at the smallest or the largest weight of that pair
+        ends = {}
+        for k in self.covered:
+            j0, j1, w = self.weights(k)
+            lo, hi = ends.get((j0, j1), (k, k))
+            ends[(j0, j1)] = (min(lo, k, key=lambda q: self.weights(q)[2]),
+                              max(hi, k, key=lambda q: self.weights(q)[2]))
+        self.mip_slices = sorted({k for pair in ends.values() for k in pair})
+
+    def slices_for(self, z) -> list:
+        """Keys of ``slices`` that plane z ('mip', 'mid' or an HT index) needs."""
+        if self.project:
+            return ['proj']
+        if z == 'mip':
+            return self.need
+        w = self.weights(self.shape_z // 2 if z == 'mid' else int(z))
+        return [] if w is None else sorted({w[0], w[1]})
 
     def xy(self, plane: np.ndarray) -> np.ndarray:
-        from scipy import ndimage as ndi
+        """One FL plane (float32) resampled onto the HT XY grid.
 
-        return ndi.affine_transform(plane, [self.sy, self.sx], offset=[self.oy, self.ox],
-                                    output_shape=self.shape, order=1)
+        Same pixels as ndimage.affine_transform(order=1) with this scale and
+        offset, done as two gathers of neighboring rows / columns (several
+        times faster, which is what makes a timepoint change quick).
+        """
+        key = plane.shape
+        if key not in self._taps:
+            self._taps[key] = (_linear_taps(key[0], self.shape[0], self.sy, self.oy),
+                               _linear_taps(key[1], self.shape[1], self.sx, self.ox))
+        (iy, wy), (ix, wx) = self._taps[key]
+        rows = plane[iy[0]] * wy[0][:, None] + plane[iy[1]] * wy[1][:, None]
+        return rows[:, ix[0]] * wx[0] + rows[:, ix[1]] * wx[1]
 
     def weights(self, k: int):
         """(j0, j1, w): HT slice k = (1 - w) * FL j0 + w * FL j1, or None outside FL."""
@@ -461,6 +494,24 @@ class _FlMapper:
             return None
         j0, j1, a = w
         return slices[j0] if j1 == j0 else (1 - a) * slices[j0] + a * slices[j1]
+
+
+def _linear_taps(n_in: int, n_out: int, scale: float, offset: float):
+    """Input indices (2, n_out) and weights (2, n_out) of 1D linear resampling.
+
+    Taken from ndimage.affine_transform itself (applied to the identity), so
+    _FlMapper.xy reproduces it, edge handling included.
+    """
+    from scipy import ndimage as ndi
+
+    m = ndi.affine_transform(np.eye(n_in), [scale, 1.0], offset=[offset, 0.0],
+                             output_shape=(n_out, n_in), order=1)
+    i0 = np.argmax(m != 0, axis=1)
+    i1 = np.minimum(i0 + 1, n_in - 1)
+    rows = np.arange(n_out)
+    w0 = m[rows, i0]
+    w1 = np.where(i1 > i0, m[rows, i1], 0.0)
+    return np.stack([i0, i1]), np.stack([w0, w1]).astype(np.float32)
 
 
 def _resample_fl(fl: np.ndarray, ht_grid: dict, fl_grid: dict, fl_z0_um: float | None,
@@ -578,53 +629,75 @@ def read_tcf_aligned(path, timepoint: int = 0, refine: bool = True) -> Image:
         fl_for = list(range(len(ht_frames)))
     else:
         fl_for = [int(np.argmin([abs(ft - t) for ft in fl_times])) for t in ht_times]
-    nfl, nz = len(fl_names), ht_shape[1]
+    nfl = len(fl_names)
     state = {}  # 'mapper': _FlMapper, built once the XY shift is known
-    fl_cache = _LRU(2)  # t -> per FL channel the XY-resampled slices
+    # t -> per FL channel the XY-resampled slices read so far ({j or 'proj': plane})
+    fl_cache = _LRU(2)
     plane_cache = _LRU(PLANE_CACHE)
+    lock = threading.RLock()  # the time-series read-ahead calls in from its own thread
 
-    def fl_slices(t):
-        def make():
-            with h5py.File(path, 'r') as f:
-                fl = _tcf_read_frame(f, fl_mod, fl_frames[fl_for[t]])
-                if 'mapper' not in state:
-                    shift = (0.0, 0.0)
-                    if refine:
-                        ht_mip = _tcf_read_plane(f, ht_mod, ht_frames[t], 'mip')[0]
-                        shift = _fl_shift(ht_mip, fl, ht_grid, fl_grid)
-                    meta['fl_shift_um'] = (shift[0] * fl_grid['ry'], shift[1] * fl_grid['rx'])
-                    state['mapper'] = _FlMapper(ht_grid, fl_grid, fl_z0, shift, zf=fl.shape[1])
-            m = state['mapper']
-            return [m.slices(fl[i]) for i in range(nfl)]
-        return fl_cache.get(t, make)
+    def mapper(f, t):
+        if 'mapper' not in state:
+            fl = _tcf_read_frame(f, fl_mod, fl_frames[fl_for[t]])
+            shift = (0.0, 0.0)
+            if refine:
+                ht_mip = _tcf_read_plane(f, ht_mod, ht_frames[t], 'mip')[0]
+                shift = _fl_shift(ht_mip, fl, ht_grid, fl_grid)
+            meta['fl_shift_um'] = (shift[0] * fl_grid['ry'], shift[1] * fl_grid['rx'])
+            state['mapper'] = _FlMapper(ht_grid, fl_grid, fl_z0, shift, zf=fl.shape[1])
+        return state['mapper']
+
+    def fl_slices(t, z):
+        """Per FL channel the resampled slices plane z of timepoint t needs;
+        only slices not read before are taken from the file."""
+        with h5py.File(path, 'r') as f:
+            m = mapper(f, t)
+            sl = fl_cache.get(t, lambda: [{} for _ in range(nfl)])
+            missing = [j for j in m.slices_for(z) if j not in sl[0]]
+            if missing:
+                grp = f['Data'][fl_mod]
+                frame = fl_frames[fl_for[t]]
+                chans = _tcf_fl_channels(grp)
+                ref = next(grp[c][frame] for c in chans if frame in grp[c])
+                for i, ch in enumerate(chans):
+                    ds = grp[ch][frame] if frame in grp[ch] else None
+                    for j in missing:
+                        if ds is None:  # a channel not acquired at this timepoint
+                            raw = np.zeros(ref.shape[-2:], np.float32)
+                        elif j == 'proj':
+                            raw = (ds[()] if ds.ndim == 2 else ds[()].max(axis=0)).astype(np.float32)
+                        else:
+                            raw = (ds[()] if ds.ndim == 2 else ds[int(j)]).astype(np.float32)
+                        sl[i][j] = m.xy(raw)
+        return sl, m
 
     def plane_loader(t, z):
         def make():
-            sl = fl_slices(t)
-            m = state['mapper']
+            sl, m = fl_slices(t, z)
             with h5py.File(path, 'r') as f:
                 ht = _tcf_read_plane(f, ht_mod, ht_frames[t], z)[0]
             out = np.zeros((1 + nfl,) + ht.shape, np.float32)
             out[0] = ht
             for i in range(nfl):
                 if z == 'mip':
-                    for k in ([0] if m.project else m.covered):
+                    for k in ([0] if m.project else m.mip_slices):
                         np.maximum(out[1 + i], m.plane(sl[i], k), out=out[1 + i])
                 else:
-                    p = m.plane(sl[i], nz // 2 if z == 'mid' else int(z))
+                    p = m.plane(sl[i], m.shape_z // 2 if z == 'mid' else int(z))
                     if p is not None:
                         out[1 + i] = p
             return out
-        return plane_cache.get((t, z), make)
+        with lock:
+            return plane_cache.get((t, z), make)
 
     def loader(t):
-        sl = fl_slices(t)
-        m = state['mapper']
-        # zeros: FL slices outside the FL stack are never written, so (on
-        # calloc-backed allocations) they cost no memory
-        out = np.zeros((1 + nfl,) + tuple(ht_shape[1:]), np.float32)
-        with h5py.File(path, 'r') as f:
-            raw = hg_read(f, t)
+        with lock:
+            sl, m = fl_slices(t, 'mip')  # 'mip' needs every FL slice
+            # zeros: FL slices outside the FL stack are never written, so (on
+            # calloc-backed allocations) they cost no memory
+            out = np.zeros((1 + nfl,) + tuple(ht_shape[1:]), np.float32)
+            with h5py.File(path, 'r') as f:
+                raw = hg_read(f, t)
         np.divide(raw.reshape(ht_shape[1:]), np.float32(TCF_RI_SCALE), out=out[0])
         del raw
         for i in range(nfl):

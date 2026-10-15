@@ -70,6 +70,7 @@ from .coloc_panel import ColocPanel, write_coloc_csv
 from .imageid import ROI_EXT, match_roi, plan_pairing
 from .marker_panel import MarkerPanel
 from .lineprofile import read_line_roi
+from .prefetch import TimeCache
 from .profile_panel import ProfilePanel
 from .movie import RGB_FORMATS, wants_mp4
 from .roi_panel import RoiPanel, write_csv
@@ -990,9 +991,17 @@ class MainWindow(QMainWindow):
         self.zoom_btn.toggled.connect(self.canvas.set_zoom_mode)
         self.canvas.zoomDone.connect(lambda: self.zoom_btn.setChecked(False))
         self.t_slider = QSlider(Qt.Orientation.Horizontal)
-        self.t_slider.setTracking(False)  # load a timepoint on release, not while dragging
-        self.t_slider.valueChanged.connect(self._t_changed)
-        self.t_slider.sliderMoved.connect(self._t_preview_label)
+        # while dragging, timepoints are read in a thread (TimeCache) and drawn
+        # as they arrive; histograms and the line profile follow when it stops
+        self.t_slider.valueChanged.connect(self._t_value)
+        self.t_slider.sliderReleased.connect(lambda: self._t_changed(self.t_slider.value()))
+        self.tcache = TimeCache(parent=self)
+        self.tcache.ready.connect(self._t_ready)
+        self._t_want = None  # timepoint the drag waits for
+        self._t_full = QTimer(self)
+        self._t_full.setSingleShot(True)
+        self._t_full.setInterval(150)
+        self._t_full.timeout.connect(self._t_refresh)
         self.t_label = QLabel()
         self.t_label.setMinimumWidth(130)
         self.markers = MarkerPanel()
@@ -1367,6 +1376,7 @@ class MainWindow(QMainWindow):
                 self._select(row)
         else:
             self.current = None
+            self.tcache.follow(None)
             self._build_panels()
             self._build_stack_panels()
             self.profile_panel.bind(None)
@@ -1402,6 +1412,8 @@ class MainWindow(QMainWindow):
             prev.image.release()  # a lazy (TCF) volume is read again when needed
         self.current = self.items[row]
         it = self.current
+        it.time_cache = self.tcache
+        self.tcache.follow(it)
         self._sync_z_widgets()
         self.t_slider.blockSignals(True)
         self.t_slider.setRange(0, max(it.nt - 1, 0))
@@ -1450,19 +1462,64 @@ class MainWindow(QMainWindow):
         text = self.markers.time_style().text(times[t], times[-1] - times[0], t)
         self.t_label.setText(f'{t + 1}/{it.nt}  ({text.strip()})')
 
+    def _t_value(self, t):
+        if self.t_slider.isSliderDown():
+            self._t_scrub(t)
+        else:  # keys, clicks on the groove, wheel
+            self._t_changed(t)
+
+    def _t_scrub(self, t):
+        """While dragging: draw timepoint t if it is loaded, else load it in the background."""
+        it = self.current
+        if it is None:
+            return
+        self._t_preview_label(t)
+        self.tcache.follow(it, t)
+        if self._stack_on():
+            return  # projections need the whole volume: on release
+        if self.tcache.get(it, t) is None:
+            self._t_want = t  # drawn by _t_ready once read
+            return
+        self._t_want = None
+        it.set_t(t)
+        self.update_preview(light=True)
+
+    def _t_ready(self, item, t):
+        if item is self.current and t == self._t_want and self.t_slider.isSliderDown():
+            self._t_want = None
+            item.set_t(t)
+            self.update_preview(light=True)
+
     def _t_changed(self, t):
         it = self.current
-        if it is None or t == it.t:
+        if it is None:
             return
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            it.set_t(t)
-        except Exception as exc:
-            traceback.print_exc()
-            QMessageBox.warning(self, '시점 불러오기 실패', str(exc))
-        finally:
-            QApplication.restoreOverrideCursor()
+        self._t_want = None
+        self.tcache.follow(it)  # read here, not in the background
+        if t != it.t:
+            cached = self.tcache.get(it, t) is not None
+            if not cached:
+                QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                it.set_t(t)
+                it.planes()
+            except Exception as exc:
+                traceback.print_exc()
+                QMessageBox.warning(self, '시점 불러오기 실패', str(exc))
+            finally:
+                if not cached:
+                    QApplication.restoreOverrideCursor()
         self._t_preview_label(it.t)
+        if self._stack_on():
+            self._t_refresh()
+            return
+        self.update_preview(light=True)
+        self._t_full.start()  # histograms and the rest once T stops changing
+
+    def _t_refresh(self):
+        it = self.current
+        if it is None:
+            return
         for p in self.panels:
             p.bind(it)
         self.update_preview()
@@ -1515,6 +1572,7 @@ class MainWindow(QMainWindow):
         if z == it.z:
             return
         it.z = z
+        self.tcache.follow(it)  # planes loaded for the old Z no longer apply
         self._z_label()
         try:
             for p in self.panels:
@@ -1700,7 +1758,8 @@ class MainWindow(QMainWindow):
             return None
         return row
 
-    def update_preview(self, refit=False):
+    def update_preview(self, refit=False, light=False):
+        """Redraw the image; ``light`` (while T changes) skips the line profile."""
         it = self.current
         if it is None:
             return
@@ -1723,7 +1782,8 @@ class MainWindow(QMainWindow):
         self.canvas.show_crops([] if only else it.crops, sel)
         self.roi_panel.draw_overlay(hidden=only)
         self._draw_profile_line()
-        self.profile_panel.schedule()
+        if not light:
+            self.profile_panel.schedule()
 
     # ---- line profile ---------------------------------------------------
 
