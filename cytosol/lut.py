@@ -90,6 +90,7 @@ class ImageItem:
     time_cache: object = field(default=None, repr=False)
     _planes: np.ndarray | None = field(default=None, repr=False)
     _planes_z: object = field(default=None, repr=False)
+    _planes_preview: bool = field(default=False, repr=False)  # approximate, for drawing only
 
     @classmethod
     def load(cls, path, label=None, **read_kwargs) -> 'ImageItem':
@@ -161,7 +162,20 @@ class ImageItem:
                 if tc is not None:
                     tc.put(self, self.image.t, self.z, self._planes)
             self._planes_z = key
+            self._planes_preview = False
         return self._planes
+
+    def show_planes(self, planes: np.ndarray, exact: bool):
+        """Use planes (of the current z and timepoint) for drawing; an
+        approximate one is replaced by drop_preview() before analysis."""
+        self._planes = planes.astype(np.float32)
+        self._planes_z = (self.z, self.image.t)
+        self._planes_preview = not exact
+
+    def drop_preview(self):
+        if self._planes_preview:
+            self._planes = None
+            self._planes_preview = False
 
     def decorate(self, rgb, scale: ScaleBarStyle | None = None,
                  time: TimeStampStyle | None = None, t: int | None = None) -> np.ndarray:

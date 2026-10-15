@@ -84,7 +84,9 @@ A GUI for working on a whole set of images at once:
   under the image. The image follows the slider while it is dragged (each
   timepoint is read in the background, so the window does not freeze);
   histograms and the line profile follow when it stops. TCF fluorescence is
-  read only for the slices a plane needs. Export
+  read only for the slices a plane needs; in MIP view the drag shows a quick
+  FL projection (taken before resampling) and the exact MIP replaces it on
+  release, so analysis always uses the exact values. Export
   writes every timepoint (RGB TIFFs become T-frame stacks with the time stamp
   on each frame, the raw stack a TZCYX hyperstack) unless
   **타임시리즈는 모든 시점 저장** is off. **타임시리즈 RGB 형식** writes those RGB
