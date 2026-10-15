@@ -4,7 +4,9 @@ A worker thread reads the plane of the current Z (or MIP) for the timepoint
 the slider points at, so the window never freezes during a drag: when the
 slider moves on before a read finishes, only the newest position is read
 next. The last few planes are kept, so going back and forth is instant;
-nothing else is read ahead, so memory use stays small.
+nothing else is read ahead, so memory use stays small. Where the image has a
+faster approximate reader (``Image.preview_loader``, the TCF FL MIP), the
+drag draws with it and the exact plane is read when the slider stops.
 """
 
 from __future__ import annotations
@@ -31,6 +33,13 @@ def plane_at(image, t: int, z) -> np.ndarray:
     return vol[:, int(z)]
 
 
+def preview_at(image, t: int, z):
+    """(planes, exact): the quickest plane z of timepoint t for drawing."""
+    if image.preview_loader is not None and z == 'mip':
+        return image.preview_loader(t, z), False
+    return plane_at(image, t, z), True
+
+
 class TimeCache(QObject):
     """Loads the wanted timepoint of one image at one Z in a thread."""
 
@@ -43,7 +52,7 @@ class TimeCache(QObject):
         self._item = None
         self._z = None
         self._want = None  # timepoint to load next (the newest slider position)
-        self._store: OrderedDict[int, np.ndarray] = OrderedDict()
+        self._store: OrderedDict[int, tuple] = OrderedDict()  # t -> (planes, exact)
         threading.Thread(target=self._run, name='time-loader', daemon=True).start()
 
     # ---- main thread ------------------------------------------------------
@@ -61,21 +70,29 @@ class TimeCache(QObject):
                 self._want = None if t is None else int(t)
             self._cv.notify()
 
-    def get(self, item, t: int):
-        """The loaded plane of timepoint t at the item's current Z, or None."""
+    def get(self, item, t: int, exact: bool = True):
+        """The loaded plane of timepoint t at the item's current Z, or None;
+        with exact=False a preview plane counts too."""
+        found = self.get_entry(item, t)
+        if found is None or (exact and not found[1]):
+            return None
+        return found[0]
+
+    def get_entry(self, item, t: int):
+        """(planes, exact) of timepoint t at the item's current Z, or None."""
         with self._cv:
             if item is self._item and item.z == self._z:
-                planes = self._store.get(int(t))
-                if planes is not None:
+                found = self._store.get(int(t))
+                if found is not None:
                     self._store.move_to_end(int(t))
-                return planes
+                return found
         return None
 
     def put(self, item, t: int, z, planes: np.ndarray):
         """Keep a plane read elsewhere (the current timepoint)."""
         with self._cv:
             if item is self._item and z == self._z:
-                self._keep(int(t), planes)
+                self._keep(int(t), (planes, True))
 
     def cached(self, item) -> int:
         with self._cv:
@@ -83,8 +100,8 @@ class TimeCache(QObject):
 
     # ---- shared ------------------------------------------------------------
 
-    def _keep(self, t, planes):
-        self._store[t] = planes
+    def _keep(self, t, entry):
+        self._store[t] = entry
         self._store.move_to_end(t)
         while len(self._store) > self.keep:
             self._store.popitem(last=False)
@@ -98,7 +115,8 @@ class TimeCache(QObject):
                     self._cv.wait()
                 item, z, t = self._item, self._z, self._want
             try:
-                planes = np.asarray(plane_at(item.image, t, z), np.float32)
+                planes, exact = preview_at(item.image, t, z)
+                planes = np.asarray(planes, np.float32)
             except Exception:
                 traceback.print_exc()
                 with self._cv:
@@ -108,5 +126,5 @@ class TimeCache(QObject):
             with self._cv:
                 if item is not self._item or z != self._z:
                     continue
-                self._keep(t, planes)
+                self._keep(t, (planes, exact))
             self.ready.emit(item, t)

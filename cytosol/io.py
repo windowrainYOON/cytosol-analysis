@@ -47,6 +47,8 @@ class Image:
     # time and the whole volume is only loaded for projections and exports
     plane_loader: Callable[[int, object], np.ndarray] | None = field(default=None, repr=False)
     shape: tuple | None = None  # (C, Z, Y, X); taken from data when not given
+    # optional faster, approximate plane_loader for drawing while T is dragged
+    preview_loader: Callable[[int, object], np.ndarray] | None = field(default=None, repr=False)
 
     def __post_init__(self):
         if self.shape is None:
@@ -647,6 +649,27 @@ def read_tcf_aligned(path, timepoint: int = 0, refine: bool = True) -> Image:
             state['mapper'] = _FlMapper(ht_grid, fl_grid, fl_z0, shift, zf=fl.shape[1])
         return state['mapper']
 
+    def fl_raw(f, t, js) -> list[dict]:
+        """Per FL channel the stored slices js (or 'proj', the max over z) of
+        timepoint t as float32, on the FL grid."""
+        grp = f['Data'][fl_mod]
+        frame = fl_frames[fl_for[t]]
+        chans = _tcf_fl_channels(grp)
+        ref = next(grp[c][frame] for c in chans if frame in grp[c])
+        out = []
+        for ch in chans:
+            ds = grp[ch][frame] if frame in grp[ch] else None
+            got = {}
+            for j in js:
+                if ds is None:  # a channel not acquired at this timepoint
+                    got[j] = np.zeros(ref.shape[-2:], np.float32)
+                elif j == 'proj':
+                    got[j] = (ds[()] if ds.ndim == 2 else ds[()].max(axis=0)).astype(np.float32)
+                else:
+                    got[j] = (ds[()] if ds.ndim == 2 else ds[int(j)]).astype(np.float32)
+            out.append(got)
+        return out
+
     def fl_slices(t, z):
         """Per FL channel the resampled slices plane z of timepoint t needs;
         only slices not read before are taken from the file."""
@@ -655,31 +678,41 @@ def read_tcf_aligned(path, timepoint: int = 0, refine: bool = True) -> Image:
             sl = fl_cache.get(t, lambda: [{} for _ in range(nfl)])
             missing = [j for j in m.slices_for(z) if j not in sl[0]]
             if missing:
-                grp = f['Data'][fl_mod]
-                frame = fl_frames[fl_for[t]]
-                chans = _tcf_fl_channels(grp)
-                ref = next(grp[c][frame] for c in chans if frame in grp[c])
-                for i, ch in enumerate(chans):
-                    ds = grp[ch][frame] if frame in grp[ch] else None
+                for i, raw in enumerate(fl_raw(f, t, missing)):
                     for j in missing:
-                        if ds is None:  # a channel not acquired at this timepoint
-                            raw = np.zeros(ref.shape[-2:], np.float32)
-                        elif j == 'proj':
-                            raw = (ds[()] if ds.ndim == 2 else ds[()].max(axis=0)).astype(np.float32)
-                        else:
-                            raw = (ds[()] if ds.ndim == 2 else ds[int(j)]).astype(np.float32)
-                        sl[i][j] = m.xy(raw)
+                        sl[i][j] = m.xy(raw[j])
         return sl, m
+
+    def fl_plane_z(t, k):
+        """Per FL channel HT slice k: the two FL slices around it are blended
+        in Z first and resampled once (both steps are linear, so this gives
+        the pixels of resampling each slice and blending afterwards)."""
+        with h5py.File(path, 'r') as f:
+            m = mapper(f, t)
+            w = m.weights(k)
+            if w is None:
+                return [None] * nfl
+            j0, j1, a = w
+            raws = fl_raw(f, t, sorted({j0, j1}))
+        return [m.xy(r[j0] if j1 == j0 else (1 - a) * r[j0] + a * r[j1]) for r in raws]
 
     def plane_loader(t, z):
         def make():
-            sl, m = fl_slices(t, z)
+            m = state.get('mapper')
+            if z != 'mip' and m is not None and not m.project:
+                fl = fl_plane_z(t, m.shape_z // 2 if z == 'mid' else int(z))
+            else:
+                sl, m = fl_slices(t, z)
+                fl = None
             with h5py.File(path, 'r') as f:
                 ht = _tcf_read_plane(f, ht_mod, ht_frames[t], z)[0]
             out = np.zeros((1 + nfl,) + ht.shape, np.float32)
             out[0] = ht
             for i in range(nfl):
-                if z == 'mip':
+                if fl is not None:
+                    if fl[i] is not None:
+                        out[1 + i] = fl[i]
+                elif z == 'mip':
                     for k in ([0] if m.project else m.mip_slices):
                         np.maximum(out[1 + i], m.plane(sl[i], k), out=out[1 + i])
                 else:
@@ -689,6 +722,36 @@ def read_tcf_aligned(path, timepoint: int = 0, refine: bool = True) -> Image:
             return out
         with lock:
             return plane_cache.get((t, z), make)
+
+    def preview_loader(t, z):
+        """Like plane_loader, but the FL MIP is taken on the FL grid and
+        resampled once: a few times faster, with slightly different values
+        at FL edges (for drawing while the T slider is dragged)."""
+        with lock:
+            if z != 'mip' or (t, z) in plane_cache.items:
+                return plane_loader(t, z)
+            with h5py.File(path, 'r') as f:
+                m = mapper(f, t)
+                if m.project:
+                    return plane_loader(t, z)
+                grp = f['Data'][fl_mod]
+                frame = fl_frames[fl_for[t]]
+                j0, j1 = m.need[0], m.need[-1] + 1  # covers every slice MIP uses
+                mips = []
+                for ch in _tcf_fl_channels(grp):
+                    if frame not in grp[ch]:
+                        mips.append(None)
+                        continue
+                    ds = grp[ch][frame]
+                    raw = ds[()] if ds.ndim == 2 else ds[j0:j1].max(axis=0)
+                    mips.append(raw.astype(np.float32))
+                ht = _tcf_read_plane(f, ht_mod, ht_frames[t], 'mip')[0]
+        out = np.zeros((1 + nfl,) + ht.shape, np.float32)
+        out[0] = ht
+        for i, mip in enumerate(mips):
+            if mip is not None:
+                out[1 + i] = m.xy(mip)
+        return out
 
     def loader(t):
         with lock:
@@ -717,7 +780,8 @@ def read_tcf_aligned(path, timepoint: int = 0, refine: bool = True) -> Image:
     t0 = ht_times[0] if ht_times else 0.0
     return _set_ranges(Image(None, ['RI'] + fl_names, vx, meta, [(1.0, 1.0, 1.0)] + fl_colors,
                              times=[t - t0 for t in ht_times], t=timepoint, loader=loader,
-                             plane_loader=plane_loader, shape=(1 + nfl,) + tuple(ht_shape[1:])),
+                             plane_loader=plane_loader, shape=(1 + nfl,) + tuple(ht_shape[1:]),
+                             preview_loader=preview_loader),
                        ranges)
 
 

@@ -1477,17 +1477,23 @@ class MainWindow(QMainWindow):
         self.tcache.follow(it, t)
         if self._stack_on():
             return  # projections need the whole volume: on release
-        if self.tcache.get(it, t) is None:
+        found = self.tcache.get_entry(it, t)
+        if found is None:
             self._t_want = t  # drawn by _t_ready once read
             return
         self._t_want = None
         it.set_t(t)
+        it.show_planes(*found)
         self.update_preview(light=True)
 
     def _t_ready(self, item, t):
         if item is self.current and t == self._t_want and self.t_slider.isSliderDown():
+            found = self.tcache.get_entry(item, t)
+            if found is None:
+                return
             self._t_want = None
             item.set_t(t)
+            item.show_planes(*found)
             self.update_preview(light=True)
 
     def _t_changed(self, t):
@@ -1496,13 +1502,14 @@ class MainWindow(QMainWindow):
             return
         self._t_want = None
         self.tcache.follow(it)  # read here, not in the background
-        if t != it.t:
+        if t != it.t or it._planes_preview:  # a drag may have left a preview plane
             cached = self.tcache.get(it, t) is not None
             if not cached:
                 QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             try:
                 it.set_t(t)
-                it.planes()
+                it.drop_preview()
+                it.planes()  # the exact plane
             except Exception as exc:
                 traceback.print_exc()
                 QMessageBox.warning(self, '시점 불러오기 실패', str(exc))

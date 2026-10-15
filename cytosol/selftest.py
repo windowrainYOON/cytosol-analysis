@@ -299,8 +299,27 @@ def run(out_dir) -> int:
         if tc.cached(item) > tc.keep:
             raise AssertionError(f'kept {tc.cached(item)} planes, limit {tc.keep}')
         item.set_t(3)
-        if not np.array_equal(item.planes(), item.image.data[:, 5]):
+        if not np.allclose(item.planes(), item.image.data[:, 5], atol=1e-3):
             raise AssertionError('loaded plane differs from the volume')
+        # MIP while dragging: a quick approximate plane, the exact one on release
+        prev = item.image.preview_loader(2, 'mip')
+        exact = item.image.plane_loader(2, 'mip')
+        if prev.shape != exact.shape or not np.array_equal(prev[0], exact[0]):
+            raise AssertionError('MIP preview: wrong shape or RI channel')
+        item.z = 'mip'
+        tc.follow(item, 2)
+        while tc.get_entry(item, 2) is None:
+            if time.perf_counter() - t0 > 30:
+                raise AssertionError('MIP preview did not load')
+            time.sleep(0.01)
+        planes, ok = tc.get_entry(item, 2)
+        if ok or tc.get(item, 2) is not None:
+            raise AssertionError('MIP preview counted as an exact plane')
+        item.set_t(2)
+        item.show_planes(planes, ok)
+        item.drop_preview()
+        if not np.array_equal(item.planes(), exact):
+            raise AssertionError('exact MIP not restored after the preview')
         tc.follow(None)
         return f'{item.nt} timepoints loaded in the background in {(time.perf_counter() - t0) * 1000:.0f} ms'
 
@@ -370,6 +389,9 @@ def run(out_dir) -> int:
         app.processEvents()
         if win.current.t != 1:
             raise AssertionError('dragging the T slider did not show t=2')
+        if win.current._planes_preview or not np.array_equal(
+                win.current.planes(), win.current.image.plane_loader(1, win.current.z)):
+            raise AssertionError('releasing the T slider kept the preview plane')
         win.z_slider.setValue(4)
         win._z_changed()
         win.right_tabs.setCurrentIndex(win.stack_tab)
