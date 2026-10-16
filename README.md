@@ -86,7 +86,13 @@ A GUI for working on a whole set of images at once:
   histograms and the line profile follow when it stops. TCF fluorescence is
   read only for the slices a plane needs; in MIP view the drag shows a quick
   FL projection (taken before resampling) and the exact MIP replaces it on
-  release, so analysis always uses the exact values. Export
+  release, so analysis always uses the exact values. Files with a **Z stack**
+  also read ahead every timepoint of the current Z (or MIP) once an image is
+  shown (up to 1.5 GB; the status bar shows the progress), so scrubbing only
+  redraws; single-plane time series keep just the last few planes to save
+  memory. **Right-drag on the image** moves through T (left/right) and Z
+  (up/down) at once, updating the image while it moves (MIP switches to
+  slices once the drag goes up or down); the middle button still pans. Export
   writes every timepoint (RGB TIFFs become T-frame stacks with the time stamp
   on each frame, the raw stack a TZCYX hyperstack) unless
   **타임시리즈는 모든 시점 저장** is off. **타임시리즈 RGB 형식** writes those RGB
@@ -228,7 +234,8 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
    with a nucleus channel, finds its nucleus inside it (at the manual nucleus
    threshold, else the one the detection used, else Otsu).
    `Delete` deletes the selected cell, `Ctrl+Z` / `Ctrl+Shift+Z` undo and redo,
-   right-button drag pans in any tool. A cell is always one filled piece
+   middle-button drag pans in any tool (right-button too on images without T
+   or Z). A cell is always one filled piece
    (ImageJ polygon ROIs cannot have holes), so cut from its border.
 4. **ImageJ ROI 파일**: `ROI 저장…` writes a RoiSet `.zip` (ROI Manager › Open)
    or, when saved as `.roi`, one `.roi` file per ROI. Per cell: `cellNNN`
@@ -280,7 +287,7 @@ Run from source: `python -m cytosol.app [files…]`
 
 Build the macOS app: `./build_mac.sh` → `dist/Cytosol Viewer.app`
 (set `PYTHON=/path/to/python3.10+` if the system python3 is older).
-Package it: `./make_dmg.sh` → `~/Desktop/CytosolViewer-<version>-<commit>.dmg`.
+Package it: `./make_dmg.sh` → `~/Desktop/CytosolViewer-<version>-<commit>_<arch>.dmg` (`_apple silicon` on arm64 Macs, `_intel` on Intel Macs).
 The version lives in `cytosol/version.py` (also shown in the window title);
 bump it there for a release.
 

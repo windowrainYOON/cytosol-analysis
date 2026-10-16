@@ -148,7 +148,9 @@ class Canvas(QGraphicsView):
     """Image view: wheel to zoom, drag to pan, Crop mode to draw a rectangle.
 
     ROI tools: 'select' (click selects a cell, drag pans), 'add' / 'sub' / 'new'
-    (drag draws a freehand area). The right or middle button always pans.
+    (drag draws a freehand area). The middle button always pans; the right
+    button pans too, except on an image with T or Z, where right-drag moves
+    through them (left/right = T, up/down = Z, ``scrubDragged``).
     Dragging inside a crop region moves it. Zoom mode (or Shift + drag) zooms
     into the dragged rectangle. In the 3D view the image can be dragged
     anywhere and the right button turns it (``rotateDragged``).
@@ -163,6 +165,9 @@ class Canvas(QGraphicsView):
     lineDrawn = Signal(float, float, float, float)
     cellClicked = Signal(float, float)
     lassoDrawn = Signal(str, object)
+    scrubStarted = Signal()
+    scrubDragged = Signal(float, float)  # screen pixels from the press (x right, y down)
+    scrubEnded = Signal()
 
     def __init__(self):
         super().__init__()
@@ -220,6 +225,9 @@ class Canvas(QGraphicsView):
         # 3D view: free panning, right-drag turns
         self.view3d = False
         self._rot = None  # (press position, locked axis or None)
+        # right-drag through T / Z: can_scrub() says whether the image has them
+        self.can_scrub = lambda: False
+        self._scrub = None  # press position
 
     def set_image(self, qimg: QImage, refit=False):
         self.pix.setPixmap(QPixmap.fromImage(qimg))
@@ -417,6 +425,11 @@ class Canvas(QGraphicsView):
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
             self.rotateStarted.emit()
             return
+        if btn == Qt.MouseButton.RightButton and self.can_scrub():
+            self._scrub = event.position()
+            self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
+            self.scrubStarted.emit()
+            return
         if btn in (Qt.MouseButton.RightButton, Qt.MouseButton.MiddleButton):
             self._pan_from = event.position()
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
@@ -463,6 +476,10 @@ class Canvas(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self._scrub is not None:
+            d = event.position() - self._scrub
+            self.scrubDragged.emit(d.x(), d.y())
+            return
         if self._rot is not None:
             start, axis = self._rot
             d = event.position() - start
@@ -530,6 +547,11 @@ class Canvas(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self._scrub is not None:
+            self._scrub = None
+            self._apply_mode()
+            self.scrubEnded.emit()
+            return
         if self._rot is not None:
             self._rot = None
             self._apply_mode()
@@ -992,7 +1014,8 @@ class MainWindow(QMainWindow):
         self.canvas.zoomDone.connect(lambda: self.zoom_btn.setChecked(False))
         self.t_slider = QSlider(Qt.Orientation.Horizontal)
         # while dragging, timepoints are read in a thread (TimeCache) and drawn
-        # as they arrive; histograms and the line profile follow when it stops
+        # as they arrive (Z-stack series are also read ahead); histograms and
+        # the line profile follow when it stops
         self.t_slider.valueChanged.connect(self._t_value)
         self.t_slider.sliderReleased.connect(lambda: self._t_changed(self.t_slider.value()))
         self.tcache = TimeCache(parent=self)
@@ -1152,6 +1175,11 @@ class MainWindow(QMainWindow):
         self.stack_panel.refreshRequested.connect(self._refresh_3d)
         self.canvas.rotateStarted.connect(self.stack_panel.begin_drag)
         self.canvas.rotateDragged.connect(self.stack_panel.drag_rotate)
+        self.canvas.can_scrub = self._can_scrub
+        self.canvas.scrubStarted.connect(self._scrub_start)
+        self.canvas.scrubDragged.connect(self._scrub_drag)
+        self.canvas.scrubEnded.connect(self._scrub_end)
+        self._scrub0 = None  # (t, z) when a right-drag through T / Z started
         self.stack_panels: list[ChannelPanel] = []
         self.stack_views: dict[int, StackView] = {}
         stack_scroll = QScrollArea()
@@ -1487,7 +1515,14 @@ class MainWindow(QMainWindow):
         self.update_preview(light=True)
 
     def _t_ready(self, item, t):
-        if item is self.current and t == self._t_want and self.t_slider.isSliderDown():
+        if item is self.current and self.tcache.reading_ahead(item):
+            done = self.tcache.cached(item, exact=True)
+            if done < item.nt:
+                self.statusBar().showMessage(f'시점 미리 읽는 중 {done}/{item.nt}', 3000)
+            else:
+                self.statusBar().showMessage(f'모든 시점({item.nt}) 미리 읽기 완료', 3000)
+        dragging = self.t_slider.isSliderDown() or self._scrub0 is not None
+        if item is self.current and t == self._t_want and dragging:
             found = self.tcache.get_entry(item, t)
             if found is None:
                 return
@@ -1496,12 +1531,70 @@ class MainWindow(QMainWindow):
             item.show_planes(*found)
             self.update_preview(light=True)
 
+    # ---- right-drag through T and Z ----------------------------------------
+
+    def _can_scrub(self) -> bool:
+        it = self.current
+        return it is not None and (it.nt > 1 or it.nz > 1) and not self._stack_on()
+
+    def _scrub_start(self):
+        it = self.current
+        self._scrub0 = (it.t, it.z) if it is not None else None
+
+    def _scrub_drag(self, dx, dy):
+        """Right-drag on the image: left/right moves T, up/down moves Z; the
+        whole range takes about 80% of the view (at least a few pixels a step)."""
+        it = self.current
+        if it is None or self._scrub0 is None:
+            return
+        t0, z0 = self._scrub0
+        vp = self.canvas.viewport()
+        t = t0
+        if it.nt > 1:
+            step = max(4.0, 0.8 * vp.width() / it.nt)
+            t = int(np.clip(t0 + round(dx / step), 0, it.nt - 1))
+        z = it.z
+        if it.nz > 1:
+            step = max(4.0, 0.8 * vp.height() / it.nz)
+            dz = -round(dy / step)  # up = higher slice, like the Z slider
+            if z0 in ('mip', 'mid') and dz == 0:
+                z = z0  # MIP stays until the drag clearly goes up or down
+            else:
+                base = it.nz // 2 if z0 in ('mip', 'mid') else int(z0)
+                z = int(np.clip(base + dz, 0, it.nz - 1))
+        if z != it.z:
+            it.z = z
+            self._sync_z_widgets()
+        if t != self.t_slider.value():
+            self.t_slider.blockSignals(True)
+            self.t_slider.setValue(t)
+            self.t_slider.blockSignals(False)
+        self._t_preview_label(t)
+        if it.nt < 2:  # Z only: read the plane here
+            self.update_preview(light=True)
+            return
+        self.tcache.follow(it, t)
+        found = self.tcache.get_entry(it, t)
+        if found is None:
+            self._t_want = t  # drawn by _t_ready once read
+            return
+        self._t_want = None
+        it.set_t(t)
+        it.show_planes(*found)
+        self.update_preview(light=True)
+
+    def _scrub_end(self):
+        it = self.current
+        self._scrub0 = None
+        if it is not None:
+            self._t_changed(self.t_slider.value())
+
     def _t_changed(self, t):
         it = self.current
         if it is None:
             return
         self._t_want = None
-        self.tcache.follow(it)  # read here, not in the background
+        self.tcache.follow(it)  # the slider rests: read here (read-ahead goes on)
         if t != it.t or it._planes_preview:  # a drag may have left a preview plane
             cached = self.tcache.get(it, t) is not None
             if not cached:
