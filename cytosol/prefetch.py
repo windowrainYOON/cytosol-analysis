@@ -7,8 +7,9 @@ faster approximate reader (``Image.preview_loader``, the TCF FL MIP), the
 drag draws with it and the exact plane is read when the slider stops.
 
 Images with a Z stack and a time axis also get read-ahead: once the slider
-is idle, the worker reads the exact plane of the current Z (or MIP) for
-every timepoint, nearest first, up to READ_AHEAD_BYTES, so scrubbing only
+is idle, the worker reads the current Z (or MIP) of every timepoint, nearest
+first: a quick preview of each one first where the image has one, then the
+exact planes, up to READ_AHEAD_BYTES, so scrubbing only
 draws. Planes are kept per (Z, t): after moving Z and back (right-drag on
 the image moves both), the planes read for the earlier Z are still there
 until the budget needs their room. A Z stack is what makes a timepoint slow to compute (FL resampling,
@@ -193,10 +194,16 @@ class TimeCache(QObject):
             return self._want, True, 0.0
         if not self._ahead:
             return None
-        for t in self._window():
-            found = self._store.get((z, t))
-            if (found is None or not found[1]) and t not in self._failed:
-                return t, False, self._not_before - time.monotonic()
+        wait = self._not_before - time.monotonic()
+        window = [t for t in self._window() if t not in self._failed]
+        # first a quick plane for every timepoint (so all of them can be
+        # dragged through soon), then the exact ones
+        for t in window:
+            if (z, t) not in self._store:
+                return t, True, wait
+        for t in window:
+            if not self._store[(z, t)][1]:
+                return t, False, wait
         return None
 
     def _run(self):

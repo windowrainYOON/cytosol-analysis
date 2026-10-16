@@ -287,7 +287,7 @@ Run from source: `python -m cytosol.app [files…]`
 
 Build the macOS app: `./build_mac.sh` → `dist/Cytosol Viewer.app`
 (set `PYTHON=/path/to/python3.10+` if the system python3 is older).
-Package it: `./make_dmg.sh` → `~/Desktop/CytosolViewer-<version>-<commit>.dmg`.
+Package it: `./make_dmg.sh` → `~/Desktop/CytosolViewer-<version>-<commit>_<arch>.dmg` (`_apple silicon` on arm64 Macs, `_intel` on Intel Macs).
 The version lives in `cytosol/version.py` (also shown in the window title);
 bump it there for a release.
 
