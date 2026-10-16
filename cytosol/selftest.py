@@ -271,7 +271,8 @@ def run(out_dir) -> int:
 
         from .io import _FlMapper
         from .lut import ImageItem
-        from .prefetch import TimeCache, plane_at
+        from .io import Image
+        from .prefetch import TimeCache, plane_at, preview_at, reads_ahead
         # the fast FL resampling gives ndimage's pixels
         hg = {'nx': 64, 'ny': 60, 'nz': 12, 'rx': 0.2, 'ry': 0.2, 'rz': 0.5}
         fg = {'nx': 48, 'ny': 45, 'nz': 5, 'rx': 0.2667, 'ry': 0.2667, 'rz': 0.6}
@@ -287,41 +288,56 @@ def run(out_dir) -> int:
         item.z = 5
         tc = TimeCache()
         item.time_cache = tc
+        if not reads_ahead(item):
+            raise AssertionError('a Z+T image is not read ahead')
+        # Z-stack time series: every timepoint of the current Z is read ahead
         t0 = time.perf_counter()
+        tc.follow(item)
+        while tc.cached(item, exact=True) < item.nt:
+            if time.perf_counter() - t0 > 30:
+                raise AssertionError(f'read ahead {tc.cached(item, exact=True)}/{item.nt}')
+            time.sleep(0.01)
+        dt = time.perf_counter() - t0
         for t in range(item.nt):
-            tc.follow(item, t)
-            while tc.get(item, t) is None:
-                if time.perf_counter() - t0 > 30:
-                    raise AssertionError(f'background load of t={t} did not finish')
-                time.sleep(0.01)
             if not np.array_equal(tc.get(item, t), plane_at(item.image, t, 5)):
-                raise AssertionError(f'background plane at t={t} differs')
-        if tc.cached(item) > tc.keep:
-            raise AssertionError(f'kept {tc.cached(item)} planes, limit {tc.keep}')
+                raise AssertionError(f'read-ahead plane at t={t} differs')
         item.set_t(3)
         if not np.allclose(item.planes(), item.image.data[:, 5], atol=1e-3):
-            raise AssertionError('loaded plane differs from the volume')
+            raise AssertionError('read-ahead plane differs from the volume')
         # MIP while dragging: a quick approximate plane, the exact one on release
-        prev = item.image.preview_loader(2, 'mip')
+        prev, ok = preview_at(item.image, 2, 'mip')
         exact = item.image.plane_loader(2, 'mip')
-        if prev.shape != exact.shape or not np.array_equal(prev[0], exact[0]):
-            raise AssertionError('MIP preview: wrong shape or RI channel')
+        if ok or prev.shape != exact.shape or not np.array_equal(prev[0], exact[0]):
+            raise AssertionError('MIP preview: flagged exact, wrong shape or RI channel')
         item.z = 'mip'
-        tc.follow(item, 2)
-        while tc.get_entry(item, 2) is None:
-            if time.perf_counter() - t0 > 30:
-                raise AssertionError('MIP preview did not load')
-            time.sleep(0.01)
-        planes, ok = tc.get_entry(item, 2)
-        if ok or tc.get(item, 2) is not None:
-            raise AssertionError('MIP preview counted as an exact plane')
         item.set_t(2)
-        item.show_planes(planes, ok)
+        item.show_planes(prev, ok)
         item.drop_preview()
         if not np.array_equal(item.planes(), exact):
             raise AssertionError('exact MIP not restored after the preview')
         tc.follow(None)
-        return f'{item.nt} timepoints loaded in the background in {(time.perf_counter() - t0) * 1000:.0f} ms'
+        # single-plane time series: no read-ahead, only the last few planes
+        rng = np.random.default_rng(4)
+        frames = rng.random((6, 2, 1, 30, 40)).astype(np.float32)
+        flat = ImageItem(path=Path('selftest_t2d.tif'), label='t2d', image=Image(
+            frames[0], ['A', 'B'], {'Z': None, 'Y': 0.2, 'X': 0.2},
+            times=[10.0 * i for i in range(6)], loader=lambda t: frames[t]))
+        flat.reset_luts()
+        if reads_ahead(flat):
+            raise AssertionError('a single-plane time series is read ahead')
+        tc.follow(flat)
+        for t in range(6):
+            tc.follow(flat, t)
+            while tc.get(flat, t) is None:
+                if time.perf_counter() - t0 > 30:
+                    raise AssertionError(f'background load of t={t} did not finish')
+                time.sleep(0.01)
+            if not np.array_equal(tc.get(flat, t), frames[t][:, 0]):
+                raise AssertionError(f'background plane at t={t} differs')
+        if tc.cached(flat) > tc.keep:
+            raise AssertionError(f'kept {tc.cached(flat)} planes, limit {tc.keep}')
+        tc.follow(None)
+        return f'{item.nt} Z+T timepoints read ahead in {dt * 1000:.0f} ms; 2D+T keeps {tc.keep}'
 
     def projections():
         from .io import Image
@@ -392,6 +408,25 @@ def run(out_dir) -> int:
         if win.current._planes_preview or not np.array_equal(
                 win.current.planes(), win.current.image.plane_loader(1, win.current.z)):
             raise AssertionError('releasing the T slider kept the preview plane')
+        # right-drag on the image: left/right = T, up/down = Z, drawn while moving
+        it = win.current
+        if not win._can_scrub():
+            raise AssertionError('right-drag through T/Z not offered for a Z+T image')
+        win.canvas.scrubStarted.emit()
+        win.canvas.scrubDragged.emit(-win.canvas.viewport().width(), -40.0)
+        t0 = time.perf_counter()
+        while win._t_want is not None and time.perf_counter() - t0 < 30:
+            app.processEvents()
+            time.sleep(0.01)
+        win.canvas.scrubEnded.emit()
+        app.processEvents()
+        if it.t != 0 or it.z in ('mip', 'mid') or it.z <= it.nz // 2:
+            raise AssertionError(f'right-drag ended at t={it.t}, z={it.z}')
+        if win.t_slider.value() != 0 or win.z_slider.value() != it.z + 1:
+            raise AssertionError('right-drag did not move the T / Z sliders')
+        if it._planes_preview or not np.allclose(
+                it.planes(), it.image.plane_loader(0, it.z), atol=1e-3):
+            raise AssertionError('right-drag left a wrong plane')
         win.z_slider.setValue(4)
         win._z_changed()
         win.right_tabs.setCurrentIndex(win.stack_tab)
@@ -539,7 +574,7 @@ def run(out_dir) -> int:
     step('same-name images, separate folders', same_name_export)
     step('figure export', figure)
     step('lazy TCF planes', lazy_tcf)
-    step('time-series background load', read_ahead)
+    step('time-series read-ahead', read_ahead)
     step('Z-stack projections', projections)
     step('main window', window)
 
