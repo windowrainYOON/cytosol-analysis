@@ -7,11 +7,14 @@ Microscopy image-based cytosol ROI determination and analysis.
 For a paper's Methods section (update this sentence whenever an analysis
 feature is added):
 
-> Line intensity profiles and per-cell colocalization (Pearson's, Spearman's
+> Line intensity profiles, per-cell colocalization (Pearson's, Spearman's
 > and Kendall's correlations, Manders' coefficients with Costes' automatic
-> threshold, Li's ICQ and Costes' significance test) were analysed with the
-> algorithms of the ImageJ Plot Profile/RGB Profiler and the Fiji Coloc 2
-> plugin, respectively.
+> threshold, Li's ICQ and Costes' significance test) and mean intensities of
+> cell, nucleus, cytosol and intracellular particle ROIs (particles defined by
+> Otsu auto-thresholding within each cell ROI) were analysed with the
+> algorithms of the ImageJ Plot Profile/RGB Profiler, the Fiji Coloc 2 plugin
+> and ImageJ's Measure, Auto Threshold and Analyze Particles functions,
+> respectively.
 
 ## Reading raw files
 
@@ -130,6 +133,30 @@ A GUI for working on a whole set of images at once:
   value except the Costes randomisation agrees to about 1e-10 relative; the
   Costes test is random in both, and the shuffled mean/SD agree within that
   spread.
+- **강도 측정 tab** (ImageJ Measure on every cell ROI): per cell the
+  `cell`, `nucleus`, `cytosol` and `particle` regions and set expressions over
+  them (`cyto - particle`, `cell & particle`, `(cell - nuc) | particle`; `&`
+  intersection, `|` union, `-` difference), per channel Mean (and optionally
+  StdDev, Min, Max, IntDen, RawIntDen) of the raw values on the current Z (or
+  MIP) and timepoint. The table follows every ROI edit, plane change and
+  setting; a row selects its cell. **입자 ROI**: in each cell's cytosol (or
+  whole cell) the pixels at or above a threshold of one channel, split into
+  8-connected particles with a minimum size (Analyze Particles); the automatic
+  threshold is, per cell, what `setAutoThreshold("Otsu dark")` gives with that
+  cell's ROI selected, or one manual value for all cells. **이 설정을 모든
+  이미지에 적용** uses the same channel (by name) and method on every image.
+  **CSV 저장** writes the current image's rows plus `<name>_RoiSet.zip`,
+  `<name>_particles.zip` (one ImageJ ROI per particle, `partCCC-NN`, outlines
+  on the pixel edges so ImageJ's mask is exactly the particle; the settings are
+  stored in the ROI properties) and `<name>_image.png` with the outlines;
+  **모든 이미지 측정 + 저장** measures every image (optionally every
+  timepoint) and writes `intensity.csv` for the set plus each image's files in
+  its `<name>_<ID>` folder (`내보내기` adds them too). Folder loading pairs a
+  particles zip with its image. Checked against ImageJ 1.54f
+  (`scripts/imagej_reference/compare_intensity.py`): per-ROI Otsu thresholds,
+  pixel counts, min and max identical and Mean/StdDev within 1e-6 relative on
+  8/16/32-bit data and the Zeiss sample; saved particle ROIs give ImageJ masks
+  identical to the particles.
 - **마커 tab**: size marker (scale bar) and time-series marker (time stamp).
   Each has on/off, text on/off, font size, marker length/thickness, text-marker
   gap, edge margin, position and color; the time stamp also has the unit

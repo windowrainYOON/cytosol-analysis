@@ -67,6 +67,8 @@ from .lut import (
     unique_stems,
 )
 from .coloc_panel import ColocPanel, write_coloc_csv
+from .intensity import is_particle_file, save_particles, write_rows
+from .intensity_panel import IntensityPanel
 from .imageid import ROI_EXT, match_roi, plan_pairing
 from .marker_panel import MarkerPanel
 from .lineprofile import read_line_roi
@@ -192,6 +194,7 @@ class Canvas(QGraphicsView):
         self._origin = None
         self._region_items = []
         self._cell_items = []
+        self._particle_item = None
         self._fitted = False
         self._lasso = None
         self._lasso_item = QGraphicsPathItem()
@@ -339,6 +342,21 @@ class Canvas(QGraphicsView):
             for it in items:
                 self.scene().addItem(it)
                 self._cell_items.append(it)
+
+    def show_particles(self, loops):
+        """Outline the particle ROIs (pixel-edge polygons) in magenta."""
+        if self._particle_item is not None:
+            self.scene().removeItem(self._particle_item)
+            self._particle_item = None
+        if not len(loops):
+            return
+        pen = QPen(QColor(255, 0, 255))
+        pen.setCosmetic(True)
+        pen.setWidthF(1.2)
+        self._particle_item = QGraphicsPathItem(polygon_path(*loops))
+        self._particle_item.setPen(pen)
+        self._particle_item.setZValue(12.5)
+        self.scene().addItem(self._particle_item)
 
     def show_line(self, line=None, width=1):
         """Draw the profile line (scene coordinates); width > 1 also shows its band."""
@@ -1194,6 +1212,11 @@ class MainWindow(QMainWindow):
         coloc_scroll.setWidgetResizable(True)
         coloc_scroll.setWidget(self.coloc_panel)
         right.addTab(coloc_scroll, 'Coloc 2')
+        self.intensity_panel = IntensityPanel(self)
+        intensity_scroll = QScrollArea()
+        intensity_scroll.setWidgetResizable(True)
+        intensity_scroll.setWidget(self.intensity_panel)
+        self.intensity_tab = right.addTab(intensity_scroll, '강도 측정')
         self.canvas.lineDrawn.connect(self._line_drawn)
         self.line_btn.toggled.connect(self._line_mode)
         self.profile_panel.draw_btn.toggled.connect(self.line_btn.setChecked)
@@ -1335,6 +1358,15 @@ class MainWindow(QMainWindow):
             if it is None:
                 notes.append(f'{f.name}: {how}')
                 continue
+            if is_particle_file(f):  # particle ROIs from the intensity tab
+                try:
+                    self.intensity_panel.load_particles_into(it, f)
+                    if f not in it.linked:
+                        it.linked.append(f)
+                except Exception as exc:
+                    errors.append(f'{f.name}: {exc}')
+                    traceback.print_exc()
+                continue
             line = read_line_roi(f)
             if line is not None:  # a line saved from the profile tab: restore it
                 it.profile_line = line[0]
@@ -1409,6 +1441,7 @@ class MainWindow(QMainWindow):
             self._build_stack_panels()
             self.profile_panel.bind(None)
             self.coloc_panel.bind(None)
+            self.intensity_panel.bind(None)
             self.canvas.show_line(None)
             self.roi_panel.bind(None)
             self.roi_panel.draw_overlay(hidden=True)
@@ -1456,6 +1489,7 @@ class MainWindow(QMainWindow):
         self._build_stack_panels()
         self.profile_panel.bind(it)
         self.coloc_panel.bind(it)
+        self.intensity_panel.bind(it)
         c, z, h, w = it.image.shape
         px = it.pixel_um
         self.info.setText(
@@ -1727,6 +1761,8 @@ class MainWindow(QMainWindow):
             it.image.release()
         self._sync_z_widgets()
         self.update_preview(refit=True)
+        if self.right_tabs.currentIndex() == self.intensity_tab:
+            self.intensity_panel.schedule()
 
     def _stack_preview(self, refit=False):
         import time
@@ -2101,7 +2137,7 @@ class MainWindow(QMainWindow):
         kwargs = self._export_kwargs()
         prog = QProgressDialog('저장 중…', '취소', 0, len(items), self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
-        n_done, n_files, rows, errors, coloc = 0, 0, [], [], []
+        n_done, n_files, rows, errors, coloc, intensity = 0, 0, [], [], [], []
         for i, it in enumerate(items):
             if prog.wasCanceled():
                 break
@@ -2115,6 +2151,13 @@ class MainWindow(QMainWindow):
                     item_rows = self.roi_panel.save_item(it, folder)
                     write_csv(folder / f'{item_stem(it)}_cell_rois.csv', item_rows)
                     rows += item_rows
+                    item_int = self.intensity_panel.measure_item(it)
+                    write_rows(folder / f'{item_stem(it)}_intensity.csv', item_int)
+                    intensity += item_int
+                    p = it.particles
+                    if p is not None and p.mask.any():
+                        save_particles(folder / f'{item_stem(it)}_particles.zip', it.cells, p,
+                                       it.id_properties())
                 if it.coloc:
                     write_coloc_csv(folder / f'{item_stem(it)}_coloc2.csv', it.coloc)
                     coloc += it.coloc
@@ -2126,6 +2169,7 @@ class MainWindow(QMainWindow):
         prog.setValue(len(items))
         write_csv(Path(out) / 'cell_rois.csv', rows)
         write_coloc_csv(Path(out) / 'coloc2.csv', coloc)
+        write_rows(Path(out) / 'intensity.csv', intensity)
         msg = f'이미지 {n_done}개를 이미지별 폴더에 저장했습니다 (파일 {n_files}개'
         msg += f', ROI 측정 {len(rows)}행).' if rows else ').'
         msg += f'\n{out}'
