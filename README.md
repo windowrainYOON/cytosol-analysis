@@ -9,8 +9,10 @@ feature is added):
 
 > Line intensity profiles, per-cell colocalization (Pearson's, Spearman's
 > and Kendall's correlations, Manders' coefficients with Costes' automatic
-> threshold, Li's ICQ and Costes' significance test) and mean intensities of
-> cell, nucleus, cytosol and intracellular particle ROIs were analysed with the
+> threshold, Li's ICQ and Costes' significance test), and mean intensities of
+> cell, nucleus, cytosol and intracellular particle ROIs and particle shape
+> descriptors (area, perimeter, circularity, solidity, aspect ratio, roundness,
+> Feret's diameters and fitted ellipse) were analysed with the
 > algorithms of the ImageJ Plot Profile/RGB Profiler, the Fiji Coloc 2 plugin
 > and ImageJ's Measure and Analyze Particles functions, respectively;
 > particles were detected within each cell ROI as spots whose scale-normalised
@@ -162,6 +164,24 @@ A GUI for working on a whole set of images at once:
     per cell; checked on the Zeiss sample (12 cells, 4640 particles) that every
     region's pixel count and channel means match a direct numpy evaluation and
     that particle pieces crossing cell or nucleus borders go to each side.
+    **측정 → 입자마다** (v0.18) gives one row per particle ROI (`particle`
+    = its `partCCC-NN` name) → `<name>_particle_shape.csv` /
+    `particle_shape.csv`, with checkboxes for: centroid, perimeter,
+    circularity (4π·area/perimeter²), solidity (area/convex hull area), aspect
+    ratio and roundness of the fitted ellipse, Feret/MinFeret/Feret angle,
+    ellipse major/minor/angle (ImageJ Analyze Particles definitions),
+    equivalent diameter 2√(area/π), nearest-neighbour distance to another
+    particle centroid in the same cell (or image), and per channel the
+    partition coefficient = particle mean / mean of the rest of the cell's
+    search region (dilute phase; raw values, no background subtraction),
+    plus the 측정값 checkboxes (Mean, IntDen, …) per particle. Checked against
+    ImageJ 1.54f Analyze Particles (`scripts/imagej_reference/compare_shape.py`)
+    on random blobs and on the Zeiss sample's automatic particles (3497
+    particles): area, centroid, perimeter, circularity, solidity, Feret
+    values identical, ellipse values within 1e-8. Saved particle ROIs are
+    ImageJ traced ROIs, so Measure on them in ImageJ gives the same
+    perimeter. Small particles have solidity below 1 even when round (the
+    hull runs over pixel corners, as in ImageJ).
   - **강도 측정 tab**: regions set by logic over `cell`, `nuc`, `cyto` and
     `particle` (`cyto - particle`, `cell & particle`, `(cell - nuc) | particle`;
     `&` intersection, `|` union, `-` difference), shown filled in cyan on the

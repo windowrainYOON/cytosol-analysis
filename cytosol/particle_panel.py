@@ -1,6 +1,7 @@
 """입자 ROI tab: particle ROIs inside every cell (cytosol.intensity), drawn on the
-image, saved and loaded as ImageJ ROIs, and the intensity of the particle
-region (and of the rest of the region they were found in) per cell."""
+image, saved and loaded as ImageJ ROIs, and either the intensity of the
+particle region (and of the rest of the region they were found in) per cell,
+or one row per particle with its shape, intensity and partition coefficient."""
 
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -29,11 +31,14 @@ from PySide6.QtWidgets import (
 )
 
 from .intensity import (
+    SHAPES,
+    SHAPE_TITLES,
     ParticleSettings,
     bit_depth,
     detect_particles,
     load_particles,
     make_regions,
+    measure_particles,
     save_particles,
     trace_outlines,
     whole_image_cells,
@@ -166,8 +171,25 @@ class ParticlePanel(QWidget):
         self.thr_manual.toggled.connect(self._manual_toggled)
         lay.addWidget(part)
 
-        reg = QGroupBox('측정할 영역')
-        row = QHBoxLayout(reg)
+        reg = QGroupBox('측정')
+        rl = QVBoxLayout(reg)
+        row = QHBoxLayout()
+        self.per_cell = QRadioButton('세포별 (입자 영역 합)')
+        self.per_cell.setToolTip('세포마다 입자 영역 전체의 강도와 입자 수')
+        self.per_particle = QRadioButton('입자마다 (형태·분배계수)')
+        self.per_particle.setToolTip('입자 ROI 하나마다 한 행: 크기, 형태 (ImageJ Analyze Particles), '
+                                     '강도, 분배계수, 최근접 입자 거리')
+        self.per_cell.setChecked(True)
+        grp = QButtonGroup(self)
+        grp.addButton(self.per_cell)
+        grp.addButton(self.per_particle)
+        row.addWidget(self.per_cell)
+        row.addWidget(self.per_particle)
+        row.addStretch()
+        rl.addLayout(row)
+        self.cell_opts = QWidget()
+        row = QHBoxLayout(self.cell_opts)
+        row.setContentsMargins(0, 0, 0, 0)
         self.reg_particle = QCheckBox('입자')
         self.reg_particle.setChecked(True)
         self.reg_rest = QCheckBox('입자를 뺀 나머지')
@@ -177,9 +199,29 @@ class ParticlePanel(QWidget):
             b.toggled.connect(lambda _: self.measure.schedule())
             row.addWidget(b)
         row.addStretch()
+        rl.addWidget(self.cell_opts)
+        self.shape_opts = QWidget()
+        grid = QGridLayout(self.shape_opts)
+        grid.setContentsMargins(0, 0, 0, 0)
+        self.shape_boxes = {}
+        for i, k in enumerate(SHAPES):
+            text, tip = SHAPE_TITLES[k]
+            b = QCheckBox(text)
+            b.setToolTip(tip)
+            b.setChecked(True)
+            b.toggled.connect(lambda _: self.measure.schedule())
+            self.shape_boxes[k] = b
+            grid.addWidget(b, i // 3, i % 3)
+        note = QLabel('면적은 항상 포함. 각 항목에 마우스를 올리면 정의가 보입니다.')
+        note.setStyleSheet('color: gray; font-size: 11px;')
+        grid.addWidget(note, len(SHAPES) // 3 + 1, 0, 1, 3)
+        self.shape_opts.setVisible(False)
+        rl.addWidget(self.shape_opts)
+        self.per_particle.toggled.connect(self._mode_changed)
         lay.addWidget(reg)
         self.measure = MeasureBox(win, 'particle_tab', self.regions_for, 'particle_intensity',
-                                  '입자 강도 측정', cells=self.cells_for)
+                                  '입자 강도 측정', cells=self.cells_for, rows=self.particle_rows,
+                                  key=self.measure_key)
         lay.addWidget(self.measure, 1)
 
     # ---- helpers ----------------------------------------------------------
@@ -223,6 +265,8 @@ class ParticlePanel(QWidget):
         """Particle regions to measure; none on an image without particles."""
         if item.particles is None and item.particle_settings is None:
             return []
+        if self.per_particle.isChecked():
+            return make_regions([], ['particle'])
         exprs = []
         if self.reg_particle.isChecked():
             exprs.append('particle')
@@ -231,6 +275,31 @@ class ParticlePanel(QWidget):
             within = s.within if s is not None else self.within.currentData()
             exprs.append(f'{"cyto" if within == "cyto" else "cell"} - particle')
         return make_regions([], exprs)
+
+    def shapes(self) -> tuple:
+        return tuple(k for k in SHAPES if self.shape_boxes[k].isChecked())
+
+    def measure_key(self):
+        return self.per_particle.isChecked(), self.shapes()
+
+    def particle_rows(self, item, cells, particles, channels, stats):
+        """One row per particle ROI ('입자마다'); None for the per-cell rows."""
+        if not self.per_particle.isChecked():
+            return None
+        if particles is None:
+            return []
+        s = item.particle_settings
+        within = s.within if s is not None else self.within.currentData()
+        return measure_particles(item.planes(), cells, particles, item.channels, item.pixel_um,
+                                 channels, stats, self.shapes(), within)
+
+    def _mode_changed(self, per_particle):
+        self.cell_opts.setVisible(not per_particle)
+        self.shape_opts.setVisible(per_particle)
+        self.measure.set_suffix('particle_shape' if per_particle else 'particle_intensity')
+        self.measure.title = '입자별 측정' if per_particle else '입자 강도 측정'
+        self.measure.batch_rows = []
+        self.measure.schedule()
 
     # ---- particles ----------------------------------------------------------
 

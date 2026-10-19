@@ -11,6 +11,10 @@ and print the differences.
   `setAutoThreshold("Otsu dark")` level and the Measure values for
   `compare_intensity.py` (needs only `ij.jar`; synthetic 8/16/32-bit cases, or
   `plane.npy labels.npy bits`).
+- `ShapeReference.java` runs ImageJ Analyze Particles (area, centroid,
+  perimeter, fit ellipse, shape descriptors, Feret's diameter) on every label
+  of a label image for `compare_shape.py` (needs only `ij.jar`; random blobs,
+  or `labels.npy`).
 - `ProfileReference.java` gets ImageJ's line profile (`ProfilePlot`, what
   Plot Profile and RGB Profiler plot) for `compare_profile.py`.
 
@@ -24,6 +28,7 @@ multithreading helpers) and these two files against `ij-1.54f.jar` and
     python scripts/imagej_reference/compare_coloc2.py ij.jar:imglib2.jar:build
     python scripts/imagej_reference/compare_profile.py ij.jar:imglib2.jar:build
     python scripts/imagej_reference/compare_intensity.py ij.jar:build
+    python scripts/imagej_reference/compare_shape.py ij.jar:build
 
 `COLOC2_REAL=<dir>` (with `a.npy`, `b.npy`, `masks.npz`) adds a real image
 and its ROI masks to the Coloc 2 cases.
