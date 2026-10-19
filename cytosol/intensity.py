@@ -9,13 +9,23 @@ Values are ImageJ's Measure on the raw pixels of the region: Area, Mean,
 StdDev (n - 1), Min, Max, IntDen (= Area × Mean, calibrated) and RawIntDen
 (sum of the pixel values).
 
-Particles: inside each cell's cytosol (or whole cell) the pixels at or above a
-threshold, split into 8-connected particles; particles smaller than a minimum
-size are dropped (ImageJ Analyze Particles). The automatic threshold is what
-the ImageJ macro ``setAutoThreshold("Otsu dark")`` gives with that cell's ROI
-selected: 8-bit data use the ROI's 256-bin histogram; 16- and 32-bit data are
-first scaled to 8 bits over the whole plane's min..max (``convertToByte``),
-and the 8-bit level is mapped back to a raw value.
+Particles are found inside each cell's cytosol (or whole cell); particles
+smaller than a minimum size are dropped (ImageJ Analyze Particles).
+
+* Manual: the pixels at or above one raw threshold, split into 8-connected
+  particles.
+* Automatic (spot detection, after the ParticleTracker detector): spot
+  centres are where the scale-normalised Hessian's smaller curvature (high
+  for round spots, not for cell or nucleus edges) and the background-
+  subtracted intensity both exceed the cell's median + k × MAD; each spot
+  then grows by watershed over the background-subtracted image (grey
+  opening, rolling-ball like) down to a fraction of its own peak, so touching
+  spots stay separate and dim spots next to bright ones are kept.
+* Legacy ``otsu`` settings (v0.13 files) still give what the ImageJ macro
+  ``setAutoThreshold("Otsu dark")`` gives with that cell's ROI selected:
+  8-bit data use the ROI's 256-bin histogram; 16- and 32-bit data are first
+  scaled to 8 bits over the whole plane's min..max (``convertToByte``), and the
+  8-bit level is mapped back to a raw value.
 """
 
 from __future__ import annotations
@@ -240,9 +250,12 @@ class ParticleSettings:
     channel: str            # channel name (matched by name on other images)
     index: int = 0          # channel index when no channel has that name
     within: str = 'cyto'    # 'cyto' or 'cell'
-    method: str = 'otsu'    # 'otsu' or 'manual'
+    method: str = 'auto'    # 'auto' (spot detection), 'manual' or 'otsu' (v0.13)
     manual: float = 0.0     # threshold when method == 'manual' (raw value)
     min_px: int = 1         # smallest particle kept (pixels)
+    k: float = 3.0          # auto: spot centres above median + k × MAD
+    size_um: float = 0.4    # auto: typical spot diameter
+    frac: float = 0.3       # auto: spot extent down to this fraction of its peak
 
     def channel_for(self, item) -> int | None:
         if self.channel in item.channels:
@@ -261,7 +274,9 @@ class ParticleSettings:
         try:
             return cls(channel=d['channel'], index=int(d.get('index', 0)),
                        within=d.get('within', 'cyto'), method=d.get('method', 'otsu'),
-                       manual=float(d.get('manual', 0)), min_px=int(d.get('min_px', 1)))
+                       manual=float(d.get('manual', 0)), min_px=int(d.get('min_px', 1)),
+                       k=float(d.get('k', 3.0)), size_um=float(d.get('size_um', 0.4)),
+                       frac=float(d.get('frac', 0.3)))
         except ValueError:
             return None
 
@@ -275,10 +290,17 @@ class Particles:
     thresholds: dict = field(default_factory=dict)  # cell label -> threshold
     channel: int | None = None
     plane_key: object = None             # (z, t) the mask was made on
+    labels: np.ndarray | None = None     # particle numbers when not just connectivity
 
     def components(self, cells) -> np.ndarray:
-        """Particle number image: each 8-connected piece within one cell."""
+        """Particle number image: each 8-connected piece within one cell, or
+        the stored particles (split touching spots, loaded ROIs)."""
         from skimage import measure
+        if self.labels is not None:
+            lab = np.where(self.mask, self.labels, 0).astype(np.int64)
+            # one particle never spans two cells
+            lab = lab * (int(cells.labels.max()) + 1) + np.where(lab > 0, cells.labels, 0)
+            return np.unique(lab, return_inverse=True)[1].reshape(lab.shape).astype(np.int32)
         return measure.label(np.where(self.mask, cells.labels, 0), connectivity=2)
 
     def counts(self, cells) -> dict[int, int]:
@@ -291,9 +313,106 @@ class Particles:
         return {int(l): int(c[l]) for l in np.nonzero(c)[0]}
 
 
-def detect_particles(cells, plane: np.ndarray, s: ParticleSettings, depth: int) -> Particles:
+DEFAULT_PX_UM = 0.1  # spot size of uncalibrated images
+
+
+def _robust(v):
+    """median and MAD (scaled to σ) of the values; the std when MAD is 0."""
+    med = float(np.median(v))
+    mad = float(np.median(np.abs(v - med))) * 1.4826
+    if mad <= 0:
+        mad = float(np.std(v)) or 1e-12
+    return med, mad
+
+
+def spot_particles(plane, lab, region, s: ParticleSettings, px_um=None):
+    """Automatic particles (see the module docstring). Returns the particle
+    number image and, per cell, about the lowest raw intensity a particle
+    reaches (the cell's median + 2 × noise)."""
+    from scipy import ndimage as ndi
+    from skimage import feature, measure, morphology, segmentation
+
+    px = px_um or DEFAULT_PX_UM
+    p = plane.astype(np.float32)
+    inside = lab > 0
+    if inside.any() and not inside.all():
+        # outside the cells take the nearest cell pixel, so that the filters
+        # below do not answer to the drop at the cell outline
+        near = ndi.distance_transform_edt(~inside, return_distances=False, return_indices=True)
+        p = p[tuple(near)]
+    d = max(s.size_um / px, 1.0)                 # spot diameter in pixels
+    sig = max(0.7, d / (2 * math.sqrt(2)))       # Gaussian scale of a spot that size
+    r = max(2, int(round(2.5 * d)))              # background radius
+    # background: grey opening (rolling-ball like); it keeps the step at a
+    # cell edge, so edges do not stand out from it
+    sm = ndi.gaussian_filter(p, 1.0)
+    sub = sm - morphology.opening(sm, morphology.disk(max(2, r // 2)))
+    # spot score: the smaller curvature of the scale-normalised Hessian, which
+    # is high for round spots but not for edges or ridges (where the LoG is)
+    hrr = ndi.gaussian_filter(p, sig, order=(2, 0))
+    hcc = ndi.gaussian_filter(p, sig, order=(0, 2))
+    hrc = ndi.gaussian_filter(p, sig, order=(1, 1))
+    score = -(hrr + hcc + np.sqrt((hrr - hcc) ** 2 + 4 * hrc * hrc)) / 2 * sig * sig
+    n = int(lab.max()) + 1
+    seed_t = np.full(n, np.inf, np.float32)
+    base = np.zeros(n, np.float32)
+    lo = np.full(n, np.inf, np.float32)
+    hi = np.full(n, np.inf, np.float32)
+    cutoff = {}
+    flat_lab, flat_reg = lab.ravel(), region.ravel()
+    order = np.argsort(flat_lab[flat_reg], kind='stable')
+    idx = np.flatnonzero(flat_reg)[order]
+    labs = flat_lab[idx]
+    bounds = np.flatnonzero(np.diff(labs)) + 1
+    for part in np.split(idx, bounds):
+        if not len(part):
+            continue
+        l = int(flat_lab[part[0]])
+        if l == 0:
+            continue
+        med, mad = _robust(score.ravel()[part])
+        seed_t[l] = med + s.k * mad
+        med, mad = _robust(sub.ravel()[part])
+        base[l], lo[l], hi[l] = med, med + 2.0 * mad, med + s.k * mad
+        cutoff[l] = float(np.median(p.ravel()[part]) + 2.0 * mad)
+    # a centre must also stand above the cell's background in the image itself
+    # (the curvature alone also answers to single noisy pixels)
+    det = region & (score > seed_t[lab]) & (sub > hi[lab])
+    out = np.zeros(lab.shape, np.int32)
+    if not det.any():
+        return out, cutoff
+    seg = measure.label(np.where(det, lab, 0), connectivity=2)
+    pk = feature.peak_local_max(np.where(det, score, 0), labels=seg, exclude_border=False,
+                                min_distance=max(1, int(round(0.375 * d))))
+    if not len(pk):
+        return out, cutoff
+    marks = np.zeros(lab.shape, np.int32)
+    marks[tuple(pk.T)] = np.arange(1, len(pk) + 1)
+    # grow within the seed's own cell only
+    cand = region & (sub > lo[lab])
+    owner = np.zeros(len(pk) + 1, lab.dtype)
+    owner[1:] = lab[tuple(pk.T)]
+    ws = segmentation.watershed(-sub, marks, mask=cand)
+    ws[(ws > 0) & (owner[ws] != lab)] = 0
+    peak = np.zeros(len(pk) + 1, np.float32)
+    peak[1:] = sub[tuple(pk.T)] - base[owner[1:]]
+    keep = (ws > 0) & ((sub - base[lab]) >= s.frac * peak[ws])
+    out[keep] = ws[keep]
+    return out, cutoff
+
+
+def detect_particles(cells, plane: np.ndarray, s: ParticleSettings, depth: int,
+                     px_um: float | None = None) -> Particles:
     lab = cells.labels
     region = base_masks(cells)['cell' if s.within == 'cell' else 'cyto']
+    if s.method == 'auto':
+        parts, thr = spot_particles(plane, lab, region, s, px_um)
+        if s.min_px > 1 and parts.any():
+            size = np.bincount(parts.ravel())
+            small = size < s.min_px
+            small[0] = False
+            parts[small[parts]] = 0
+        return Particles(parts > 0, s, thr, labels=parts)
     if s.method == 'manual':
         thr = {l: float(s.manual) for l in cells.ids()}
     else:
@@ -424,15 +543,15 @@ def load_particles(path, shape) -> tuple[Particles, ParticleSettings | None]:
     r = roifile.roiread(path)
     rois = r if isinstance(r, list) else [r]
     tmp = CellRois(np.zeros(shape, np.int32))
-    mask = np.zeros(shape, bool)
+    labels = np.zeros(shape, np.int32)
     settings = None
-    for roi in rois:
+    for k, roi in enumerate(rois, start=1):
         m = np.zeros(shape, bool)
         for poly in _roi_polygons(roi):  # even-odd, like ImageJ's ShapeRoi
             m ^= tmp.polygon_mask(poly)
-        mask |= m
+        labels[m] = k
         settings = settings or ParticleSettings.from_properties(roi.properties or {})
-    return Particles(mask, None, {}, None), settings
+    return Particles(labels > 0, None, {}, None, labels=labels), settings
 
 
 # ---------------------------------------------------------------------------

@@ -10,11 +10,15 @@ feature is added):
 > Line intensity profiles, per-cell colocalization (Pearson's, Spearman's
 > and Kendall's correlations, Manders' coefficients with Costes' automatic
 > threshold, Li's ICQ and Costes' significance test) and mean intensities of
-> cell, nucleus, cytosol and intracellular particle ROIs (particles defined by
-> Otsu auto-thresholding within each cell ROI) were analysed with the
+> cell, nucleus, cytosol and intracellular particle ROIs were analysed with the
 > algorithms of the ImageJ Plot Profile/RGB Profiler, the Fiji Coloc 2 plugin
-> and ImageJ's Measure, Auto Threshold and Analyze Particles functions,
-> respectively.
+> and ImageJ's Measure and Analyze Particles functions, respectively;
+> particles were detected within each cell ROI as spots whose scale-normalised
+> Hessian response (as in the FeatureJ Hessian plugin) exceeded the cell's
+> median + 3 × MAD, and delineated by marker-controlled watershed (as in the
+> MorphoLibJ plugin) on the background-subtracted image (grey opening, as in
+> ImageJ's Subtract Background) down to 30% of each spot's peak (or by a
+> manual threshold).
 
 ## Reading raw files
 
@@ -139,11 +143,21 @@ A GUI for working on a whole set of images at once:
   intersection, `|` union, `-` difference), per channel Mean (and optionally
   StdDev, Min, Max, IntDen, RawIntDen) of the raw values on the current Z (or
   MIP) and timepoint. The table follows every ROI edit, plane change and
-  setting; a row selects its cell. **입자 ROI**: in each cell's cytosol (or
-  whole cell) the pixels at or above a threshold of one channel, split into
-  8-connected particles with a minimum size (Analyze Particles); the automatic
-  threshold is, per cell, what `setAutoThreshold("Otsu dark")` gives with that
-  cell's ROI selected, or one manual value for all cells. **이 설정을 모든
+  setting; a row selects its cell. **입자 ROI** in each cell's cytosol (or
+  whole cell) of one channel, with a minimum size: **자동 (점 검출)** (v0.14)
+  finds spot centres where the scale-normalised Hessian's smaller curvature
+  (high for round spots, not for cell or nucleus edges) and the
+  background-subtracted intensity both exceed the cell's median + k × MAD
+  (**민감도 k**, default 3; **입자 지름** default 0.4 µm sets the scale), then
+  grows each spot by watershed over the background-subtracted image (grey
+  opening) down to 30 % of its own peak, so touching spots stay apart and dim
+  spots next to bright ones are kept. Picked over per-cell Otsu, top-hat +
+  Otsu, ParticleTracker's DoG + median/MAD, LoG and local thresholding on
+  synthetic cells with known spots (object F1 0.60 vs 0.37–0.57, pixel Dice
+  0.75 vs 0.45–0.71, precision 0.98). **수동 threshold** keeps the pixels at
+  or above one value in every cell, split into 8-connected particles
+  (Analyze Particles). Particle files from v0.13 (per-cell Otsu, as
+  `setAutoThreshold("Otsu dark")` with the cell's ROI) still reproduce. **이 설정을 모든
   이미지에 적용** uses the same channel (by name) and method on every image.
   **CSV 저장** writes the current image's rows plus `<name>_RoiSet.zip`,
   `<name>_particles.zip` (one ImageJ ROI per particle, `partCCC-NN`, outlines
