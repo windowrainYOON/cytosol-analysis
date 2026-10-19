@@ -203,8 +203,8 @@ def run(out_dir) -> int:
 
     def intensity():
         from .intensity import (ParticleSettings, detect_particles, is_particle_file,
-                                load_particles, make_regions, measure_cells, save_particles,
-                                write_rows)
+                                load_particles, make_regions, measure_cells, measure_particles,
+                                save_particles, write_rows)
         planes = item.planes()
         cells = item.cells
         # two bright spots in every cytosol of the GFP channel
@@ -234,6 +234,21 @@ def run(out_dir) -> int:
             if not np.isclose(by[k, 'cell']['DAPI_Mean'], img[0][cell].mean(), rtol=1e-6):
                 raise AssertionError(f'{k} cell mean')
         write_rows(out / 'selftest_intensity.csv', rows)
+        # one row per particle: round discs 60 px apart, partition = particle / rest
+        prow = measure_particles(img, cells, p, item.channels, item.pixel_um, stats=('Mean',))
+        if len(prow) != 2 * len(cells.ids()):
+            raise AssertionError(f'per-particle rows {len(prow)}')
+        unit = 'um' if item.pixel_um else 'px'
+        cal = item.pixel_um or 1.0
+        for r in prow:
+            if not (r['circularity'] > 0.85 and r['solidity'] > 0.85 and r['aspect_ratio'] < 1.15):
+                raise AssertionError(f'disc shape {r}')
+            if abs(r[f'nnd_{unit}'] - 60 * cal) > 0.5 * cal:
+                raise AssertionError(f'nearest neighbour {r[f"nnd_{unit}"]}')
+            rest = by[r['roi'], 'cyto - particle']['GFP_Mean']
+            if not np.isclose(r['GFP_partition'], 900 / rest, rtol=1e-5):
+                raise AssertionError(f'partition {r["GFP_partition"]} vs {900 / rest}')
+        write_rows(out / 'selftest_particle_shape.csv', prow)
         zp = save_particles(out / 'selftest_particles.zip', cells, p, item.id_properties())
         back, s2 = load_particles(zp, cells.shape)
         if (back.mask ^ p.mask).any() or s2 != s or not is_particle_file(zp):
@@ -691,6 +706,18 @@ def run(out_dir) -> int:
         pp.measure.save_item(bare, out / 'particles_whole', res[id(bare)])
         if not (out / 'particles_whole' / f'{item_stem(bare)}_particles.zip').exists():
             raise AssertionError('whole-image particle ROIs not saved')
+        # one row per particle, with shape
+        pp.per_particle.setChecked(True)
+        pp.measure.refresh(force=True)
+        n_part = sum(bare.particles.counts(pp.cells_for(bare)).values())
+        if len(pp.measure.rows) != n_part or 'circularity' not in pp.measure.rows[0] \
+                or pp.measure.rows[0]['roi'] != 'image':
+            raise AssertionError(f'per-particle rows {len(pp.measure.rows)} for {n_part}')
+        res = pp.measure.measure_items([own, bare])
+        pp.measure.save_item(own, out / 'particles_shape', res[id(own)])
+        if not (out / 'particles_shape' / f'{item_stem(own)}_particle_shape.csv').exists():
+            raise AssertionError('per-particle CSV not saved')
+        pp.per_cell.setChecked(True)
         from .intensity import is_particle_file, is_region_file
         rz = out / 'intensity_gui' / f'{stem}_regions.zip'
         if not is_region_file(rz) or is_particle_file(rz):

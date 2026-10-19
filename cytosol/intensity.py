@@ -438,11 +438,14 @@ def detect_particles(cells, plane: np.ndarray, s: ParticleSettings, depth: int,
     return Particles(mask, s, thr)
 
 
-def trace_outlines(mask: np.ndarray, x0: int = 0, y0: int = 0) -> list[np.ndarray]:
+def trace_outlines(mask: np.ndarray, x0: int = 0, y0: int = 0,
+                   eight: bool = False) -> list[np.ndarray]:
     """Closed polygons along the pixel edges of a mask (outer boundaries and
     holes), as (N, 2) x, y with pixel (r, c) covering [c, c+1] x [r, r+1].
     Filling them with the even-odd rule gives back exactly the mask, as in
-    ImageJ (ShapeRoi is even-odd; a pixel is inside when its center is)."""
+    ImageJ (ShapeRoi is even-odd; a pixel is inside when its center is).
+    eight: pixels touching at a corner stay in one outline that passes
+    through that corner, as ImageJ's Wand traces particles."""
     m = np.pad(np.asarray(mask, bool), 1)
     nxt = {}
     # edges run clockwise on screen (foreground on the right)
@@ -458,15 +461,17 @@ def trace_outlines(mask: np.ndarray, x0: int = 0, y0: int = 0) -> list[np.ndarra
     loops = []
     while nxt:
         start = next(iter(nxt))
+        if eight:  # not a corner the outline passes twice
+            start = next((p for p, q in nxt.items() if len(q) == 1), start)
         pts = [start]
         cur, d = start, None
         while True:
             outs = nxt[cur]
             if len(outs) > 1 and d is not None:
                 # where two pixels touch at a corner, turn toward the
-                # foreground so every loop is simple
-                right = (-d[1], d[0])
-                pick = next((q for q in outs if (q[0] - cur[0], q[1] - cur[1]) == right), outs[0])
+                # foreground so every loop is simple (or away, eight)
+                turn = (d[1], -d[0]) if eight else (-d[1], d[0])
+                pick = next((q for q in outs if (q[0] - cur[0], q[1] - cur[1]) == turn), outs[0])
             else:
                 pick = outs[0]
             outs.remove(pick)
@@ -490,26 +495,25 @@ def trace_outlines(mask: np.ndarray, x0: int = 0, y0: int = 0) -> list[np.ndarra
 def particle_rois(cells, particles: Particles, properties=None) -> list:
     """One ImageJ ROI per particle, named partCCC-NN (cell number, particle);
     a particle with holes becomes a composite ROI. The outlines follow the
-    pixel edges, so ImageJ's mask of each ROI is exactly the particle."""
-    from scipy import ndimage as ndi
+    pixel edges, so ImageJ's mask of each ROI is exactly the particle, and
+    they are traced ROIs, so ImageJ measures the same perimeter as Analyze
+    Particles."""
+    import roifile
 
-    from .cellroi import _composite_roi, _polygon_roi
+    from .cellroi import _composite_roi
 
     comp = particles.components(cells)
     out = []
     props = dict(properties or {})
     if particles.settings is not None:
         props.update(particles.settings.properties())
-    count = {}
-    for k, sl in enumerate(ndi.find_objects(comp), start=1):
-        if sl is None:
-            continue
-        m = comp[sl] == k
-        l = int(cells.labels[sl][m][0])
-        count[l] = count.get(l, 0) + 1
-        loops = trace_outlines(m, sl[1].start, sl[0].start)
-        name = f'{PARTICLE_PREFIX}{l:03d}-{count[l]:02d}'
-        roi = _polygon_roi(loops[0], name) if len(loops) == 1 else _composite_roi(loops, name)
+    for k, _, name, sl in particle_names(cells, comp):
+        loops = wand_outlines(comp[sl] == k, sl[1].start, sl[0].start)
+        if len(loops) == 1:
+            roi = roifile.ImagejRoi.frompoints(np.round(loops[0]).astype(np.int32), name=name)
+            roi.roitype = roifile.ROI_TYPE.TRACED
+        else:
+            roi = _composite_roi(loops, name)
         roi.properties = dict(props)
         out.append(roi)
     return out
@@ -710,6 +714,290 @@ def measure_cells(planes: np.ndarray, cells, regions: list[Region], channels: li
                         row[f'{name}_{k}'] = _fmt(out[k])
             rows[(l, r.name)] = row
     return [rows[(l, r.name)] for l in ids for r in regions]
+
+
+# ---------------------------------------------------------------------------
+# per-particle shape (ImageJ Analyze Particles)
+# ---------------------------------------------------------------------------
+
+# ImageJ Set Measurements groups and the extra condensate measures, in table order
+SHAPES = ('Centroid', 'Perim.', 'Circ.', 'Solidity', 'AR', 'Round', 'Feret', 'Ellipse',
+          'EqDiam', 'NND', 'Partition')
+SHAPE_TITLES = {
+    'Centroid': ('중심 X, Y', '입자 픽셀 중심의 평균 위치 (ImageJ Centroid)'),
+    'Perim.': ('둘레', 'ImageJ가 입자 외곽선(traced ROI)에서 재는 둘레: 대각선 모서리를 깎은 픽셀 경계 길이'),
+    'Circ.': ('원형도', '4π × 면적 / 둘레² (ImageJ Circ.). 1 = 완전한 원, 0에 가까울수록 길쭉하거나 울퉁불퉁'),
+    'Solidity': ('Solidity', '면적 / 볼록 껍질(convex hull) 면적 (ImageJ). 1 = 오목한 곳 없음; '
+                 '낮으면 여러 방울이 붙었거나 응집체(gel/aggregate)처럼 불규칙'),
+    'AR': ('종횡비 (AR)', '맞춘 타원의 장축 / 단축 (ImageJ AR). 1 = 둥근 방울'),
+    'Round': ('Roundness', '4 × 면적 / (π × 장축²) = 1 / AR (ImageJ Round)'),
+    'Feret': ('Feret 지름', '가장 긴 지름 Feret, 가장 짧은 폭 MinFeret, Feret 각도 (ImageJ Feret\'s diameter)'),
+    'Ellipse': ('타원 (장·단축, 각도)', '같은 면적·2차 모멘트의 타원 장축 Major, 단축 Minor, 각도 (ImageJ Fit ellipse)'),
+    'EqDiam': ('등가 지름', '같은 면적의 원 지름 2√(면적/π)'),
+    'NND': ('최근접 입자 거리', '같은 세포(이미지 전체 모드는 이미지)에서 가장 가까운 다른 입자 중심까지 거리'),
+    'Partition': ('분배계수', '채널마다 입자 평균 / 같은 세포 묽은 상(입자를 찾은 영역에서 입자를 뺀 곳) 평균. '
+                  '배경을 빼지 않은 원시값의 비'),
+}
+
+
+def traced_perimeter(xy: np.ndarray) -> float:
+    """ImageJ PolygonRoi.getTracedPerimeter of a pixel-edge outline (pixels)."""
+    n = len(xy)
+    if n < 4:
+        return 0.0
+    d = np.diff(np.vstack([xy[-1:], xy]), axis=0)  # d[i] = xy[i] - xy[i-1]
+    side = np.abs(d).sum(1)
+    corners, corner = 0, False
+    for i in range(n):
+        if side[i] > 1 or not corner:
+            corner = True
+            corners += 1
+        else:
+            corner = False
+    return float(np.abs(d).sum() - corners * (2 - math.sqrt(2)))
+
+
+def _hull(pts: np.ndarray) -> np.ndarray:
+    """Convex hull vertices (monotone chain), no duplicates."""
+    pts = np.unique(pts, axis=0)
+    if len(pts) < 3:
+        return pts
+
+    def half(ps):
+        out = []
+        for p in ps:
+            while len(out) >= 2 and ((out[-1][0] - out[-2][0]) * (p[1] - out[-2][1])
+                                     - (out[-1][1] - out[-2][1]) * (p[0] - out[-2][0])) <= 0:
+                out.pop()
+            out.append(tuple(p))
+        return out
+
+    lo, hi = half(pts), half(pts[::-1])
+    hull = np.asarray(lo[:-1] + hi[:-1], float)[::-1]
+    # ImageJ's order (FloatPolygon.getConvexHull: clockwise on screen from the
+    # topmost-leftmost point), which picks among equal Feret diameters
+    start = np.lexsort((hull[:, 0], hull[:, 1]))[0]
+    return np.roll(hull, -start, axis=0)
+
+
+def _polygon_area(xy) -> float:
+    x, y = xy[:, 0], xy[:, 1]
+    return abs(float(np.sum(x * np.roll(y, 1) - np.roll(x, 1) * y))) / 2
+
+
+def feret_values(hull: np.ndarray) -> tuple[float, float, float]:
+    """ImageJ Roi.getFeretValues: Feret, FeretAngle, MinFeret (pixels, degrees)."""
+    if len(hull) < 2:
+        return 0.0, 0.0, 0.0
+    diff = hull[:, None, :] - hull[None, :, :]
+    d2 = (diff ** 2).sum(-1)
+    i, j = np.unravel_index(np.argmax(np.triu(d2, 1)), d2.shape)
+    if hull[i, 0] > hull[j, 0]:
+        i, j = j, i
+    angle = math.degrees(math.atan2(hull[i, 1] - hull[j, 1], hull[j, 0] - hull[i, 0]))
+    if angle < 0:
+        angle += 180
+    feret = math.sqrt(d2[i, j])
+    min_feret = math.inf
+    for k in range(len(hull)):
+        a, b = hull[k - 1], hull[k]
+        nrm = np.array([b[1] - a[1], a[0] - b[0]], float)
+        ln = math.hypot(*nrm)
+        if ln == 0:
+            continue
+        # every hull point lies on one side of a hull edge
+        min_feret = min(min_feret, float(np.abs((hull - b) @ nrm).max() / ln))
+    return feret, angle, (min_feret if math.isfinite(min_feret) else 0.0)
+
+
+HALFPI = 1.5707963267949  # ImageJ EllipseFitter's constant
+
+
+def fit_ellipse(m: np.ndarray) -> tuple[float, float, float]:
+    """ImageJ EllipseFitter on a mask: Major, Minor (pixels), Angle (degrees,
+    counter-clockwise from the x axis)."""
+    # the same sums and float operations as ImageJ: for symmetric shapes u11
+    # is a rounding residue that sets the angle, and ImageJ keeps it
+    ys, xs = np.nonzero(m)
+    n = len(xs)
+    xsum, ysum = float(xs.sum()), float(ys.sum())
+    x2sum, y2sum = float((xs * xs).sum()), float((ys * ys).sum())
+    xysum = float((xs * ys).sum())
+    x2sum += 0.08333333 * n
+    y2sum += 0.08333333 * n
+    x1, y1 = xsum / n, ysum / n
+    u20 = x2sum / n - x1 * x1
+    u02 = y2sum / n - y1 * y1
+    u11 = xysum / n - x1 * y1
+    m4 = max(4.0 * abs(u02 * u20 - u11 * u11), 1e-6)
+    a11, a12, a22 = u02 / m4, u11 / m4, u20 / m4
+    tmp = a11 - a22 or 1e-6
+    theta = 0.5 * math.atan(2.0 * a12 / tmp)
+    if theta < 0:
+        theta += HALFPI
+    if a12 > 0:
+        theta += HALFPI
+    elif a12 == 0:
+        if a22 > a11:
+            theta = 0.0
+            a11, a22 = a22, a11
+        elif a11 != a22:
+            theta = HALFPI
+    tmp = math.sin(theta) or 1e-6
+    z = a12 * math.cos(theta) / tmp
+    major = math.sqrt(1.0 / abs(a22 + z))
+    minor = math.sqrt(1.0 / abs(a11 - z))
+    scale = math.sqrt(n / (math.pi * major * minor))  # same area as the particle
+    major, minor = major * scale * 2, minor * scale * 2
+    angle = 180.0 * theta / math.pi
+    if angle == 180.0:
+        angle = 0.0
+    return max(major, minor), min(major, minor), angle
+
+
+def wand_outlines(m: np.ndarray, x0: int = 0, y0: int = 0) -> list[np.ndarray]:
+    """Pixel-edge outlines of a particle as ImageJ's Wand traces it: pixels
+    touching at a corner in one outline, which ends at the right end of the
+    first run of the top row (ImageJ's traced perimeter depends on where the
+    outline starts)."""
+    loops = trace_outlines(m, eight=True)
+    r0 = int(np.argmax(m.any(1)))
+    c0 = int(np.argmax(m[r0]))
+    c1 = c0 + int(np.argmin(np.append(m[r0, c0:], False)))
+    for i, l in enumerate(loops):
+        hit = np.nonzero((l[:, 0] == c1) & (l[:, 1] == r0))[0]
+        if len(hit):
+            loops[i] = np.roll(l, -(hit[0] + 1), axis=0)
+    return [l + (x0, y0) for l in loops]
+
+
+def particle_shape(m: np.ndarray) -> dict:
+    """ImageJ Analyze Particles shape values of one particle mask, in pixels:
+    area and ellipse from its pixels (holes excluded), perimeter, convex hull
+    and Feret from its outer outline."""
+    area = int(m.sum())
+    loops = wand_outlines(m)
+    outer = [l for l in loops if _signed_area(l) > 0] or loops
+    perim = sum(traced_perimeter(l) for l in outer)
+    hull = _hull(np.concatenate(outer))
+    hull_area = _polygon_area(hull) if len(hull) >= 3 else float(area)
+    feret, feret_angle, min_feret = feret_values(hull)
+    major, minor, angle = fit_ellipse(m)
+    ys, xs = np.nonzero(m)
+    return {'area': area, 'x': xs.mean() + 0.5, 'y': ys.mean() + 0.5, 'perim': perim,
+            'circ': min(4 * math.pi * area / perim ** 2, 1.0) if perim else 0.0,
+            'solidity': area / hull_area if hull_area else math.nan,
+            'major': major, 'minor': minor, 'angle': angle,
+            'ar': major / minor if minor else math.nan,
+            'round': 4 * area / (math.pi * major * major) if major else math.nan,
+            'feret': feret, 'feret_angle': feret_angle, 'min_feret': min_feret,
+            'eq_diam': 2 * math.sqrt(area / math.pi)}
+
+
+def _signed_area(xy) -> float:
+    x, y = xy[:, 0], xy[:, 1]
+    return float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y)) / 2
+
+
+def particle_names(cells, comp) -> list[tuple[int, int, str, tuple]]:
+    """(component number, cell label, partCCC-NN, slice) in the order of
+    particle_rois, so table rows and saved ROIs share names."""
+    from scipy import ndimage as ndi
+
+    out, count = [], {}
+    for k, sl in enumerate(ndi.find_objects(comp), start=1):
+        if sl is None:
+            continue
+        l = int(cells.labels[sl][comp[sl] == k][0])
+        count[l] = count.get(l, 0) + 1
+        out.append((k, l, f'{PARTICLE_PREFIX}{l:03d}-{count[l]:02d}', sl))
+    return out
+
+
+def measure_particles(planes: np.ndarray, cells, particles: Particles, channels: list[str],
+                      px_um: float | None, channel_index: list[int] | None = None,
+                      stats=('Mean',), shapes=SHAPES, within: str = 'cyto') -> list[dict]:
+    """One row per particle: ImageJ Analyze Particles shape values, the chosen
+    Measure values per channel and, for condensates, the nearest-neighbour
+    distance and the partition coefficient (particle mean / mean of the rest
+    of the cell's search region, the dilute phase)."""
+    comp = particles.components(cells)
+    names = particle_names(cells, comp)
+    if not names:
+        return []
+    chans = list(range(len(channels))) if channel_index is None else list(channel_index)
+    cal = px_um or 1.0
+    unit = 'um' if px_um else 'px'
+    lab = cells.labels
+    n = int(lab.max()) + 1
+    dilute = base_masks(cells)['cyto' if within == 'cyto' else 'cell'] & ~particles.mask
+    dl = lab[dilute]
+    dn = np.bincount(dl, minlength=n)
+    dmean = {}
+    if 'Partition' in shapes:
+        for c in chans:
+            s = np.bincount(dl, weights=planes[c][dilute].astype(np.float64), minlength=n)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                dmean[c] = s / dn
+    shp = {k: particle_shape(comp[sl] == k) for k, _, _, sl in names}
+    nnd = {}
+    if 'NND' in shapes:
+        by_cell = {}
+        for k, l, _, sl in names:
+            by_cell.setdefault(l, []).append(
+                (k, shp[k]['x'] + sl[1].start, shp[k]['y'] + sl[0].start))
+        for pts in by_cell.values():
+            xy = np.array([(x, y) for _, x, y in pts])
+            d = np.sqrt(((xy[:, None] - xy[None]) ** 2).sum(-1))
+            np.fill_diagonal(d, np.inf)
+            for (k, _, _), v in zip(pts, d.min(1)):
+                nnd[k] = v * cal if np.isfinite(v) else math.nan
+    rows = []
+    for k, l, name, sl in names:
+        m = comp[sl] == k
+        g = shp[k]
+        a = g['area']
+        row = {'roi': f'cell{l:03d}', 'status': cells.status.get(l, 'ok'), 'particle': name,
+               'area_px': a, 'area_um2': round(a * cal * cal, 6) if px_um else ''}
+        if 'Centroid' in shapes:
+            row[f'x_{unit}'] = _fmt((g['x'] + sl[1].start) * cal)
+            row[f'y_{unit}'] = _fmt((g['y'] + sl[0].start) * cal)
+        if 'Perim.' in shapes:
+            row[f'perimeter_{unit}'] = _fmt(g['perim'] * cal)
+        if 'Circ.' in shapes:
+            row['circularity'] = _fmt(g['circ'])
+        if 'Solidity' in shapes:
+            row['solidity'] = _fmt(g['solidity'])
+        if 'AR' in shapes:
+            row['aspect_ratio'] = _fmt(g['ar'])
+        if 'Round' in shapes:
+            row['roundness'] = _fmt(g['round'])
+        if 'Feret' in shapes:
+            row[f'feret_{unit}'] = _fmt(g['feret'] * cal)
+            row[f'min_feret_{unit}'] = _fmt(g['min_feret'] * cal)
+            row['feret_angle'] = _fmt(g['feret_angle'])
+        if 'Ellipse' in shapes:
+            row[f'major_{unit}'] = _fmt(g['major'] * cal)
+            row[f'minor_{unit}'] = _fmt(g['minor'] * cal)
+            row['ellipse_angle'] = _fmt(g['angle'])
+        if 'EqDiam' in shapes:
+            row[f'eq_diameter_{unit}'] = _fmt(g['eq_diam'] * cal)
+        if 'NND' in shapes:
+            row[f'nnd_{unit}'] = _fmt(nnd.get(k))
+        for c in chans:
+            v = planes[c][sl][m].astype(np.float64)
+            mean = float(v.mean())
+            out = {'Mean': mean, 'StdDev': float(v.std(ddof=1)) if a > 1 else 0.0,
+                   'Min': float(v.min()), 'Max': float(v.max()),
+                   'IntDen': a * cal * cal * mean, 'RawIntDen': float(v.sum())}
+            for st in STATS:
+                if st in stats:
+                    row[f'{channels[c]}_{st}'] = _fmt(out[st])
+            if 'Partition' in shapes:
+                dm = dmean[c][l]
+                row[f'{channels[c]}_partition'] = _fmt(mean / dm if dn[l] and dm else math.nan)
+        rows.append(row)
+    return rows
 
 
 def _fmt(v):

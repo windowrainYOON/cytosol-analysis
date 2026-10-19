@@ -50,9 +50,13 @@ class MeasureBox(QWidget):
     are <stem>_<suffix>.csv per image and <suffix>.csv for the set."""
 
     def __init__(self, win, tab_attr: str, regions, suffix: str, title: str,
-                 extra_files=None, overlay_regions=None, cells=None):
+                 extra_files=None, overlay_regions=None, cells=None, rows=None, key=None):
         super().__init__()
         self.win = win
+        # rows(item, cells, particles, channels, stats) -> rows, or None for
+        # the per-cell region rows; key() -> what else the rows depend on
+        self.rows_fn = rows
+        self.key = key
         self.cells = cells or (lambda it: it.cells)  # item -> CellRois measured on
         self.tab_attr = tab_attr
         self.regions = regions
@@ -129,9 +133,8 @@ class MeasureBox(QWidget):
         b = QPushButton('CSV 저장 (현재 이미지)…')
         b.clicked.connect(self.save_current)
         row.addWidget(b)
-        b = QPushButton('모든 이미지 측정 + 저장 (폴더)…')
-        b.setToolTip(f'모든 이미지를 다시 잰 뒤 전체 결과 {suffix}.csv와, 이미지마다 '
-                     f'<이름>_<ID> 폴더에 그 이미지의 <이름>_{suffix}.csv를 저장합니다.')
+        b = self.save_all_btn = QPushButton('모든 이미지 측정 + 저장 (폴더)…')
+        self.set_suffix(suffix)
         b.clicked.connect(self.save_all)
         row.addWidget(b)
         tl.addLayout(row)
@@ -143,6 +146,12 @@ class MeasureBox(QWidget):
         lay.addWidget(res, 1)
 
     # ---- helpers ----------------------------------------------------------
+
+    def set_suffix(self, suffix: str):
+        """CSV names: <stem>_<suffix>.csv per image, <suffix>.csv for the set."""
+        self.suffix = suffix
+        self.save_all_btn.setToolTip(f'모든 이미지를 다시 잰 뒤 전체 결과 {suffix}.csv와, 이미지마다 '
+                                     f'<이름>_<ID> 폴더에 그 이미지의 <이름>_{suffix}.csv를 저장합니다.')
 
     def status(self, msg):
         self.win.statusBar().showMessage(msg)
@@ -182,16 +191,20 @@ class MeasureBox(QWidget):
         if not regions:
             return []
         particles = self.particles_for(it) if uses_particles(regions) else None
-        rows = measure_cells(it.planes(), cells, regions, it.channels, it.pixel_um,
-                             particles, self.channels_for(it), self.stats())
+        rows = None
+        if self.rows_fn is not None:
+            rows = self.rows_fn(it, cells, particles, self.channels_for(it), self.stats())
+        if rows is None:
+            rows = measure_cells(it.planes(), cells, regions, it.channels, it.pixel_um,
+                                 particles, self.channels_for(it), self.stats())
         z = 'MIP' if it.z == 'mip' else ('mid' if it.z == 'mid' else f'z {int(it.z) + 1}')
         head = {'image': it.label, 'image_id': it.image_id, 'source': it.source_name,
                 'timepoint': it.t + 1, 'plane': z}
         if particles is not None and particles.channel is not None:
             head['particle_channel'] = it.channels[particles.channel]
         if cells is not it.cells:  # the whole image, no cell ROIs
-            rows = [{**r, 'roi': 'image', 'region': r['region'].replace('cell', 'image')}
-                    for r in rows]
+            rows = [{**r, 'roi': 'image'} | ({'region': r['region'].replace('cell', 'image')}
+                                             if 'region' in r else {}) for r in rows]
         return [{**head, **r} for r in rows]
 
     def _signature(self, it):
@@ -201,7 +214,7 @@ class MeasureBox(QWidget):
             s = it.particle_settings
             part = astuple(s) if s is not None else id(it.particles)
         return (id(it), cells_key(self.cells(it)), it.z, it.t, tuple(r.name for r in regions), part,
-                self.stats(), tuple(self.channels_for(it)))
+                self.stats(), tuple(self.channels_for(it)), self.key() if self.key else None)
 
     def refresh(self, force=False):
         it = self.win.current
