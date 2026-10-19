@@ -201,6 +201,47 @@ def run(out_dir) -> int:
         item.coloc = recs
         return f'{n} ROIs, cell001 r = {r.value("Pearson\'s R value (no threshold)"):.3f}'
 
+    def intensity():
+        from .intensity import (ParticleSettings, detect_particles, is_particle_file,
+                                load_particles, make_regions, measure_cells, save_particles,
+                                write_rows)
+        planes = item.planes()
+        cells = item.cells
+        # two bright spots in every cytosol of the GFP channel
+        img = planes.copy()
+        yy, xx = np.mgrid[:img.shape[1], :img.shape[2]]
+        for l in cells.ids():
+            cx, cy = cells.centroid(l)
+            for dx in (-30, 30):
+                img[1][(yy - cy) ** 2 + (xx - cx - dx) ** 2 < 16] = 900
+        s = ParticleSettings('GFP', 1, 'cyto', 'otsu', 0, 5)
+        p = detect_particles(cells, img[1], s, 16)
+        counts = p.counts(cells)
+        if any(counts.get(l) != 2 for l in cells.ids()):
+            raise AssertionError(f'particles per cell: {counts}')
+        regions = make_regions(['cell', 'nuc', 'cyto', 'particle'], ['cyto - particle'])
+        rows = measure_cells(img, cells, regions, item.channels, item.pixel_um, p,
+                             stats=('Mean', 'RawIntDen'))
+        by = {(r['roi'], r['region']): r for r in rows}
+        for l in cells.ids():
+            k = f'cell{l:03d}'
+            if by[k, 'particle']['GFP_Mean'] != 900:
+                raise AssertionError(f'{k} particle mean {by[k, "particle"]["GFP_Mean"]}')
+            if by[k, 'particle']['area_px'] + by[k, 'cyto - particle']['area_px'] \
+                    != by[k, 'cytosol']['area_px']:
+                raise AssertionError(f'{k}: particle + rest != cytosol')
+            cell = cells.labels == l
+            if not np.isclose(by[k, 'cell']['DAPI_Mean'], img[0][cell].mean(), rtol=1e-6):
+                raise AssertionError(f'{k} cell mean')
+        write_rows(out / 'selftest_intensity.csv', rows)
+        zp = save_particles(out / 'selftest_particles.zip', cells, p, item.id_properties())
+        back, s2 = load_particles(zp, cells.shape)
+        if (back.mask ^ p.mask).any() or s2 != s or not is_particle_file(zp):
+            raise AssertionError('particle ROI round trip')
+        if len(type(cells).load(zp, cells.shape)) != 0:
+            raise AssertionError('particle ROIs read as cells')
+        return f'{len(rows)} rows, {sum(counts.values())} particles'
+
     def image_id_pairing():
         from .app import load_items
         from .imageid import plan_pairing, roi_id, tiff_id
@@ -544,6 +585,37 @@ def run(out_dir) -> int:
         if [i.rect for i in other.insets] != [(4, 5, 20, 21)]:
             raise AssertionError(f'inset paste: {[i.rect for i in other.insets]}')
         fw.close()
+        # intensity tab follows ROI edits; particles from the panel
+        from .cellroi import segment_cells
+        own = _synthetic_item()
+        p0 = own.planes()
+        own.cells = segment_cells(p0[1], p0[0], own.pixel_um)
+        own.cells.renumber()
+        win._add_item(own)
+        win.file_list.setCurrentRow(len(win.items) - 1)
+        win.right_tabs.setCurrentIndex(win.intensity_tab)
+        app.processEvents()
+        ip = win.intensity_panel
+        ip.refresh(force=True)
+        n0 = len(own.intensity)
+        if n0 != 3 * len(own.cells):
+            raise AssertionError(f'intensity rows {n0} for {len(own.cells)} cells')
+        ip.part_channel.setCurrentIndex(1)
+        ip.part_on.setChecked(True)
+        ip.refresh(force=True)
+        if own.particle_settings is None or own.particles is None:
+            raise AssertionError('particle ROIs not defined from the panel')
+        if len(own.intensity) != 5 * len(own.cells):
+            raise AssertionError(f'with particles: {len(own.intensity)} rows')
+        win.roi_panel.select(own.cells.ids()[0])
+        win.roi_panel.delete_selected()
+        ip.refresh()
+        if len(own.intensity) != 5 * len(own.cells):
+            raise AssertionError('intensity did not follow the deleted cell')
+        res = ip._measure_items(win.items)
+        if not res.get(id(own)):
+            raise AssertionError('all-image measurement skipped the image')
+        ip.save_item(own, out / 'intensity_gui', res[id(own)])
         # multi-select removal
         win.add_files([out / 'selftest.TCF'])
         win.add_files([out / 'selftest.TCF'])
@@ -570,6 +642,7 @@ def run(out_dir) -> int:
     step('line profile', line_profile_step)
     step('cell ROIs + RoiSet.zip', cell_rois)
     step('Coloc 2 per cell ROI', coloc2)
+    step('intensity + particle ROIs', intensity)
     step('image ID in exports + pairing', image_id_pairing)
     step('same-name images, separate folders', same_name_export)
     step('figure export', figure)

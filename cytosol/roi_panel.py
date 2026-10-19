@@ -606,6 +606,9 @@ class RoiPanel(QWidget):
 
     def draw_overlay(self, hidden=False):
         c = self.cells
+        ip = getattr(self.win, 'intensity_panel', None)
+        if ip is not None:  # measurements follow every ROI edit
+            ip.overlay_changed(hidden)
         if hidden or c is None or not self.show_rois.isChecked():
             self.win.canvas.show_cells([], 0)
             return

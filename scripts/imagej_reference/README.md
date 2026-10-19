@@ -7,6 +7,10 @@ and print the differences.
   (`sc.fiji.coloc.algorithms`: InputCheck, AutoThresholdRegression,
   PearsonsCorrelation, Li, Spearman, Manders, Kendall, Histogram2D,
   CostesSignificanceTest) on raw files written by `compare_coloc2.py`.
+- `IntensityReference.java` gives, per labelled ROI, ImageJ's
+  `setAutoThreshold("Otsu dark")` level and the Measure values for
+  `compare_intensity.py` (needs only `ij.jar`; synthetic 8/16/32-bit cases, or
+  `plane.npy labels.npy bits`).
 - `ProfileReference.java` gets ImageJ's line profile (`ProfilePlot`, what
   Plot Profile and RGB Profiler plot) for `compare_profile.py`.
 
@@ -19,6 +23,7 @@ multithreading helpers) and these two files against `ij-1.54f.jar` and
 
     python scripts/imagej_reference/compare_coloc2.py ij.jar:imglib2.jar:build
     python scripts/imagej_reference/compare_profile.py ij.jar:imglib2.jar:build
+    python scripts/imagej_reference/compare_intensity.py ij.jar:build
 
 `COLOC2_REAL=<dir>` (with `a.npy`, `b.npy`, `masks.npz`) adds a real image
 and its ROI masks to the Coloc 2 cases.
