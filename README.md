@@ -137,14 +137,30 @@ A GUI for working on a whole set of images at once:
   value except the Costes randomisation agrees to about 1e-10 relative; the
   Costes test is random in both, and the shuffled mean/SD agree within that
   spread.
-- **강도 측정 tab** (ImageJ Measure on every cell ROI): per cell the
-  `cell`, `nucleus`, `cytosol` and `particle` regions and set expressions over
-  them (`cyto - particle`, `cell & particle`, `(cell - nuc) | particle`; `&`
-  intersection, `|` union, `-` difference), per channel Mean (and optionally
-  StdDev, Min, Max, IntDen, RawIntDen) of the raw values on the current Z (or
-  MIP) and timepoint. The table follows every ROI edit, plane change and
-  setting; a row selects its cell. **입자 ROI** in each cell's cytosol (or
-  whole cell) of one channel, with a minimum size: **자동 (점 검출)** (v0.14)
+- **Intensity measurement** (ImageJ Measure on every cell ROI) sits in three
+  tabs, each with its own table, all-image run and saving: per cell and
+  region, per channel Mean (and optionally StdDev, Min, Max, IntDen,
+  RawIntDen) of the raw values on the current Z (or MIP) and timepoint. The
+  table follows every ROI edit, plane change and setting; a row selects its
+  cell. **CSV 저장** writes the current image's rows plus `<name>_RoiSet.zip`,
+  the particle/region ROIs it used and `<name>_image.png` with the outlines;
+  **모든 이미지 측정 + 저장** measures every image (optionally every
+  timepoint) and writes the set's CSV plus each image's files in its
+  `<name>_<ID>` folder (`내보내기` adds all three CSVs too).
+  - **세포질 ROI tab**: `cell`, `nucleus` and `cytosol` regions →
+    `<name>_cell_intensity.csv` / `cell_intensity.csv`.
+  - **입자 ROI tab** (v0.16, moved out of 강도 측정): particle ROIs and the
+    `particle` region and the rest of the region they were found in
+    (`cyto - particle` or `cell - particle`), with the particle count per cell
+    → `<name>_particle_intensity.csv` / `particle_intensity.csv`.
+  - **강도 측정 tab**: regions set by logic over `cell`, `nuc`, `cyto` and
+    `particle` (`cyto - particle`, `cell & particle`, `(cell - nuc) | particle`;
+    `&` intersection, `|` union, `-` difference), shown filled in cyan on the
+    image and saved as `<name>_regions.zip` (one ImageJ ROI per cell and
+    region, `rgnCCC-R`, the expression in its `region` property) →
+    `<name>_intensity.csv` / `intensity.csv`.
+- **입자 ROI** in each cell's cytosol (or whole cell) of one channel, with a
+  minimum size: **자동 (점 검출)** (v0.14)
   finds spot centres where the scale-normalised Hessian's smaller curvature
   (high for round spots, not for cell or nucleus edges) and the
   background-subtracted intensity both exceed the cell's median + k × MAD
@@ -159,14 +175,11 @@ A GUI for working on a whole set of images at once:
   (Analyze Particles). Particle files from v0.13 (per-cell Otsu, as
   `setAutoThreshold("Otsu dark")` with the cell's ROI) still reproduce. **이 설정을 모든
   이미지에 적용** uses the same channel (by name) and method on every image.
-  **CSV 저장** writes the current image's rows plus `<name>_RoiSet.zip`,
-  `<name>_particles.zip` (one ImageJ ROI per particle, `partCCC-NN`, outlines
-  on the pixel edges so ImageJ's mask is exactly the particle; the settings are
-  stored in the ROI properties) and `<name>_image.png` with the outlines;
-  **모든 이미지 측정 + 저장** measures every image (optionally every
-  timepoint) and writes `intensity.csv` for the set plus each image's files in
-  its `<name>_<ID>` folder (`내보내기` adds them too). Folder loading pairs a
-  particles zip with its image. Checked against ImageJ 1.54f
+  `<name>_particles.zip` holds one ImageJ ROI per particle (`partCCC-NN`,
+  outlines on the pixel edges so ImageJ's mask is exactly the particle; the
+  settings are stored in the ROI properties). Folder loading pairs a particles
+  zip with its image (a regions zip is linked, not read as cells). Checked
+  against ImageJ 1.54f
   (`scripts/imagej_reference/compare_intensity.py`): per-ROI Otsu thresholds,
   pixel counts, min and max identical and Mean/StdDev within 1e-6 relative on
   8/16/32-bit data and the Zeiss sample; saved particle ROIs give ImageJ masks

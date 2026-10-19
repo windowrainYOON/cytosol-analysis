@@ -619,7 +619,7 @@ def run(out_dir) -> int:
         if fw.cell_canvas.crop_size != (10, 8):
             raise AssertionError('fixed-size drawing not switched on')
         fw.close()
-        # intensity tab follows ROI edits; particles from the panel
+        # every ROI tab measures and follows ROI edits; particles from their own tab
         from .cellroi import segment_cells
         own = _synthetic_item()
         p0 = own.planes()
@@ -627,29 +627,52 @@ def run(out_dir) -> int:
         own.cells.renumber()
         win._add_item(own)
         win.file_list.setCurrentRow(len(win.items) - 1)
-        win.right_tabs.setCurrentIndex(win.intensity_tab)
+        win.right_tabs.setCurrentIndex(win.roi_tab)
         app.processEvents()
-        ip = win.intensity_panel
-        ip.refresh(force=True)
-        n0 = len(own.intensity)
-        if n0 != 3 * len(own.cells):
-            raise AssertionError(f'intensity rows {n0} for {len(own.cells)} cells')
-        ip.part_channel.setCurrentIndex(1)
-        ip.part_on.setChecked(True)
-        ip.refresh(force=True)
+        cm = win.roi_panel.measure
+        cm.refresh(force=True)
+        if len(cm.rows) != 3 * len(own.cells):
+            raise AssertionError(f'cell intensity rows {len(cm.rows)} for {len(own.cells)} cells')
+        win.right_tabs.setCurrentIndex(win.particle_tab)
+        pp = win.particle_panel
+        pp.part_channel.setCurrentIndex(1)
+        pp.part_on.setChecked(True)
+        pp.refresh()
+        pp.measure.refresh(force=True)
         if own.particle_settings is None or own.particles is None:
             raise AssertionError('particle ROIs not defined from the panel')
-        if len(own.intensity) != 5 * len(own.cells):
-            raise AssertionError(f'with particles: {len(own.intensity)} rows')
+        if len(pp.measure.rows) != 2 * len(own.cells) \
+                or 'n_particles' not in pp.measure.rows[0]:
+            raise AssertionError(f'particle rows: {len(pp.measure.rows)}')
+        win.right_tabs.setCurrentIndex(win.intensity_tab)
+        ip = win.intensity_panel
+        ip.expr.setText('cyto - particle; cell & particle')
+        ip.measure.refresh(force=True)
+        ip.draw_regions()
+        if len(ip.measure.rows) != 2 * len(own.cells):
+            raise AssertionError(f'logic rows: {len(ip.measure.rows)}')
+        if win.canvas._logic_item is None:
+            raise AssertionError('logic regions not drawn')
         win.roi_panel.select(own.cells.ids()[0])
         win.roi_panel.delete_selected()
-        ip.refresh()
-        if len(own.intensity) != 5 * len(own.cells):
+        ip.measure.refresh()
+        if len(ip.measure.rows) != 2 * len(own.cells):
             raise AssertionError('intensity did not follow the deleted cell')
-        res = ip._measure_items(win.items)
-        if not res.get(id(own)):
-            raise AssertionError('all-image measurement skipped the image')
-        ip.save_item(own, out / 'intensity_gui', res[id(own)])
+        for box in win._measure_boxes():
+            res = box.measure_items(win.items)
+            if not res.get(id(own)):
+                raise AssertionError(f'{box.suffix}: all-image measurement skipped the image')
+            box.save_item(own, out / 'intensity_gui', res[id(own)])
+        from .lut import item_stem
+        stem = item_stem(own)
+        for name in ('cell_intensity.csv', 'particle_intensity.csv', 'intensity.csv',
+                     'RoiSet.zip', 'particles.zip', 'regions.zip', 'image.png'):
+            if not (out / 'intensity_gui' / f'{stem}_{name}').exists():
+                raise AssertionError(f'missing {stem}_{name}')
+        from .intensity import is_particle_file, is_region_file
+        rz = out / 'intensity_gui' / f'{stem}_regions.zip'
+        if not is_region_file(rz) or is_particle_file(rz):
+            raise AssertionError('region ROI file not recognised')
         # multi-select removal
         win.add_files([out / 'selftest.TCF'])
         win.add_files([out / 'selftest.TCF'])

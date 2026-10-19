@@ -45,6 +45,7 @@ ALIASES = {'cell': 'cell', 'nuc': 'nuc', 'nucleus': 'nuc', 'cyto': 'cyto', 'cyto
 STATS = ('Mean', 'StdDev', 'Min', 'Max', 'IntDen', 'RawIntDen')
 INT_NOTE = re.compile(r'^(u?int)(8|16|32)$|^(\d+)-bit$')
 PARTICLE_PREFIX = 'part'
+REGION_PREFIX = 'rgn'
 
 
 # ---------------------------------------------------------------------------
@@ -554,6 +555,73 @@ def load_particles(path, shape) -> tuple[Particles, ParticleSettings | None]:
     return Particles(labels > 0, None, {}, None, labels=labels), settings
 
 
+def region_masks(cells, regions: list['Region'], particles: Particles | None = None
+                 ) -> list[tuple['Region', np.ndarray]]:
+    """Full-image mask of each region, inside the cells."""
+    masks = base_masks(cells, particles.mask if particles is not None else None)
+    return [(r, eval_region(r.tree, masks) & masks['cell']) for r in regions]
+
+
+def region_outlines(cells, regions, particles=None) -> list[np.ndarray]:
+    """Pixel-edge outlines of every region, each cell traced on its own."""
+    from scipy import ndimage as ndi
+
+    loops = []
+    for _, m in region_masks(cells, regions, particles):
+        lab = np.where(m, cells.labels, 0)
+        for l, sl in enumerate(ndi.find_objects(lab), start=1):
+            if sl is not None:
+                loops += trace_outlines(lab[sl] == l, sl[1].start, sl[0].start)
+    return loops
+
+
+def region_rois(cells, regions, particles=None, properties=None) -> list:
+    """One ImageJ ROI per cell and region, named rgnCCC-R (cell, region
+    number), with the expression in its ``region`` property."""
+    from .cellroi import _composite_roi, _polygon_roi
+
+    out = []
+    for k, (r, m) in enumerate(region_masks(cells, regions, particles), start=1):
+        for l in cells.ids():
+            cm = m & (cells.labels == l)
+            if not cm.any():
+                continue
+            rows, cols = np.nonzero(cm)
+            r0, c0 = rows.min(), cols.min()
+            loops = trace_outlines(cm[r0:rows.max() + 1, c0:cols.max() + 1], c0, r0)
+            name = f'{REGION_PREFIX}{l:03d}-{k}'
+            roi = _polygon_roi(loops[0], name) if len(loops) == 1 else _composite_roi(loops, name)
+            roi.properties = {**(properties or {}), 'region': r.name}
+            out.append(roi)
+    return out
+
+
+def save_regions(path, cells, regions, particles=None, properties=None) -> str | None:
+    import roifile
+
+    rois = region_rois(cells, regions, particles, properties)
+    if not rois:
+        return None
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+    roifile.roiwrite(path, rois)
+    return str(path)
+
+
+def is_region_file(path) -> bool:
+    """An ImageJ ROI file holding only logic-region ROIs (rgnCCC-R)."""
+    import roifile
+
+    try:
+        r = roifile.roiread(path)
+    except Exception:
+        return False
+    rois = r if isinstance(r, list) else [r]
+    return bool(rois) and all((x.name or '').lower().startswith(REGION_PREFIX) for x in rois)
+
+
 # ---------------------------------------------------------------------------
 # measurement
 # ---------------------------------------------------------------------------
@@ -668,8 +736,9 @@ def write_rows(path, rows) -> int:
 
 
 def overlay_image(rgb: np.ndarray, cells, particles: Particles | None = None,
-                  selected: int = 0) -> np.ndarray:
-    """uint8 RGB with cell (yellow), nucleus (white) and particle (magenta) outlines."""
+                  selected: int = 0, regions: list | None = None) -> np.ndarray:
+    """uint8 RGB with cell (yellow), nucleus (white), particle (magenta) and
+    logic-region (cyan) outlines."""
     from skimage.segmentation import find_boundaries
 
     img = np.asarray(rgb)
@@ -682,4 +751,6 @@ def overlay_image(rgb: np.ndarray, cells, particles: Particles | None = None,
         img[find_boundaries(nuc, mode='inner')] = (255, 255, 255)
     if particles is not None and particles.mask.any():
         img[find_boundaries(particles.components(cells), mode='inner')] = (255, 0, 255)
+    for _, m in region_masks(cells, regions or [], particles):
+        img[find_boundaries(np.where(m, cells.labels, 0), mode='inner')] = (0, 255, 255)
     return img

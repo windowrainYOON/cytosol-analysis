@@ -67,7 +67,7 @@ from .lut import (
     unique_stems,
 )
 from .coloc_panel import ColocPanel, write_coloc_csv
-from .intensity import is_particle_file, save_particles, write_rows
+from .intensity import is_particle_file, is_region_file, save_particles, write_rows
 from .intensity_panel import IntensityPanel
 from .imageid import ROI_EXT, match_roi, plan_pairing
 from .marker_panel import MarkerPanel
@@ -75,6 +75,7 @@ from .lineprofile import read_line_roi
 from .prefetch import TimeCache
 from .profile_panel import ProfilePanel
 from .movie import RGB_FORMATS, wants_mp4
+from .particle_panel import ParticlePanel
 from .roi_panel import RoiPanel, write_csv
 from .stack import StackView, export_projection, export_rotation
 from .stack_panel import StackPanel
@@ -197,6 +198,7 @@ class Canvas(QGraphicsView):
         self._region_items = []
         self._cell_items = []
         self._particle_item = None
+        self._logic_item = None
         self._fitted = False
         self._lasso = None
         self._lasso_item = QGraphicsPathItem()
@@ -359,6 +361,24 @@ class Canvas(QGraphicsView):
         self._particle_item.setPen(pen)
         self._particle_item.setZValue(12.5)
         self.scene().addItem(self._particle_item)
+
+    def show_regions(self, loops):
+        """Fill the logic regions of the 강도 측정 tab in translucent cyan."""
+        if self._logic_item is not None:
+            self.scene().removeItem(self._logic_item)
+            self._logic_item = None
+        if not len(loops):
+            return
+        pen = QPen(QColor(0, 255, 255))
+        pen.setCosmetic(True)
+        pen.setWidthF(1.0)
+        path = polygon_path(*loops)
+        path.setFillRule(Qt.FillRule.OddEvenFill)
+        self._logic_item = QGraphicsPathItem(path)
+        self._logic_item.setPen(pen)
+        self._logic_item.setBrush(QColor(0, 255, 255, 60))
+        self._logic_item.setZValue(12.4)
+        self.scene().addItem(self._logic_item)
 
     def show_line(self, line=None, width=1):
         """Draw the profile line (scene coordinates); width > 1 also shows its band."""
@@ -1196,7 +1216,12 @@ class MainWindow(QMainWindow):
         roi_scroll.setWidget(self.roi_panel)
         right = QTabWidget()
         right.addTab(lut_tab, 'LUT · 내보내기')
-        right.addTab(roi_scroll, '세포질 ROI')
+        self.roi_tab = right.addTab(roi_scroll, '세포질 ROI')
+        self.particle_panel = ParticlePanel(self)
+        particle_scroll = QScrollArea()
+        particle_scroll.setWidgetResizable(True)
+        particle_scroll.setWidget(self.particle_panel)
+        self.particle_tab = right.addTab(particle_scroll, '입자 ROI')
         marker_scroll = QScrollArea()
         marker_scroll.setWidgetResizable(True)
         marker_scroll.setWidget(self.markers)
@@ -1372,9 +1397,13 @@ class MainWindow(QMainWindow):
             if it is None:
                 notes.append(f'{f.name}: {how}')
                 continue
-            if is_particle_file(f):  # particle ROIs from the intensity tab
+            if is_region_file(f):  # logic regions saved by the 강도 측정 tab
+                if f not in it.linked:
+                    it.linked.append(f)
+                continue
+            if is_particle_file(f):  # particle ROIs from the 입자 ROI tab
                 try:
-                    self.intensity_panel.load_particles_into(it, f)
+                    self.particle_panel.load_particles_into(it, f)
                     if f not in it.linked:
                         it.linked.append(f)
                 except Exception as exc:
@@ -1455,6 +1484,7 @@ class MainWindow(QMainWindow):
             self._build_stack_panels()
             self.profile_panel.bind(None)
             self.coloc_panel.bind(None)
+            self.particle_panel.bind(None)
             self.intensity_panel.bind(None)
             self.canvas.show_line(None)
             self.roi_panel.bind(None)
@@ -1503,6 +1533,7 @@ class MainWindow(QMainWindow):
         self._build_stack_panels()
         self.profile_panel.bind(it)
         self.coloc_panel.bind(it)
+        self.particle_panel.bind(it)
         self.intensity_panel.bind(it)
         c, z, h, w = it.image.shape
         px = it.pixel_um
@@ -1775,8 +1806,21 @@ class MainWindow(QMainWindow):
             it.image.release()
         self._sync_z_widgets()
         self.update_preview(refit=True)
-        if self.right_tabs.currentIndex() == self.intensity_tab:
-            self.intensity_panel.schedule()
+        self.roi_panel.measure.schedule()
+        self.particle_panel.schedule()
+        self.intensity_panel.schedule()
+
+    def rois_changed(self, hidden=False):
+        """The cell ROIs or the shown plane changed: particles and every
+        measurement follow."""
+        if not hasattr(self, 'intensity_panel'):
+            return  # still building the window
+        self.roi_panel.measure.schedule()
+        self.particle_panel.overlay_changed(hidden)
+        self.intensity_panel.overlay_changed(hidden)
+
+    def particles_changed(self):
+        self.intensity_panel.schedule()
 
     def _stack_preview(self, refit=False):
         import time
@@ -2140,6 +2184,9 @@ class MainWindow(QMainWindow):
             msg += '\n\n실패:\n' + '\n'.join(errors)
         QMessageBox.information(self, '저장 완료', msg)
 
+    def _measure_boxes(self):
+        return [self.roi_panel.measure, self.particle_panel.measure, self.intensity_panel.measure]
+
     def export_everything(self):
         """Save every image's TIFFs, ROIs and measurements into its own folder."""
         items = self.items
@@ -2151,7 +2198,7 @@ class MainWindow(QMainWindow):
         kwargs = self._export_kwargs()
         prog = QProgressDialog('저장 중…', '취소', 0, len(items), self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
-        n_done, n_files, rows, errors, coloc, intensity = 0, 0, [], [], [], []
+        n_done, n_files, rows, errors, coloc, intensity = 0, 0, [], [], [], {}
         for i, it in enumerate(items):
             if prog.wasCanceled():
                 break
@@ -2165,13 +2212,15 @@ class MainWindow(QMainWindow):
                     item_rows = self.roi_panel.save_item(it, folder)
                     write_csv(folder / f'{item_stem(it)}_cell_rois.csv', item_rows)
                     rows += item_rows
-                    item_int = self.intensity_panel.measure_item(it)
-                    write_rows(folder / f'{item_stem(it)}_intensity.csv', item_int)
-                    intensity += item_int
-                    p = it.particles
+                    for box in self._measure_boxes():
+                        item_int = box.measure_item(it)
+                        box.save_item(it, folder, item_int, companions=False)
+                        intensity.setdefault(box.suffix, []).extend(item_int)
+                    p = self.particle_panel.particles_for(it)
                     if p is not None and p.mask.any():
                         save_particles(folder / f'{item_stem(it)}_particles.zip', it.cells, p,
                                        it.id_properties())
+                    self.intensity_panel._region_file(it, folder / item_stem(it))
                 if it.coloc:
                     write_coloc_csv(folder / f'{item_stem(it)}_coloc2.csv', it.coloc)
                     coloc += it.coloc
@@ -2183,7 +2232,8 @@ class MainWindow(QMainWindow):
         prog.setValue(len(items))
         write_csv(Path(out) / 'cell_rois.csv', rows)
         write_coloc_csv(Path(out) / 'coloc2.csv', coloc)
-        write_rows(Path(out) / 'intensity.csv', intensity)
+        for suffix, int_rows in intensity.items():
+            write_rows(Path(out) / f'{suffix}.csv', int_rows)
         msg = f'이미지 {n_done}개를 이미지별 폴더에 저장했습니다 (파일 {n_files}개'
         msg += f', ROI 측정 {len(rows)}행).' if rows else ').'
         msg += f'\n{out}'
