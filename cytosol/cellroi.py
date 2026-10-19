@@ -711,6 +711,8 @@ class CellRois:
         cells, nucs, cytos = [], [], []
         for r in rois:
             name = (r.name or '').lower()
+            if name.startswith('part'):  # particle ROIs (cytosol.intensity)
+                continue
             if name.startswith('nuc'):
                 nucs.append(r)
             elif name.startswith('cyto'):
