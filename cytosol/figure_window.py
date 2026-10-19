@@ -51,8 +51,10 @@ from .figure import (
     inset_from_image,
     inset_to_image,
     installed_families,
+    move_inset_rect,
     read_inset_rois,
     render_cell,
+    resize_inset_rect,
     save_figure,
     write_inset_rois,
 )
@@ -308,9 +310,12 @@ class FigureWindow(QMainWindow):
         self.cell_canvas = Canvas()
         self.cell_canvas.setMinimumHeight(260)
         self.cell_canvas.cropDrawn.connect(self._inset_drawn)
+        self.cell_canvas.cropMoved.connect(self._inset_moved)
+        self.cell_canvas.cropPicked.connect(self._inset_picked)
         self.inset_btn = QPushButton('확대 영역 그리기 (드래그)')
         self.inset_btn.setCheckable(True)
-        self.inset_btn.setToolTip('누른 뒤 이미지 위에서 드래그합니다. Shift + 드래그: 정사각형.')
+        self.inset_btn.setToolTip('누른 뒤 이미지 위에서 드래그합니다. Shift + 드래그: 정사각형.\n'
+                                  '이미 그린 상자는 (그리기 모드가 아닐 때) 드래그해서 옮깁니다.')
         self.inset_btn.toggled.connect(self.cell_canvas.set_crop_mode)
         self.inset_list = QListWidget()
         self.inset_list.setMaximumHeight(70)
@@ -356,6 +361,21 @@ class FigureWindow(QMainWindow):
         self.paste_many_btn.clicked.connect(self._paste_inset_many)
         self._inset_clip = None  # (rect in source-image pixels, Inset template)
         self._update_paste_buttons()
+        # one box size for every image: fixed-size drawing + resize all
+        self.fixed_size = QCheckBox('같은 크기로 그리기')
+        self.fixed_size.setToolTip('켜면 클릭/드래그한 곳에 아래 크기(픽셀)의 상자가 놓입니다.\n'
+                                   '다른 칸으로 옮겨 가도 같은 크기로 그려집니다.')
+        self.fixed_size.toggled.connect(self._fixed_size_changed)
+        self.box_w, self.box_h = QSpinBox(), QSpinBox()
+        for sp in (self.box_w, self.box_h):
+            sp.setRange(3, 100000)
+            sp.setValue(50)
+            sp.setSuffix(' px')
+            sp.valueChanged.connect(self._fixed_size_changed)
+        size_all = QPushButton('모든 칸에 이 크기 적용')
+        size_all.setToolTip('그림 전체의 모든 확대 영역을 이 크기(픽셀)로 바꿉니다.\n'
+                            '각 상자의 중심 위치는 그대로 둡니다.')
+        size_all.clicked.connect(self._size_to_all)
 
         form = QFormLayout()
         form.addRow('표시 방식', self.placement)
@@ -365,6 +385,13 @@ class FigureWindow(QMainWindow):
         lay = QVBoxLayout(box)
         lay.addWidget(self.cell_canvas, 1)
         lay.addWidget(self.inset_btn)
+        row = QHBoxLayout()
+        row.addWidget(self.fixed_size)
+        row.addWidget(self.box_w)
+        row.addWidget(QLabel('×'))
+        row.addWidget(self.box_h)
+        row.addWidget(size_all)
+        lay.addLayout(row)
         lay.addWidget(self.inset_list)
         lay.addLayout(form)
         row = QHBoxLayout()
@@ -855,6 +882,11 @@ class FigureWindow(QMainWindow):
             self.placement.setCurrentIndex(max(0, self.placement.findData(ins.placement)))
             self.corner.setCurrentIndex(max(0, self.corner.findData(ins.corner)))
             self.inset_size.setValue(round(ins.size * 100))
+            if not self.fixed_size.isChecked():
+                # the selected box's size, ready to give every image
+                x0, y0, x1, y1 = ins.rect
+                self.box_w.setValue(x1 - x0)
+                self.box_h.setValue(y1 - y0)
         self._fill_targets(ins)
         self._busy = False
         if redraw:
@@ -878,6 +910,47 @@ class FigureWindow(QMainWindow):
             self.rebuild_table()
         self._refresh_inset_list(select=len(cell.insets) - 1)
         self._cell_changed()
+
+    def _inset_moved(self, k, dx, dy):
+        cell = self.current_cell()
+        if cell.empty or k >= len(cell.insets):
+            return
+        ins = cell.insets[k]
+        ins.rect = move_inset_rect(ins.rect, dx, dy, cell.shape())
+        self._refresh_inset_list(select=k)
+        self._cell_changed()
+        x0, y0, x1, y1 = ins.rect
+        self.statusBar().showMessage(f'확대 영역 {k + 1} 이동: x {x0}–{x1}, y {y0}–{y1}')
+
+    def _inset_picked(self, k):
+        if k != self.inset_list.currentRow():
+            self.inset_list.setCurrentRow(k)
+
+    def _fixed_size_changed(self, *_):
+        self.cell_canvas.crop_size = ((self.box_w.value(), self.box_h.value())
+                                      if self.fixed_size.isChecked() else None)
+
+    def _size_to_all(self):
+        w, h = self.box_w.value(), self.box_h.value()
+        n, shrunk = 0, 0
+        for row in self.spec.cells:
+            for cell in row:
+                if cell.empty or cell.is_zoom:
+                    continue
+                H, W = cell.shape()
+                for ins in cell.insets:
+                    ins.rect = resize_inset_rect(ins.rect, w, h, (H, W))
+                    n += 1
+                    shrunk += w > W or h > H
+        if not n:
+            QMessageBox.information(self, '확대 영역', '바꿀 확대 영역이 없습니다.')
+            return
+        self.fixed_size.setChecked(True)  # new boxes get the same size too
+        self.rebuild_table()
+        msg = f'확대 영역 {n}개를 {w}×{h} px로 맞췄습니다.'
+        if shrunk:
+            msg += f' 이미지가 더 작은 {shrunk}개는 이미지 크기에 맞춰 줄였습니다.'
+        self.statusBar().showMessage(msg)
 
     # ---- .roi files and copy / paste ------------------------------------
 
