@@ -621,6 +621,25 @@ def inset_from_image(cell: FigureCell, rect, min_px=3):
     return clip(x0 - ox, y0 - oy, x1 - ox, y1 - oy) or clip(x0, y0, x1, y1)
 
 
+def move_inset_rect(rect, dx, dy, shape) -> tuple[int, int, int, int]:
+    """Shift rect by (dx, dy) pixels, same size, kept inside an image of shape (H, W)."""
+    H, W = shape
+    x0, y0, x1, y1 = rect
+    dx = int(np.clip(round(dx), -x0, W - x1))
+    dy = int(np.clip(round(dy), -y0, H - y1))
+    return x0 + dx, y0 + dy, x1 + dx, y1 + dy
+
+
+def resize_inset_rect(rect, w, h, shape) -> tuple[int, int, int, int]:
+    """Rect of w x h pixels around rect's centre, moved (or shrunk) to fit (H, W)."""
+    H, W = shape
+    w, h = int(min(max(1, w), W)), int(min(max(1, h), H))
+    x0, y0, x1, y1 = rect
+    nx = int(np.clip(round((x0 + x1 - w) / 2), 0, W - w))
+    ny = int(np.clip(round((y0 + y1 - h) / 2), 0, H - h))
+    return nx, ny, nx + w, ny + h
+
+
 def write_inset_rois(path, rects, names=None) -> str:
     """Rectangles (source-image pixels) as an ImageJ .roi (one) or RoiSet .zip."""
     import roifile

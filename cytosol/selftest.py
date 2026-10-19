@@ -605,6 +605,19 @@ def run(out_dir) -> int:
         fw._paste_inset()
         if [i.rect for i in other.insets] != [(4, 5, 20, 21)]:
             raise AssertionError(f'inset paste: {[i.rect for i in other.insets]}')
+        # drag a box to move it; one box size for every image
+        fw._inset_moved(0, 3, -2)
+        if other.insets[0].rect != (7, 3, 23, 19):
+            raise AssertionError(f'inset move: {other.insets[0].rect}')
+        fw.box_w.setValue(10)
+        fw.box_h.setValue(8)
+        fw._size_to_all()
+        sizes = {(x1 - x0, y1 - y0) for c in (cell, other) for x0, y0, x1, y1 in
+                 (i.rect for i in c.insets)}
+        if sizes != {(10, 8)} or other.insets[0].rect != (10, 7, 20, 15):
+            raise AssertionError(f'inset size to all: {sizes}, {other.insets[0].rect}')
+        if fw.cell_canvas.crop_size != (10, 8):
+            raise AssertionError('fixed-size drawing not switched on')
         fw.close()
         # intensity tab follows ROI edits; particles from the panel
         from .cellroi import segment_cells

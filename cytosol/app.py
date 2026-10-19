@@ -190,6 +190,8 @@ class Canvas(QGraphicsView):
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.crop_mode = False
+        # (w, h) image pixels: Crop mode places a box of this size under the cursor
+        self.crop_size = None
         self.roi_tool = 'select'
         self._origin = None
         self._region_items = []
@@ -399,6 +401,15 @@ class Canvas(QGraphicsView):
         self.line_mode = on
         self._apply_mode()
 
+    def _fixed_rect(self, pos):
+        """crop_size box centred on pos, in whole pixels, kept inside the image."""
+        size = self.pix.pixmap().size()
+        W, H = size.width(), size.height()
+        w, h = min(self.crop_size[0], W), min(self.crop_size[1], H)
+        x = int(np.clip(round(pos.x() - w / 2), 0, max(0, W - w)))
+        y = int(np.clip(round(pos.y() - h / 2), 0, max(0, H - h)))
+        return QRectF(x, y, w, h)
+
     def _drawing(self):
         return (self.zoom_mode or self.crop_mode or self.line_mode
                 or self.roi_tool in LASSO_COLORS)
@@ -462,7 +473,8 @@ class Canvas(QGraphicsView):
             return
         if self.crop_mode and btn == Qt.MouseButton.LeftButton:
             self._origin = pos
-            self.rect_item.setRect(QRectF(self._origin, self._origin))
+            self.rect_item.setRect(self._fixed_rect(pos) if self.crop_size
+                                   else QRectF(self._origin, self._origin))
             self.rect_item.show()
             return
         if self.line_mode and btn == Qt.MouseButton.LeftButton:
@@ -535,7 +547,9 @@ class Canvas(QGraphicsView):
             return
         if self.crop_mode and self._origin is not None:
             p = self.mapToScene(event.position().toPoint())
-            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            if self.crop_size:
+                self.rect_item.setRect(self._fixed_rect(p))
+            elif event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                 # Shift: a square, as in ImageJ (whole pixels so it stays square)
                 o = QPointF(round(self._origin.x()), round(self._origin.y()))
                 dx, dy = p.x() - o.x(), p.y() - o.y()
