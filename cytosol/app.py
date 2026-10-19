@@ -2208,18 +2208,22 @@ class MainWindow(QMainWindow):
             folder = Path(out) / item_folder(it)
             try:
                 n_files += len(export_item(it, folder, **kwargs))
-                if it.cells is not None and len(it.cells):
+                has_cells = it.cells is not None and len(it.cells)
+                if has_cells:
                     item_rows = self.roi_panel.save_item(it, folder)
                     write_csv(folder / f'{item_stem(it)}_cell_rois.csv', item_rows)
                     rows += item_rows
-                    for box in self._measure_boxes():
+                for box in self._measure_boxes():
+                    if box.has_rois(it):  # particles may cover the whole image
                         item_int = box.measure_item(it)
                         box.save_item(it, folder, item_int, companions=False)
                         intensity.setdefault(box.suffix, []).extend(item_int)
-                    p = self.particle_panel.particles_for(it)
-                    if p is not None and p.mask.any():
-                        save_particles(folder / f'{item_stem(it)}_particles.zip', it.cells, p,
-                                       it.id_properties())
+                pcells = self.particle_panel.cells_for(it)
+                p = self.particle_panel.particles_for(it) if pcells is not None and len(pcells) else None
+                if p is not None and p.mask.any():
+                    save_particles(folder / f'{item_stem(it)}_particles.zip', pcells, p,
+                                   it.id_properties())
+                if has_cells:
                     self.intensity_panel._region_file(it, folder / item_stem(it))
                 if it.coloc:
                     write_coloc_csv(folder / f'{item_stem(it)}_coloc2.csv', it.coloc)

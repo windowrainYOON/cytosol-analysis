@@ -50,9 +50,10 @@ class MeasureBox(QWidget):
     are <stem>_<suffix>.csv per image and <suffix>.csv for the set."""
 
     def __init__(self, win, tab_attr: str, regions, suffix: str, title: str,
-                 extra_files=None, overlay_regions=None):
+                 extra_files=None, overlay_regions=None, cells=None):
         super().__init__()
         self.win = win
+        self.cells = cells or (lambda it: it.cells)  # item -> CellRois measured on
         self.tab_attr = tab_attr
         self.regions = regions
         self.suffix = suffix
@@ -162,6 +163,10 @@ class MeasureBox(QWidget):
             idx = [i for i in idx if i >= len(item.luts) or item.luts[i].visible]
         return idx
 
+    def has_rois(self, it) -> bool:
+        cells = self.cells(it)
+        return cells is not None and len(cells) > 0
+
     def particles_for(self, item):
         pp = getattr(self.win, 'particle_panel', None)
         return pp.particles_for(item) if pp is not None else item.particles
@@ -170,7 +175,7 @@ class MeasureBox(QWidget):
 
     def measure_item(self, it) -> list[dict]:
         """Rows for an image's current plane and timepoint."""
-        cells = it.cells
+        cells = self.cells(it)
         if cells is None or not len(cells):
             return []
         regions = self.regions(it)
@@ -184,6 +189,9 @@ class MeasureBox(QWidget):
                 'timepoint': it.t + 1, 'plane': z}
         if particles is not None and particles.channel is not None:
             head['particle_channel'] = it.channels[particles.channel]
+        if cells is not it.cells:  # the whole image, no cell ROIs
+            rows = [{**r, 'roi': 'image', 'region': r['region'].replace('cell', 'image')}
+                    for r in rows]
         return [{**head, **r} for r in rows]
 
     def _signature(self, it):
@@ -192,12 +200,13 @@ class MeasureBox(QWidget):
         if uses_particles(regions):
             s = it.particle_settings
             part = astuple(s) if s is not None else id(it.particles)
-        return (id(it), cells_key(it.cells), it.z, it.t, tuple(r.name for r in regions), part,
+        return (id(it), cells_key(self.cells(it)), it.z, it.t, tuple(r.name for r in regions), part,
                 self.stats(), tuple(self.channels_for(it)))
 
     def refresh(self, force=False):
         it = self.win.current
-        if it is None or it.cells is None or not len(it.cells):
+        cells = self.cells(it) if it is not None else None
+        if cells is None or not len(cells):
             self.rows = []
             self._sig = None
             self._fill_table()
@@ -263,10 +272,12 @@ class MeasureBox(QWidget):
                               else '‘모든 이미지 측정’을 누르세요.')
         else:
             it = self.win.current
-            if it is not None and it.cells is not None and len(it.cells):
+            cells = self.cells(it) if it is not None else None
+            if cells is not None and len(cells):
                 if rows:
                     t = f', t {it.t + 1}/{it.nt}' if it.nt > 1 else ''
-                    self.info.setText(f'세포 {len(it.cells)}개 · {rows[0]["plane"]}{t} · {len(rows)}행')
+                    what = '이미지 전체' if cells is not it.cells else f'세포 {len(cells)}개'
+                    self.info.setText(f'{what} · {rows[0]["plane"]}{t} · {len(rows)}행')
                 elif not self.regions(it):
                     self.info.setText('측정할 영역이 없습니다.')
                 else:
@@ -288,7 +299,8 @@ class MeasureBox(QWidget):
     def measure_items(self, items) -> dict[int, list[dict]]:
         plan = []
         for it in items:
-            if it.cells is None or not len(it.cells):
+            cells = self.cells(it)
+            if cells is None or not len(cells):
                 continue
             ts = list(range(it.nt)) if self.all_t.isChecked() and it.nt > 1 else [it.t]
             plan.append((it, ts))
@@ -326,7 +338,7 @@ class MeasureBox(QWidget):
         return out
 
     def _items(self):
-        items = [it for it in self.win.items if it.cells is not None and len(it.cells)]
+        items = [it for it in self.win.items if self.has_rois(it)]
         if not items:
             QMessageBox.information(self, self.title, 'ROI가 있는 이미지가 없습니다.')
         return items
@@ -357,23 +369,26 @@ class MeasureBox(QWidget):
         base = str(Path(path).with_suffix(''))
         tail = '_' + self.suffix
         stem = base[:-len(tail)] if base.endswith(tail) else base
-        files = it.cells.save(f'{stem}_RoiSet.zip', properties=it.id_properties())
+        cells = self.cells(it)
+        files = []
+        if it.cells is not None and len(it.cells):
+            files = it.cells.save(f'{stem}_RoiSet.zip', properties=it.id_properties())
         regions = self.regions(it)
         particles = self.particles_for(it) if uses_particles(regions) else None
         if particles is not None and particles.mask.any():
-            files.append(save_particles(f'{stem}_particles.zip', it.cells, particles,
+            files.append(save_particles(f'{stem}_particles.zip', cells, particles,
                                         it.id_properties()))
         if self.extra_files is not None:
             files += self.extra_files(it, stem)
         extra = self.overlay_regions(it) if self.overlay_regions is not None else None
         png = f'{stem}_image.png'
-        Image.fromarray(overlay_image(it.composite(), it.cells, particles, regions=extra)).save(png)
+        Image.fromarray(overlay_image(it.composite(), cells, particles, regions=extra)).save(png)
         return files + [png]
 
     def save_current(self):
         it = self.win.current
-        if it is None or it.cells is None or not len(it.cells):
-            QMessageBox.information(self, self.title, '먼저 세포 ROI를 검출하거나 그리세요.')
+        if it is None or not self.has_rois(it):
+            QMessageBox.information(self, self.title, '먼저 ROI를 검출하거나 그리세요.')
             return
         default = str(it.path.with_name(f'{item_stem(it)}_{self.suffix}.csv'))
         path, _ = QFileDialog.getSaveFileName(self, f'{self.title} CSV 저장', default, 'CSV (*.csv)')

@@ -669,6 +669,28 @@ def run(out_dir) -> int:
                      'RoiSet.zip', 'particles.zip', 'regions.zip', 'image.png'):
             if not (out / 'intensity_gui' / f'{stem}_{name}').exists():
                 raise AssertionError(f'missing {stem}_{name}')
+        # particles over the whole image of an image without cell ROIs
+        bare = _synthetic_item()
+        win._add_item(bare)
+        win.file_list.setCurrentRow(len(win.items) - 1)
+        win.right_tabs.setCurrentIndex(win.particle_tab)
+        app.processEvents()
+        if pp.within.currentData() != 'image':
+            raise AssertionError('whole image not preselected without cell ROIs')
+        pp.part_channel.setCurrentIndex(1)
+        pp.part_on.setChecked(True)
+        pp.refresh()
+        pp.measure.refresh(force=True)
+        if bare.particles is None or not bare.particles.mask.any():
+            raise AssertionError('no particles over the whole image')
+        if len(pp.measure.rows) != 2 or pp.measure.rows[0]['roi'] != 'image':
+            raise AssertionError(f'whole-image particle rows: {pp.measure.rows}')
+        res = pp.measure.measure_items(win.items)
+        if not res.get(id(bare)) or not res.get(id(own)):
+            raise AssertionError('all-image particle measurement skipped an image')
+        pp.measure.save_item(bare, out / 'particles_whole', res[id(bare)])
+        if not (out / 'particles_whole' / f'{item_stem(bare)}_particles.zip').exists():
+            raise AssertionError('whole-image particle ROIs not saved')
         from .intensity import is_particle_file, is_region_file
         rz = out / 'intensity_gui' / f'{stem}_regions.zip'
         if not is_region_file(rz) or is_particle_file(rz):

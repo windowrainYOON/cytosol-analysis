@@ -250,7 +250,7 @@ def otsu_thresholds(plane, labels, region, depth) -> dict[int, float]:
 class ParticleSettings:
     channel: str            # channel name (matched by name on other images)
     index: int = 0          # channel index when no channel has that name
-    within: str = 'cyto'    # 'cyto' or 'cell'
+    within: str = 'cyto'    # 'cyto', 'cell' or 'image' (whole image, no cell ROIs needed)
     method: str = 'auto'    # 'auto' (spot detection), 'manual' or 'otsu' (v0.13)
     manual: float = 0.0     # threshold when method == 'manual' (raw value)
     min_px: int = 1         # smallest particle kept (pixels)
@@ -402,10 +402,16 @@ def spot_particles(plane, lab, region, s: ParticleSettings, px_um=None):
     return out, cutoff
 
 
+def whole_image_cells(shape, px_um=None):
+    """One 'cell' covering the whole image, for particles found without cell ROIs."""
+    from .cellroi import CellRois
+    return CellRois(np.ones(shape, np.int32), None, px_um)
+
+
 def detect_particles(cells, plane: np.ndarray, s: ParticleSettings, depth: int,
                      px_um: float | None = None) -> Particles:
     lab = cells.labels
-    region = base_masks(cells)['cell' if s.within == 'cell' else 'cyto']
+    region = base_masks(cells)['cyto' if s.within == 'cyto' else 'cell']
     if s.method == 'auto':
         parts, thr = spot_particles(plane, lab, region, s, px_um)
         if s.min_px > 1 and parts.any():
