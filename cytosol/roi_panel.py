@@ -39,7 +39,9 @@ from .cellroi import (
     segment_cells,
 )
 from .imageid import roi_id
+from .intensity import make_regions
 from .lut import ImageItem, item_folder, item_stem, match_channel, unique_stems
+from .measure_box import MeasureBox
 
 EDGE_LABELS = [
     ('trim', '안쪽 경계로 자르기'),
@@ -279,11 +281,26 @@ class RoiPanel(QWidget):
         il.addWidget(self.per_image)
         il.addWidget(save_all)
 
+        meas = QGroupBox('측정할 영역')
+        row = QHBoxLayout(meas)
+        self.reg_boxes = {}
+        for key, text in (('cell', '세포 전체'), ('nuc', '핵'), ('cyto', '세포질')):
+            b = QCheckBox(text)
+            b.setChecked(True)
+            b.toggled.connect(lambda _: self.measure.schedule())
+            self.reg_boxes[key] = b
+            row.addWidget(b)
+        row.addStretch()
+        self.measure = MeasureBox(win, 'roi_tab', self.regions_for, 'cell_intensity',
+                                  '세포 강도 측정')
+
         lay = QVBoxLayout(self)
         lay.addWidget(roles)
         lay.addWidget(det)
         lay.addWidget(ed, 1)
         lay.addWidget(io)
+        lay.addWidget(meas)
+        lay.addWidget(self.measure, 1)
 
         win.canvas.cellClicked.connect(self._canvas_click)
         win.canvas.lassoDrawn.connect(self._lasso)
@@ -436,6 +453,7 @@ class RoiPanel(QWidget):
         self._busy = False
         self.selected = 0
         self.refresh_list()
+        self.measure.bind(item)
 
     def _roles_changed(self, _):
         if self._busy or self.item is None:
@@ -604,11 +622,14 @@ class RoiPanel(QWidget):
             self.cell_list.clearSelection()
         self.draw_overlay()
 
+    def regions_for(self, item):
+        return make_regions([k for k, b in self.reg_boxes.items() if b.isChecked()], [])
+
     def draw_overlay(self, hidden=False):
         c = self.cells
-        ip = getattr(self.win, 'intensity_panel', None)
-        if ip is not None:  # measurements follow every ROI edit
-            ip.overlay_changed(hidden)
+        changed = getattr(self.win, 'rois_changed', None)
+        if changed is not None:  # measurements and particles follow every ROI edit
+            changed(hidden)
         if hidden or c is None or not self.show_rois.isChecked():
             self.win.canvas.show_cells([], 0)
             return

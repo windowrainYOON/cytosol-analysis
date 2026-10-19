@@ -87,11 +87,9 @@ class ImageItem:
     # Coloc 2 results (cytosol.coloc_panel.ColocRecord), newest run
     coloc: list = field(default_factory=list)
     # particle ROIs (cytosol.intensity): the settings that make them per cell
-    # (None: none, or loaded as fixed outlines), the current plane's
-    # particles, and the intensity rows of the current plane
+    # (None: none, or loaded as fixed outlines) and the current plane's particles
     particle_settings: object = None
     particles: object = None
-    intensity: list = field(default_factory=list)
     # cytosol.prefetch.TimeCache that reads this image's timepoints ahead
     time_cache: object = field(default=None, repr=False)
     _planes: np.ndarray | None = field(default=None, repr=False)
