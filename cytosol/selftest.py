@@ -240,7 +240,28 @@ def run(out_dir) -> int:
             raise AssertionError('particle ROI round trip')
         if len(type(cells).load(zp, cells.shape)) != 0:
             raise AssertionError('particle ROIs read as cells')
-        return f'{len(rows)} rows, {sum(counts.values())} particles'
+        # automatic spot detection: a touching pair and a dim spot per cytosol
+        img = planes[1].astype(np.float32).copy()
+        spots = []
+        for l in cells.ids():
+            cx, cy = cells.centroid(l)
+            spots += [(cx - 30, cy, 400), (cx - 30, cy + 4, 400), (cx + 30, cy, 60)]
+        for x, y, a in spots:
+            img += a * np.exp(-((xx - x) ** 2 + (yy - y) ** 2) / (2 * 1.5 ** 2))
+        sa = ParticleSettings('GFP', 1, 'cyto', 'auto', min_px=3, k=4.0)
+        pa = detect_particles(cells, img, sa, 16, item.pixel_um)
+        ca = pa.counts(cells)
+        if any(ca.get(l) != 3 for l in cells.ids()):
+            raise AssertionError(f'auto particles per cell: {ca}')
+        comp = pa.components(cells)
+        hit = {int(comp[int(round(y)), int(round(x))]) for x, y, _ in spots}
+        if 0 in hit or len(hit) != len(spots):
+            raise AssertionError('auto particles miss or merge spots')
+        zp = save_particles(out / 'selftest_particles_auto.zip', cells, pa)
+        back, s3 = load_particles(zp, cells.shape)
+        if s3 != sa or back.counts(cells) != ca or (back.mask ^ pa.mask).any():
+            raise AssertionError('auto particle ROI round trip')
+        return f'{len(rows)} rows, {sum(counts.values())} particles, auto {sum(ca.values())}'
 
     def image_id_pairing():
         from .app import load_items

@@ -63,6 +63,19 @@ EXPR_HELP = ('세미콜론(;)으로 여러 식을 나눕니다. 이름: cell(세
              '예: cyto - particle;  cell & particle;  (cell - nuc) | particle')
 
 
+def _outlines(p, cells):
+    """Pixel-edge outlines of every particle, touching ones drawn apart."""
+    if p.labels is None:
+        return trace_outlines(p.mask)
+    from scipy import ndimage as ndi
+    comp = p.components(cells)
+    loops = []
+    for k, sl in enumerate(ndi.find_objects(comp), start=1):
+        if sl is not None:
+            loops += trace_outlines(comp[sl] == k, sl[1].start, sl[0].start)
+    return loops
+
+
 class IntensityPanel(QWidget):
     def __init__(self, win):
         super().__init__()
@@ -146,10 +159,11 @@ class IntensityPanel(QWidget):
         for key, text in WITHIN:
             self.within.addItem(text, key)
         pl.addRow('찾을 영역', self.within)
-        self.thr_auto = QRadioButton('자동 (세포마다 Otsu)')
-        self.thr_auto.setToolTip('ImageJ에서 세포 ROI를 선택하고 setAutoThreshold("Otsu dark")를 '
-                                 '실행한 것과 같은 값을 세포마다 따로 구합니다.')
-        self.thr_manual = QRadioButton('수동')
+        self.thr_auto = QRadioButton('자동 (점 검출)')
+        self.thr_auto.setToolTip('LoG 필터로 세포마다 배경보다 뚜렷한 점(중앙값 + 민감도 × MAD)을 '
+                                 '찾고, 배경을 뺀 이미지에서 각 점을 봉우리 높이의 일정 비율까지 '
+                                 '넓힙니다. 붙어 있는 점은 따로 나뉩니다.')
+        self.thr_manual = QRadioButton('수동 threshold')
         self.thr_auto.setChecked(True)
         grp = QButtonGroup(self)
         grp.addButton(self.thr_auto)
@@ -158,7 +172,24 @@ class IntensityPanel(QWidget):
         row.addWidget(self.thr_auto)
         row.addWidget(self.thr_manual)
         row.addStretch()
-        pl.addRow('Threshold', row)
+        pl.addRow('방법', row)
+        self.spot_k = QDoubleSpinBox()
+        self.spot_k.setRange(1.0, 20.0)
+        self.spot_k.setSingleStep(0.5)
+        self.spot_k.setDecimals(1)
+        self.spot_k.setValue(3.0)
+        self.spot_k.setToolTip('점의 중심이 세포 배경의 중앙값 + 이 값 × MAD(잡음)를 넘어야 '
+                               '입자로 봅니다. 작을수록 흐린 점까지 찾습니다.')
+        pl.addRow('자동 민감도 (k)', self.spot_k)
+        self.spot_size = QDoubleSpinBox()
+        self.spot_size.setRange(0.05, 20.0)
+        self.spot_size.setSingleStep(0.05)
+        self.spot_size.setDecimals(2)
+        self.spot_size.setValue(0.4)
+        self.spot_size.setSuffix(' µm')
+        self.spot_size.setToolTip('찾을 입자의 대표 지름. 픽셀 크기 정보가 없는 이미지는 '
+                                  '0.1 µm/px로 봅니다.')
+        pl.addRow('자동 입자 지름', self.spot_size)
         self.thr_spin = QDoubleSpinBox()
         self.thr_spin.setRange(-1e9, 1e9)
         self.thr_spin.setDecimals(2)
@@ -199,6 +230,8 @@ class IntensityPanel(QWidget):
         self.part_channel.currentIndexChanged.connect(self._particle_channel_changed)
         self.within.currentIndexChanged.connect(self._particle_changed)
         self.min_px.valueChanged.connect(self._particle_changed)
+        self.spot_k.valueChanged.connect(self._particle_changed)
+        self.spot_size.valueChanged.connect(self._particle_changed)
         self.thr_spin.valueChanged.connect(self._thr_spin_changed)
         self.thr_slider.valueChanged.connect(self._thr_slider_changed)
         self.thr_manual.toggled.connect(self._manual_toggled)
@@ -327,8 +360,9 @@ class IntensityPanel(QWidget):
         return ParticleSettings(
             channel=name, index=max(self.part_channel.currentData() or 0, 0),
             within=self.within.currentData(),
-            method='manual' if self.thr_manual.isChecked() else 'otsu',
-            manual=self.thr_spin.value(), min_px=self.min_px.value())
+            method='manual' if self.thr_manual.isChecked() else 'auto',
+            manual=self.thr_spin.value(), min_px=self.min_px.value(),
+            k=self.spot_k.value(), size_um=self.spot_size.value())
 
     def particles_for(self, item):
         """Particles of an image's current plane: from its settings, or as loaded."""
@@ -345,7 +379,7 @@ class IntensityPanel(QWidget):
         p = item.particles
         if p is not None and p.plane_key == key:
             return p
-        p = detect_particles(cells, item.planes()[c], s, bit_depth(item, c))
+        p = detect_particles(cells, item.planes()[c], s, bit_depth(item, c), item.pixel_um)
         p.channel, p.plane_key = c, key
         item.particles = p
         return p
@@ -370,6 +404,8 @@ class IntensityPanel(QWidget):
     def _manual_toggled(self, on):
         for w in (self.thr_spin, self.thr_slider):
             w.setEnabled(on)
+        for w in (self.spot_k, self.spot_size):
+            w.setEnabled(not on)
         p = self.item.particles if self.item is not None else None
         if on and p is not None and p.thresholds and not self._busy:
             # start from the automatic values
@@ -475,7 +511,7 @@ class IntensityPanel(QWidget):
             return
         loops = getattr(p, '_outline', None)
         if loops is None:
-            loops = trace_outlines(p.mask) if p.mask.any() else []
+            loops = _outlines(p, it.cells) if p.mask.any() else []
             p._outline = loops
         canvas.show_particles(loops)
 
@@ -496,6 +532,8 @@ class IntensityPanel(QWidget):
                 self.within.setCurrentIndex(max(0, self.within.findData(s.within)))
                 (self.thr_manual if s.method == 'manual' else self.thr_auto).setChecked(True)
                 self.min_px.setValue(s.min_px)
+                self.spot_k.setValue(s.k)
+                self.spot_size.setValue(s.size_um)
             elif keep in item.channels:
                 self.part_channel.setCurrentIndex(item.channels.index(keep))
             else:
@@ -508,6 +546,8 @@ class IntensityPanel(QWidget):
                 self._show_thr(s.manual)
         for w in (self.thr_spin, self.thr_slider):
             w.setEnabled(self.thr_manual.isChecked())
+        for w in (self.spot_k, self.spot_size):
+            w.setEnabled(not self.thr_manual.isChecked())
         self._busy = False
         self._sig = None
         self.refresh(force=True)
@@ -586,8 +626,11 @@ class IntensityPanel(QWidget):
         n = sum(p.counts(it.cells).values())
         txt = f'입자 {n}개, {int(p.mask.sum())} px'
         thr = [v for v in p.thresholds.values() if np.isfinite(v)]
-        if thr and it.particle_settings is not None and it.particle_settings.method == 'otsu':
+        method = it.particle_settings.method if it.particle_settings is not None else None
+        if thr and method == 'otsu':
             txt += f' · 세포별 threshold {min(thr):.4g}–{max(thr):.4g}'
+        elif thr and method == 'auto':
+            txt += f' · 세포별 입자 하한 {min(thr):.4g}–{max(thr):.4g}'
         elif it.particle_settings is None:
             txt += ' · 파일에서 불러온 입자 ROI'
         self.part_info.setText(txt)
