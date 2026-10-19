@@ -152,7 +152,16 @@ A GUI for working on a whole set of images at once:
   - **입자 ROI tab** (v0.16, moved out of 강도 측정): particle ROIs and the
     `particle` region and the rest of the region they were found in
     (`cyto - particle` or `cell - particle`), with the particle count per cell
-    → `<name>_particle_intensity.csv` / `particle_intensity.csv`.
+    → `<name>_particle_intensity.csv` / `particle_intensity.csv`. **찾을 영역 →
+    이미지 전체** (v0.17) finds and measures particles over the whole image
+    with or without cell ROIs (one row `image`, regions `particle` and
+    `image - particle`; preselected for images without cell ROIs); with
+    **이 설정을 모든 이미지에 적용** and **모든 이미지 측정** the whole set gets
+    the same extraction and measurement. Whole-image particles still split by
+    the 강도 측정 logic (`cyto & particle`, `nuc & particle`, `cyto - particle`)
+    per cell; checked on the Zeiss sample (12 cells, 4640 particles) that every
+    region's pixel count and channel means match a direct numpy evaluation and
+    that particle pieces crossing cell or nucleus borders go to each side.
   - **강도 측정 tab**: regions set by logic over `cell`, `nuc`, `cyto` and
     `particle` (`cyto - particle`, `cell & particle`, `(cell - nuc) | particle`;
     `&` intersection, `|` union, `-` difference), shown filled in cyan on the

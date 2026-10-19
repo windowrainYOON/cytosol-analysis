@@ -36,12 +36,13 @@ from .intensity import (
     make_regions,
     save_particles,
     trace_outlines,
+    whole_image_cells,
 )
 from .lut import item_stem
 from .measure_box import MeasureBox, cells_key
 
 THR_STEPS = 1000
-WITHIN = [('cyto', '세포질 (핵 제외)'), ('cell', '세포 전체')]
+WITHIN = [('cyto', '세포질 (핵 제외)'), ('cell', '세포 전체'), ('image', '이미지 전체 (세포 ROI 없이)')]
 
 
 def _outlines(p, cells):
@@ -178,7 +179,7 @@ class ParticlePanel(QWidget):
         row.addStretch()
         lay.addWidget(reg)
         self.measure = MeasureBox(win, 'particle_tab', self.regions_for, 'particle_intensity',
-                                  '입자 강도 측정')
+                                  '입자 강도 측정', cells=self.cells_for)
         lay.addWidget(self.measure, 1)
 
     # ---- helpers ----------------------------------------------------------
@@ -200,6 +201,24 @@ class ParticlePanel(QWidget):
         self.schedule()
         self._draw_particles()
 
+    def cells_for(self, item):
+        """The ROIs particles are found and measured in: the cell ROIs, or one
+        region covering the whole image ('이미지 전체', or particles loaded for
+        an image without cell ROIs)."""
+        if item is None:
+            return None
+        s = item.particle_settings
+        has_cells = item.cells is not None and len(item.cells)
+        if (s is not None and s.within == 'image') or (
+                s is None and item.particles is not None and not has_cells):
+            h, w = item.image.shape[-2:]
+            whole = getattr(item, '_whole_cells', None)
+            if whole is None or whole.shape != (h, w):
+                whole = whole_image_cells((h, w), item.pixel_um)
+                item._whole_cells = whole
+            return whole
+        return item.cells
+
     def regions_for(self, item):
         """Particle regions to measure; none on an image without particles."""
         if item.particles is None and item.particle_settings is None:
@@ -209,7 +228,8 @@ class ParticlePanel(QWidget):
             exprs.append('particle')
         if self.reg_rest.isChecked():
             s = item.particle_settings
-            exprs.append(f'{s.within if s is not None else self.within.currentData()} - particle')
+            within = s.within if s is not None else self.within.currentData()
+            exprs.append(f'{"cyto" if within == "cyto" else "cell"} - particle')
         return make_regions([], exprs)
 
     # ---- particles ----------------------------------------------------------
@@ -226,7 +246,7 @@ class ParticlePanel(QWidget):
     def particles_for(self, item):
         """Particles of an image's current plane: from its settings, or as loaded."""
         s = item.particle_settings
-        cells = item.cells
+        cells = self.cells_for(item)
         if s is None:
             return item.particles
         if cells is None or not len(cells):
@@ -329,7 +349,7 @@ class ParticlePanel(QWidget):
         if not path:
             return
         try:
-            save_particles(path, it.cells, p, it.id_properties())
+            save_particles(path, self.cells_for(it), p, it.id_properties())
         except Exception as exc:
             traceback.print_exc()
             QMessageBox.warning(self, '저장 실패', str(exc))
@@ -367,13 +387,14 @@ class ParticlePanel(QWidget):
         canvas = self.win.canvas
         it = self.win.current
         p = it.particles if it is not None else None
-        if (self._hidden or p is None or it.cells is None or not self.show_particles.isChecked()
+        cells = self.cells_for(it)
+        if (self._hidden or p is None or cells is None or not self.show_particles.isChecked()
                 or self.win._stack_on()):
             canvas.show_particles([])
             return
         loops = getattr(p, '_outline', None)
         if loops is None:
-            loops = _outlines(p, it.cells) if p.mask.any() else []
+            loops = _outlines(p, cells) if p.mask.any() else []
             p._outline = loops
         canvas.show_particles(loops)
 
@@ -383,7 +404,8 @@ class ParticlePanel(QWidget):
         it = self.win.current
         if it is not self.item:
             return
-        if it is not None and it.cells is not None and len(it.cells) and (
+        cells = self.cells_for(it)
+        if cells is not None and len(cells) and (
                 self.visible_tab() or (it.particle_settings is not None
                                        and self.show_particles.isChecked())):
             try:
@@ -397,10 +419,11 @@ class ParticlePanel(QWidget):
 
     def _particle_info(self, it):
         p = it.particles if it is not None else None
-        if p is None or it.cells is None:
+        cells = self.cells_for(it)
+        if p is None or cells is None:
             self.part_info.setText('')
             return
-        n = sum(p.counts(it.cells).values())
+        n = sum(p.counts(cells).values())
         txt = f'입자 {n}개, {int(p.mask.sum())} px'
         thr = [v for v in p.thresholds.values() if np.isfinite(v)]
         method = it.particle_settings.method if it.particle_settings is not None else None
@@ -410,6 +433,8 @@ class ParticlePanel(QWidget):
             txt += f' · 세포별 입자 하한 {min(thr):.4g}–{max(thr):.4g}'
         elif it.particle_settings is None:
             txt += ' · 파일에서 불러온 입자 ROI'
+        if cells is not it.cells:
+            txt += ' · 이미지 전체'
         self.part_info.setText(txt)
 
     # ---- image selection ----------------------------------------------------
@@ -437,6 +462,12 @@ class ParticlePanel(QWidget):
                 nuc = (item.roi_roles or {}).get('nuc')
                 cand = [i for i in range(len(item.channels)) if i != nuc]
                 self.part_channel.setCurrentIndex(cand[0] if cand else 0)
+            if s is None:  # whole image only when there are no cell ROIs to search
+                has_cells = item.cells is not None and len(item.cells)
+                if not has_cells:
+                    self.within.setCurrentIndex(self.within.findData('image'))
+                elif self.within.currentData() == 'image':
+                    self.within.setCurrentIndex(self.within.findData('cyto'))
             self.part_on.setChecked(s is not None or item.particles is not None)
             self._sync_range()
             if s is not None:
