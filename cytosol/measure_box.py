@@ -187,8 +187,9 @@ class MeasureBox(QWidget):
         return cells is not None and len(cells) > 0
 
     def particles_for(self, item):
+        """The particles intensities are measured in (pixel or iso-contour ROIs)."""
         pp = getattr(self.win, 'particle_panel', None)
-        return pp.particles_for(item) if pp is not None else item.particles
+        return pp.intensity_particles_for(item) if pp is not None else item.particles
 
     # ---- measuring ------------------------------------------------------------
 
@@ -213,6 +214,8 @@ class MeasureBox(QWidget):
                 'timepoint': it.t + 1, 'plane': z}
         if particles is not None and particles.channel is not None:
             head['particle_channel'] = it.channels[particles.channel]
+        if particles is not None and particles.outline != 'pixel':
+            head['particle_intensity_roi'] = particles.outline
         if cells is not it.cells:  # the whole image, no cell ROIs
             rows = [{**r, 'roi': 'image'} | ({'region': r['region'].replace('cell', 'image')}
                                              if 'region' in r else {}) for r in rows]
@@ -224,6 +227,9 @@ class MeasureBox(QWidget):
         if uses_particles(regions):
             s = it.particle_settings
             part = astuple(s) if s is not None else id(it.particles)
+            pp = getattr(self.win, 'particle_panel', None)
+            if pp is not None:
+                part = (part, pp.intensity_value())
         return (id(it), cells_key(self.cells(it)), it.z, it.t, tuple(r.name for r in regions), part,
                 self.stats(), tuple(self.channels_for(it)), self.key() if self.key else None)
 
@@ -428,9 +434,10 @@ class MeasureBox(QWidget):
             files = it.cells.save(f'{stem}_RoiSet.zip', properties=it.id_properties())
         regions = self.regions(it)
         particles = self.particles_for(it) if uses_particles(regions) else None
-        if particles is not None and particles.mask.any():
+        pixel = self.win.particle_panel.particles_for(it) if particles is not None else None
+        if pixel is not None and pixel.mask.any():
             files += self.win.particle_panel.save_particle_files(
-                it, f'{stem}_particles.zip', cells, particles)
+                it, f'{stem}_particles.zip', cells, pixel)
         if self.extra_files is not None:
             files += self.extra_files(it, stem)
         extra = self.overlay_regions(it) if self.overlay_regions is not None else None

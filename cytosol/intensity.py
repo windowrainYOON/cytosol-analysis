@@ -292,6 +292,7 @@ class Particles:
     channel: int | None = None
     plane_key: object = None             # (z, t) the mask was made on
     labels: np.ndarray | None = None     # particle numbers when not just connectivity
+    outline: str = 'pixel'               # 'pixel' or 'iso-contour <level>' (contour_particles)
 
     def components(self, cells) -> np.ndarray:
         """Particle number image: each 8-connected piece within one cell, or
@@ -1036,6 +1037,42 @@ def iso_contours(plane: np.ndarray, cells, particles: 'Particles', level: float 
     return out
 
 
+def contour_labels(plane: np.ndarray, cells, particles: 'Particles', level: float = 0.5,
+                   comp: np.ndarray | None = None, names=None) -> np.ndarray:
+    """Particle number image (numbers of ``comp``) of the pixels whose centres
+    lie inside each particle's iso-intensity outline (iso_contours), as
+    ImageJ masks a polygon ROI. A particle without an outline, or with no
+    pixel centre inside it, keeps its own pixels."""
+    from skimage.draw import polygon
+
+    if comp is None:
+        comp = particles.components(cells)
+    if names is None:
+        names = particle_names(cells, comp)
+    xy = iso_contours(plane, cells, particles, level, comp, names)
+    out = np.zeros(comp.shape, np.int32)
+    for k, _, _, sl in names:
+        r = c = ()
+        if k in xy:
+            r, c = polygon(xy[k][:, 1] - 0.5, xy[k][:, 0] - 0.5, comp.shape)
+            free = out[r, c] == 0
+            r, c = r[free], c[free]
+        if not len(r):
+            r, c = np.nonzero(comp[sl] == k)
+            r, c = r + sl[0].start, c + sl[1].start
+        out[r, c] = k
+    return out
+
+
+def contour_particles(plane: np.ndarray, cells, particles: 'Particles',
+                      level: float = 0.5) -> 'Particles':
+    """The particles with their iso-contour masks (contour_labels) in place of
+    their pixels, for intensities measured inside the iso-intensity outlines."""
+    lab = contour_labels(plane, cells, particles, level)
+    return Particles(lab > 0, particles.settings, dict(particles.thresholds), particles.channel,
+                     particles.plane_key, labels=lab, outline=f'iso-contour {level:g}')
+
+
 def polygon_shape(xy: np.ndarray) -> dict:
     """The particle_shape values of a sub-pixel outline (pixels): area,
     centroid and the ellipse (same area and second moments, as ImageJ fits
@@ -1100,7 +1137,8 @@ def measure_particles(planes: np.ndarray, cells, particles: Particles, channels:
                       px_um: float | None, channel_index: list[int] | None = None,
                       stats=('Mean',), shapes=SHAPES, within: str = 'cyto',
                       contour_plane: np.ndarray | None = None,
-                      contour_level: float | None = None) -> list[dict]:
+                      contour_level: float | None = None,
+                      intensity_level: float | None = None) -> list[dict]:
     """One row per particle: ImageJ Analyze Particles shape values, the chosen
     Measure values per channel and, for condensates, the nearest-neighbour
     distance and the partition coefficient (particle mean / mean of the rest
@@ -1108,8 +1146,10 @@ def measure_particles(planes: np.ndarray, cells, particles: Particles, channels:
 
     With ``contour_level`` the shape values (and centroid, NND) come from the
     particle's sub-pixel iso-intensity outline on ``contour_plane``
-    (iso_contours) instead of its pixel edges; intensities always use the
-    particle's pixels."""
+    (iso_contours) instead of its pixel edges. Intensities (and area_px,
+    area_um2, the partition coefficient) use the particle's pixels, or with
+    ``intensity_level`` the pixels inside its iso-contour at that level
+    (contour_labels)."""
     comp = particles.components(cells)
     names = particle_names(cells, comp)
     if not names:
@@ -1119,7 +1159,21 @@ def measure_particles(planes: np.ndarray, cells, particles: Particles, channels:
     unit = 'um' if px_um else 'px'
     lab = cells.labels
     n = int(lab.max()) + 1
-    dilute = base_masks(cells)['cyto' if within == 'cyto' else 'cell'] & ~particles.mask
+    imask = {}  # particle -> (slice, mask) its intensities are measured in
+    taken = particles.mask
+    if intensity_level is not None and contour_plane is not None:
+        from scipy import ndimage as ndi
+        ilab = contour_labels(contour_plane, cells, particles, intensity_level, comp, names)
+        for k, sl in enumerate(ndi.find_objects(ilab), start=1):
+            if sl is not None:
+                imask[k] = (sl, ilab[sl] == k)
+        taken = taken | (ilab > 0)
+        itag = f'iso-contour {intensity_level:g}'
+    else:
+        for k, _, _, sl in names:
+            imask[k] = (sl, comp[sl] == k)
+        itag = 'pixel'
+    dilute = base_masks(cells)['cyto' if within == 'cyto' else 'cell'] & ~taken
     dl = lab[dilute]
     dn = np.bincount(dl, minlength=n)
     dmean = {}
@@ -1153,14 +1207,15 @@ def measure_particles(planes: np.ndarray, cells, particles: Particles, channels:
             for (k, _, _), v in zip(pts, d.min(1)):
                 nnd[k] = v * cal if np.isfinite(v) else math.nan
     rows = []
-    for k, l, name, sl in names:
-        m = comp[sl] == k
+    for k, l, name, _ in names:
+        sl, m = imask[k]
         g = shp[k]
         a = int(m.sum())
         row = {'roi': f'cell{l:03d}', 'status': cells.status.get(l, 'ok'), 'particle': name,
                'area_px': a, 'area_um2': round(a * cal * cal, 6) if px_um else ''}
-        if contour_level is not None:
-            # area_px / area_um2 stay the pixel ROI the intensities are measured on
+        if contour_level is not None or intensity_level is not None:
+            # area_px / area_um2 are the ROI the intensities are measured in
+            row['intensity_roi'] = itag
             row['shape_outline'] = g['outline']
             row[f'shape_area_{unit}2'] = _fmt(g['area'] * cal * cal)
         if 'Centroid' in shapes:

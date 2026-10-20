@@ -203,7 +203,7 @@ def run(out_dir) -> int:
 
     def intensity():
         from .intensity import (ParticleSettings, detect_particles, is_particle_file,
-                                is_contour_file, load_particles, make_regions, measure_cells,
+                                contour_particles, is_contour_file, load_particles, make_regions, measure_cells,
                                 measure_particles, save_particle_sets, save_particles, write_rows)
         planes = item.planes()
         cells = item.cells
@@ -288,6 +288,17 @@ def run(out_dir) -> int:
         if len(lone) != len(cells.ids()) or any(r['circularity'] < 0.92 or r['solidity'] < 0.98
                                                 for r in lone):
             raise AssertionError(f'iso-contour shape of round spots {lone}')
+        # intensities inside the iso-contours: fewer pixels, brighter mean, same particles
+        irow = measure_particles(img[None], cells, pa, ['GFP'], item.pixel_um,
+                                 contour_plane=img, contour_level=0.5, intensity_level=0.5)
+        for r in irow:
+            q = prow[r['particle']]
+            if r['intensity_roi'] != 'iso-contour 0.5' or not 0 < r['area_px'] <= q['area_px'] \
+                    or r['GFP_Mean'] < q['GFP_Mean'] - 1e-6:
+                raise AssertionError(f'contour intensity {r} vs {q}')
+        cp = contour_particles(img, cells, pa, 0.5)
+        if cp.counts(cells) != ca or (cp.mask & ~pa.mask).sum() > pa.mask.sum() // 2:
+            raise AssertionError('contour particles')
         files = save_particle_sets(out / 'selftest_particles_iso.zip', cells, pa, None, img, 0.5)
         if len(files) != 2 or not is_contour_file(files[1]) or is_particle_file(files[1]) \
                 or not is_particle_file(files[0]):
@@ -674,6 +685,17 @@ def run(out_dir) -> int:
             raise AssertionError('particle ROIs not defined from the panel')
         if pp.contour_value() != 0.5 or win.canvas._contour_item is None:
             raise AssertionError('iso-contour shape not on by default or not drawn')
+        if pp.intensity_value() is not None:
+            raise AssertionError('intensity not on pixel ROIs by default')
+        pix = {r['roi']: r['area_px'] for r in pp.measure.rows if r['region'] == 'particle'}
+        pp.int_contour.setChecked(True)
+        pp.measure.refresh(force=True)
+        iso = [r for r in pp.measure.rows if r['region'] == 'particle']
+        if not iso or any(r.get('particle_intensity_roi') != 'iso-contour 0.5'
+                          or r['area_px'] > pix[r['roi']] for r in iso):
+            raise AssertionError(f'contour intensity rows {iso[:1]}')
+        pp.int_pixel.setChecked(True)
+        pp.measure.refresh(force=True)
         if len(pp.measure.rows) != 2 * len(own.cells) \
                 or 'n_particles' not in pp.measure.rows[0]:
             raise AssertionError(f'particle rows: {len(pp.measure.rows)}')

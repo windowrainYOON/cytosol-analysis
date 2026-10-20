@@ -5,7 +5,9 @@ Microscopy image-based cytosol ROI determination and analysis.
 ## Methods statement
 
 For a paper's Methods section (update this sentence whenever an analysis
-feature is added):
+feature is added; keep the bracketed words only when the 입자 ROI tab's
+**강도 측정 ROI** was set to **등강도선 ROI**, and change 50% to the
+**레벨** used):
 
 > Line intensity profiles, per-cell colocalization (Pearson's, Spearman's
 > and Kendall's correlations, Manders' coefficients with Costes' automatic
@@ -15,9 +17,10 @@ feature is added):
 > Feret's diameters and fitted ellipse) were analysed with the
 > algorithms of the ImageJ Plot Profile/RGB Profiler, the Fiji Coloc 2 plugin
 > and ImageJ's Measure and Analyze Particles functions, respectively, with
-> particle intensities measured on the particles' pixel ROIs and shape
-> descriptors computed from sub-pixel iso-intensity contours (marching
-> squares) at 50% of each particle's height above its local background;
+> particle intensities measured on the particles' pixel ROIs [iso-contour
+> mode: within those contours] and shape descriptors computed from sub-pixel
+> iso-intensity contours (marching squares) at 50% of each particle's height
+> above its local background;
 > particles were detected within each cell ROI as spots whose scale-normalised
 > Hessian response (as in the FeatureJ Hessian plugin) exceeded the cell's
 > median + 3 × MAD, and delineated by marker-controlled watershed (as in the
@@ -214,6 +217,14 @@ A GUI for working on a whole set of images at once:
     (sub-pixel polygon ROIs `partCCC-NN`, properties `outline = iso_contour`,
     `contour_level`); folder loading links that file without reading it as
     particles or cells.
+    **강도 측정 ROI: 픽셀 ROI / 등강도선 ROI** (v0.22, default 픽셀 ROI):
+    with 등강도선 ROI every intensity that uses particles (입자 / 입자를 뺀
+    나머지 per cell, 입자마다 rows and partition coefficient, the 강도 측정
+    tab's logic regions) is measured in the pixels whose centres lie inside
+    each particle's iso-contour at the same **레벨** (ImageJ's polygon-ROI
+    mask); a particle without a contour keeps its pixels. Rows then carry
+    `particle_intensity_roi` / `intensity_roi` = `iso-contour 0.5`, and
+    `area_px` is that ROI's pixel count. Both ROI files are saved as above.
     **Summaries** (v0.19): 모든 이미지 측정 adds the views **요약: 이미지별** /
     **요약: 그룹별**, and saving writes `<suffix>_summary_image.csv` and
     `<suffix>_summary_group.csv` (plus `<name>_<suffix>_summary.csv` per

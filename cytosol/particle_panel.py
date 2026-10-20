@@ -35,6 +35,7 @@ from .intensity import (
     SHAPE_TITLES,
     ParticleSettings,
     bit_depth,
+    contour_particles,
     detect_particles,
     iso_contours,
     load_particles,
@@ -162,8 +163,24 @@ class ParticlePanel(QWidget):
         row.addWidget(self.contour_level)
         row.addStretch()
         pl.addRow(row)
+        self.int_pixel = QRadioButton('픽셀 ROI')
+        self.int_pixel.setToolTip('입자로 잡힌 픽셀 그대로 강도를 잽니다 (ImageJ Analyze Particles와 같음).')
+        self.int_contour = QRadioButton('등강도선 ROI')
+        self.int_contour.setToolTip('위 레벨의 등강도선 안에 중심이 든 픽셀로 강도를 잽니다 '
+                                    '(ImageJ가 polygon ROI를 마스크로 만드는 방식). 입자 영역, '
+                                    '입자를 뺀 나머지, 강도 측정 탭의 논리 영역, 분배계수 모두 적용.')
+        self.int_pixel.setChecked(True)
+        grp = QButtonGroup(self)
+        grp.addButton(self.int_pixel)
+        grp.addButton(self.int_contour)
+        row = QHBoxLayout()
+        row.addWidget(self.int_pixel)
+        row.addWidget(self.int_contour)
+        row.addStretch()
+        pl.addRow('강도 측정 ROI', row)
         self.contour_on.toggled.connect(self._contour_changed)
         self.contour_level.valueChanged.connect(self._contour_changed)
+        self.int_contour.toggled.connect(self._contour_changed)
         self.part_info = QLabel()
         self.part_info.setWordWrap(True)
         self.part_info.setStyleSheet('color: gray; font-size: 11px;')
@@ -309,6 +326,28 @@ class ParticlePanel(QWidget):
         """Level of the iso-intensity outlines used for shape, None for pixel edges."""
         return round(self.contour_level.value(), 4) if self.contour_on.isChecked() else None
 
+    def intensity_value(self) -> float | None:
+        """Level of the iso-contour ROIs intensities are measured in, None for pixel ROIs."""
+        return round(self.contour_level.value(), 4) if self.int_contour.isChecked() else None
+
+    def intensity_particles_for(self, item):
+        """The particles intensities are measured in: their pixels, or the pixels
+        inside their iso-contours (kept with the pixel particles until they change)."""
+        p = self.particles_for(item)
+        level = self.intensity_value()
+        if p is None or level is None or not p.mask.any():
+            return p
+        key = (level, item.z, item.t)
+        cached = getattr(p, '_intensity', None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        plane = self.contour_plane(item, p)
+        if plane is None:
+            return p
+        cp = contour_particles(plane, self.cells_for(item), p, level)
+        p._intensity = (key, cp)
+        return cp
+
     def contour_plane(self, item, particles):
         """The plane particle outlines are drawn on: the channel they were found in."""
         if item is None:
@@ -331,22 +370,24 @@ class ParticlePanel(QWidget):
         return save_particle_sets(path, cells, particles, item.id_properties(), plane, level)
 
     def _contour_changed(self, *_):
-        self.contour_level.setEnabled(self.contour_on.isChecked())
+        self.contour_level.setEnabled(self.contour_on.isChecked() or self.int_contour.isChecked())
         self._draw_particles()
         self.measure.schedule()
+        self.win.particles_changed()
 
     def particle_rows(self, item, cells, particles, channels, stats):
         """One row per particle ROI ('입자마다'); None for the per-cell rows."""
         if not self.per_particle.isChecked():
             return None
+        particles = self.particles_for(item)  # pixel particles; the shape needs their outlines
         if particles is None:
             return []
         s = item.particle_settings
         within = s.within if s is not None else self.within.currentData()
-        level = self.contour_value()
-        plane = self.contour_plane(item, particles) if level is not None else None
+        level, ilevel = self.contour_value(), self.intensity_value()
+        plane = self.contour_plane(item, particles) if (level, ilevel) != (None, None) else None
         return measure_particles(item.planes(), cells, particles, item.channels, item.pixel_um,
-                                 channels, stats, self.shapes(), within, plane, level)
+                                 channels, stats, self.shapes(), within, plane, level, ilevel)
 
     def _mode_changed(self, per_particle):
         self.cell_opts.setVisible(not per_particle)
