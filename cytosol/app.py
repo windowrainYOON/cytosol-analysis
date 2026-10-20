@@ -67,7 +67,7 @@ from .lut import (
     unique_stems,
 )
 from .coloc_panel import ColocPanel, write_coloc_csv
-from .intensity import is_particle_file, is_region_file, save_particles, write_rows
+from .intensity import is_contour_file, is_particle_file, is_region_file, write_rows
 from .groups import GROUP_FILE, apply_groups, auto_groups, read_groups, suggest_name, write_groups
 from .image_tree import ImageTree
 from .intensity_panel import IntensityPanel
@@ -200,6 +200,7 @@ class Canvas(QGraphicsView):
         self._region_items = []
         self._cell_items = []
         self._particle_item = None
+        self._contour_item = None
         self._logic_item = None
         self._fitted = False
         self._lasso = None
@@ -363,6 +364,21 @@ class Canvas(QGraphicsView):
         self._particle_item.setPen(pen)
         self._particle_item.setZValue(12.5)
         self.scene().addItem(self._particle_item)
+
+    def show_particle_contours(self, loops):
+        """Outline the particles' sub-pixel iso-intensity contours (shape) in orange."""
+        if self._contour_item is not None:
+            self.scene().removeItem(self._contour_item)
+            self._contour_item = None
+        if not len(loops):
+            return
+        pen = QPen(QColor(255, 150, 0))
+        pen.setCosmetic(True)
+        pen.setWidthF(1.2)
+        self._contour_item = QGraphicsPathItem(polygon_path(*loops))
+        self._contour_item.setPen(pen)
+        self._contour_item.setZValue(12.6)
+        self.scene().addItem(self._contour_item)
 
     def show_regions(self, loops):
         """Fill the logic regions of the 강도 측정 tab in translucent cyan."""
@@ -1424,6 +1440,10 @@ class MainWindow(QMainWindow):
                 if f not in it.linked:
                     it.linked.append(f)
                 continue
+            if is_contour_file(f):  # iso-contour outlines (shape only): keep with the image
+                if f not in it.linked:
+                    it.linked.append(f)
+                continue
             if is_particle_file(f):  # particle ROIs from the 입자 ROI tab
                 try:
                     self.particle_panel.load_particles_into(it, f)
@@ -2352,8 +2372,8 @@ class MainWindow(QMainWindow):
                 pcells = self.particle_panel.cells_for(it)
                 p = self.particle_panel.particles_for(it) if pcells is not None and len(pcells) else None
                 if p is not None and p.mask.any():
-                    save_particles(folder / f'{item_stem(it)}_particles.zip', pcells, p,
-                                   it.id_properties())
+                    self.particle_panel.save_particle_files(
+                        it, folder / f'{item_stem(it)}_particles.zip', pcells, p)
                 if has_cells:
                     self.intensity_panel._region_file(it, folder / item_stem(it))
                 if it.coloc:

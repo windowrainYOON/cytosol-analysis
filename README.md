@@ -14,7 +14,10 @@ feature is added):
 > descriptors (area, perimeter, circularity, solidity, aspect ratio, roundness,
 > Feret's diameters and fitted ellipse) were analysed with the
 > algorithms of the ImageJ Plot Profile/RGB Profiler, the Fiji Coloc 2 plugin
-> and ImageJ's Measure and Analyze Particles functions, respectively;
+> and ImageJ's Measure and Analyze Particles functions, respectively, with
+> particle intensities measured on the particles' pixel ROIs and shape
+> descriptors computed from sub-pixel iso-intensity contours (marching
+> squares) at 50% of each particle's height above its local background;
 > particles were detected within each cell ROI as spots whose scale-normalised
 > Hessian response (as in the FeatureJ Hessian plugin) exceeded the cell's
 > median + 3 × MAD, and delineated by marker-controlled watershed (as in the
@@ -190,6 +193,27 @@ A GUI for working on a whole set of images at once:
     ImageJ traced ROIs, so Measure on them in ImageJ gives the same
     perimeter. Small particles have solidity below 1 even when round (the
     hull runs over pixel corners, as in ImageJ).
+    **형태는 등강도선으로 측정** (v0.21, on by default, **레벨** 0.5): the
+    shape values (perimeter, circularity, solidity, AR, roundness, Feret,
+    ellipse, centroid, equivalent diameter, NND) come from each particle's
+    sub-pixel iso-intensity outline instead of its pixel edges: marching
+    squares on the particle channel at background + level × (peak −
+    background), background = median of the free pixels within 3 px of the
+    particle in its cell, peak = the particle's maximum after a 0.7 px
+    Gaussian; the outline stays in the particle's cell and out of other
+    particles (touching ones keep their watershed border). Intensities,
+    `area_px`/`area_um2` and the partition coefficient stay on the pixel
+    ROIs; the rows add `shape_outline` (`iso-contour 0.5`) and
+    `shape_area_um2` (area inside the outline). Off = ImageJ Analyze
+    Particles values as before. On synthetic blurred particles of known
+    shape (PSF σ 1 px, Poisson noise, 30 placements each) round particles
+    gave solidity 1.00 (pixel edges 0.89–0.94) and circularity/AR spread
+    about 10× smaller; elongated particles a few pixels wide still read
+    rounder than they are (PSF blur, any outline). The outlines are drawn in
+    orange and saved next to the pixel ROIs as `<name>_particles_contour.zip`
+    (sub-pixel polygon ROIs `partCCC-NN`, properties `outline = iso_contour`,
+    `contour_level`); folder loading links that file without reading it as
+    particles or cells.
     **Summaries** (v0.19): 모든 이미지 측정 adds the views **요약: 이미지별** /
     **요약: 그룹별**, and saving writes `<suffix>_summary_image.csv` and
     `<suffix>_summary_group.csv` (plus `<name>_<suffix>_summary.csv` per

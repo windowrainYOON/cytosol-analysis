@@ -203,8 +203,8 @@ def run(out_dir) -> int:
 
     def intensity():
         from .intensity import (ParticleSettings, detect_particles, is_particle_file,
-                                load_particles, make_regions, measure_cells, measure_particles,
-                                save_particles, write_rows)
+                                is_contour_file, load_particles, make_regions, measure_cells,
+                                measure_particles, save_particle_sets, save_particles, write_rows)
         planes = item.planes()
         cells = item.cells
         # two bright spots in every cytosol of the GFP channel
@@ -276,6 +276,22 @@ def run(out_dir) -> int:
         back, s3 = load_particles(zp, cells.shape)
         if s3 != sa or back.counts(cells) != ca or (back.mask ^ pa.mask).any():
             raise AssertionError('auto particle ROI round trip')
+        # shape from sub-pixel iso-intensity outlines (half max), intensity from pixels
+        crow = measure_particles(img[None], cells, pa, ['GFP'], item.pixel_um,
+                                 contour_plane=img, contour_level=0.5)
+        prow = {r['particle']: r for r in measure_particles(img[None], cells, pa, ['GFP'],
+                                                            item.pixel_um)}
+        for r in crow:
+            if r['shape_outline'] != 'iso-contour 0.5' or r['GFP_Mean'] != prow[r['particle']]['GFP_Mean']:
+                raise AssertionError(f'contour row {r}')
+        lone = [r for r in crow if r['GFP_Mean'] < 150]  # the dim round spots, alone
+        if len(lone) != len(cells.ids()) or any(r['circularity'] < 0.92 or r['solidity'] < 0.98
+                                                for r in lone):
+            raise AssertionError(f'iso-contour shape of round spots {lone}')
+        files = save_particle_sets(out / 'selftest_particles_iso.zip', cells, pa, None, img, 0.5)
+        if len(files) != 2 or not is_contour_file(files[1]) or is_particle_file(files[1]) \
+                or not is_particle_file(files[0]):
+            raise AssertionError(f'contour ROI files {files}')
         return f'{len(rows)} rows, {sum(counts.values())} particles, auto {sum(ca.values())}'
 
     def image_id_pairing():
@@ -656,6 +672,8 @@ def run(out_dir) -> int:
         pp.measure.refresh(force=True)
         if own.particle_settings is None or own.particles is None:
             raise AssertionError('particle ROIs not defined from the panel')
+        if pp.contour_value() != 0.5 or win.canvas._contour_item is None:
+            raise AssertionError('iso-contour shape not on by default or not drawn')
         if len(pp.measure.rows) != 2 * len(own.cells) \
                 or 'n_particles' not in pp.measure.rows[0]:
             raise AssertionError(f'particle rows: {len(pp.measure.rows)}')
@@ -681,7 +699,8 @@ def run(out_dir) -> int:
         from .lut import item_stem
         stem = item_stem(own)
         for name in ('cell_intensity.csv', 'particle_intensity.csv', 'intensity.csv',
-                     'RoiSet.zip', 'particles.zip', 'regions.zip', 'image.png'):
+                     'RoiSet.zip', 'particles.zip', 'particles_contour.zip', 'regions.zip',
+                     'image.png'):
             if not (out / 'intensity_gui' / f'{stem}_{name}').exists():
                 raise AssertionError(f'missing {stem}_{name}')
         # user-named groups: group column, per-image / per-group summaries, saved and restored

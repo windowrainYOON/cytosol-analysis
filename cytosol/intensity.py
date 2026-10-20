@@ -533,16 +533,95 @@ def save_particles(path, cells, particles: Particles, properties=None) -> str:
     return str(path)
 
 
-def is_particle_file(path) -> bool:
-    """An ImageJ ROI file holding only particle ROIs (partCCC-NN)."""
+CONTOUR_OUTLINE = 'iso_contour'  # 'outline' property of iso-contour particle ROIs
+
+
+def particle_contour_rois(plane, cells, particles: Particles, level: float = 0.5,
+                          properties=None) -> list:
+    """The particles' iso-intensity outlines (iso_contours) as sub-pixel
+    ImageJ polygon ROIs, named like particle_rois (partCCC-NN) and marked
+    with the properties outline = iso_contour and contour_level. A particle
+    without an outline keeps its pixel outline."""
+    import roifile
+
+    from .cellroi import _polygon_roi
+
+    comp = particles.components(cells)
+    names = particle_names(cells, comp)
+    xy = iso_contours(plane, cells, particles, level, comp, names)
+    props = dict(properties or {})
+    if particles.settings is not None:
+        props.update(particles.settings.properties())
+    props.update({'outline': CONTOUR_OUTLINE, 'contour_level': f'{level:g}'})
+    out = []
+    for k, _, name, sl in names:
+        if k in xy:
+            roi = _polygon_roi(xy[k], name)
+        else:
+            loops = wand_outlines(comp[sl] == k, sl[1].start, sl[0].start)
+            roi = roifile.ImagejRoi.frompoints(np.round(loops[0]).astype(np.int32), name=name)
+            roi.roitype = roifile.ROI_TYPE.TRACED
+        roi.properties = dict(props)
+        out.append(roi)
+    return out
+
+
+def contour_path(pixel_path) -> Path:
+    """<stem>_particles_contour.zip next to <stem>_particles.zip."""
+    p = Path(pixel_path)
+    return p.with_name(f'{p.stem}_contour{p.suffix or ".zip"}')
+
+
+def save_particle_contours(path, plane, cells, particles: Particles, level: float = 0.5,
+                           properties=None) -> str:
+    import roifile
+
+    rois = particle_contour_rois(plane, cells, particles, level, properties)
+    if not rois:
+        raise ValueError('저장할 입자 ROI가 없습니다.')
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+    roifile.roiwrite(path, rois)
+    return str(path)
+
+
+def save_particle_sets(path, cells, particles: Particles, properties=None,
+                       contour_plane=None, contour_level: float | None = None) -> list[str]:
+    """The pixel particle ROIs at ``path`` (intensity) and, with a contour
+    level, their iso-intensity outlines (shape) at contour_path(path)."""
+    files = [save_particles(path, cells, particles, properties)]
+    if contour_level is not None and contour_plane is not None:
+        files.append(save_particle_contours(contour_path(path), contour_plane, cells, particles,
+                                            contour_level, properties))
+    return files
+
+
+def _read_rois(path) -> list:
     import roifile
 
     try:
         r = roifile.roiread(path)
     except Exception:
-        return False
-    rois = r if isinstance(r, list) else [r]
-    return bool(rois) and all((x.name or '').lower().startswith(PARTICLE_PREFIX) for x in rois)
+        return []
+    return r if isinstance(r, list) else [r]
+
+
+def is_contour_file(path) -> bool:
+    """A file of iso-contour particle outlines (shape only, not loaded back)."""
+    rois = _read_rois(path)
+    return bool(rois) and all((x.name or '').lower().startswith(PARTICLE_PREFIX)
+                              and (x.properties or {}).get('outline') == CONTOUR_OUTLINE
+                              for x in rois)
+
+
+def is_particle_file(path) -> bool:
+    """An ImageJ ROI file holding only (pixel) particle ROIs (partCCC-NN)."""
+    rois = _read_rois(path)
+    return bool(rois) and all((x.name or '').lower().startswith(PARTICLE_PREFIX)
+                              and (x.properties or {}).get('outline') != CONTOUR_OUTLINE
+                              for x in rois)
 
 
 def load_particles(path, shape) -> tuple[Particles, ParticleSettings | None]:
@@ -894,6 +973,109 @@ def particle_shape(m: np.ndarray) -> dict:
             'eq_diam': 2 * math.sqrt(area / math.pi)}
 
 
+def iso_contours(plane: np.ndarray, cells, particles: 'Particles', level: float = 0.5,
+                 comp: np.ndarray | None = None, names=None) -> dict[int, np.ndarray]:
+    """Sub-pixel iso-intensity outline of every particle, for its shape: the
+    line where the intensity falls to ``level`` of the way from the local
+    background to the particle's peak (0.5 = half maximum), found by marching
+    squares (linear interpolation between pixel centres). The background is
+    the median of the pixels within 3 px around the particle that are in the
+    same cell and in no particle; the peak is the particle's maximum after a
+    0.7 px Gaussian. The outline stays inside the particle's cell and out of
+    other particles (touching particles keep their watershed border). Returns
+    component number -> (N, 2) x, y in image pixels (ImageJ coordinates:
+    pixel (r, c) covers [c, c+1] x [r, r+1]); particles without one are left
+    out."""
+    from scipy import ndimage as ndi
+    from skimage import measure
+
+    if comp is None:
+        comp = particles.components(cells)
+    if names is None:
+        names = particle_names(cells, comp)
+    p = np.asarray(plane, np.float64)
+    sm = ndi.gaussian_filter(p, 0.7)
+    lab = cells.labels
+    h, w = p.shape
+    near, pad = 3, 6
+    out = {}
+    for k, l, _, sl in names:
+        r0, r1 = max(sl[0].start - pad, 0), min(sl[0].stop + pad, h)
+        c0, c1 = max(sl[1].start - pad, 0), min(sl[1].stop + pad, w)
+        sub = p[r0:r1, c0:c1]
+        cc = comp[r0:r1, c0:c1]
+        own = cc == k
+        free = (lab[r0:r1, c0:c1] == l) & (cc == 0)
+        ring = ndi.binary_dilation(own, np.ones((3, 3), bool), iterations=near) & free
+        if ring.any():
+            bg = float(np.median(sub[ring]))
+        else:
+            rest = (lab == l) & (comp == 0)
+            bg = float(np.median(p[rest])) if rest.any() else float(sub[own].min())
+        ssm = np.where(own, sm[r0:r1, c0:c1], -np.inf)
+        pr, pc = np.unravel_index(int(np.argmax(ssm)), ssm.shape)
+        peak = float(ssm[pr, pc])
+        if not peak > bg:
+            continue
+        lv = bg + level * (peak - bg)
+        low = min(float(sub.min()), lv) - 1.0
+        img = np.pad(np.where(own | free, sub, low), 1, constant_values=low)
+        best, best_area = None, 0.0
+        for c in measure.find_contours(img, lv):
+            if len(c) < 4 or not np.allclose(c[0], c[-1]):
+                continue
+            rc = c[:-1] - 1
+            a = _polygon_area(rc)
+            if measure.points_in_poly([[pr, pc]], rc)[0]:
+                best = rc
+                break
+            if a > best_area:
+                best, best_area = rc, a
+        if best is not None:
+            out[k] = best[:, ::-1] + (c0 + 0.5, r0 + 0.5)
+    return out
+
+
+def polygon_shape(xy: np.ndarray) -> dict:
+    """The particle_shape values of a sub-pixel outline (pixels): area,
+    centroid and the ellipse (same area and second moments, as ImageJ fits
+    it) from the polygon itself, perimeter as its length, solidity, Feret
+    from its convex hull."""
+    xy = np.asarray(xy, float)
+    x, y = xy[:, 0], xy[:, 1]
+    x1, y1 = np.roll(x, -1), np.roll(y, -1)
+    cr = x * y1 - x1 * y
+    a2 = float(cr.sum()) / 2
+    area = abs(a2)
+    perim = float(np.hypot(x1 - x, y1 - y).sum())
+    if area <= 0:
+        cx, cy = float(x.mean()), float(y.mean())
+        major = minor = angle = 0.0
+    else:
+        cx = float(((x + x1) * cr).sum()) / (6 * a2)
+        cy = float(((y + y1) * cr).sum()) / (6 * a2)
+        mxx = float(((x * x + x * x1 + x1 * x1) * cr).sum()) / (12 * a2) - cx * cx
+        myy = float(((y * y + y * y1 + y1 * y1) * cr).sum()) / (12 * a2) - cy * cy
+        mxy = float(((x * y1 + 2 * x * y + 2 * x1 * y1 + x1 * y) * cr).sum()) / (24 * a2) - cx * cy
+        ev, vec = np.linalg.eigh([[mxx, mxy], [mxy, myy]])
+        a, b = 2 * math.sqrt(max(ev[1], 0.0)), 2 * math.sqrt(max(ev[0], 0.0))
+        scale = math.sqrt(area / (math.pi * a * b)) if a * b > 0 else 1.0
+        major, minor = 2 * a * scale, 2 * b * scale
+        # counter-clockwise from the x axis on screen (y points down)
+        angle = math.degrees(math.atan2(-vec[1, 1], vec[0, 1])) % 180.0
+    hull = _hull(xy)
+    hull_area = _polygon_area(hull) if len(hull) >= 3 else area
+    feret, feret_angle, min_feret = feret_values(hull)
+    return {'area': area, 'x': cx, 'y': cy, 'perim': perim,
+            'circ': min(4 * math.pi * area / perim ** 2, 1.0) if perim else 0.0,
+            'solidity': min(area / hull_area, 1.0) if hull_area else math.nan,
+            'major': major, 'minor': minor, 'angle': angle,
+            'ar': major / minor if minor else math.nan,
+            'round': 4 * area / (math.pi * major * major) if major else math.nan,
+            'feret': feret, 'feret_angle': feret_angle, 'min_feret': min_feret,
+            'eq_diam': 2 * math.sqrt(area / math.pi)}
+
+
 def _signed_area(xy) -> float:
     x, y = xy[:, 0], xy[:, 1]
     return float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y)) / 2
@@ -916,11 +1098,18 @@ def particle_names(cells, comp) -> list[tuple[int, int, str, tuple]]:
 
 def measure_particles(planes: np.ndarray, cells, particles: Particles, channels: list[str],
                       px_um: float | None, channel_index: list[int] | None = None,
-                      stats=('Mean',), shapes=SHAPES, within: str = 'cyto') -> list[dict]:
+                      stats=('Mean',), shapes=SHAPES, within: str = 'cyto',
+                      contour_plane: np.ndarray | None = None,
+                      contour_level: float | None = None) -> list[dict]:
     """One row per particle: ImageJ Analyze Particles shape values, the chosen
     Measure values per channel and, for condensates, the nearest-neighbour
     distance and the partition coefficient (particle mean / mean of the rest
-    of the cell's search region, the dilute phase)."""
+    of the cell's search region, the dilute phase).
+
+    With ``contour_level`` the shape values (and centroid, NND) come from the
+    particle's sub-pixel iso-intensity outline on ``contour_plane``
+    (iso_contours) instead of its pixel edges; intensities always use the
+    particle's pixels."""
     comp = particles.components(cells)
     names = particle_names(cells, comp)
     if not names:
@@ -939,13 +1128,24 @@ def measure_particles(planes: np.ndarray, cells, particles: Particles, channels:
             s = np.bincount(dl, weights=planes[c][dilute].astype(np.float64), minlength=n)
             with np.errstate(divide='ignore', invalid='ignore'):
                 dmean[c] = s / dn
-    shp = {k: particle_shape(comp[sl] == k) for k, _, _, sl in names}
+    shp = {}
+    for k, _, _, sl in names:
+        g = particle_shape(comp[sl] == k)
+        g['x'] += sl[1].start
+        g['y'] += sl[0].start
+        g['outline'] = 'pixel'
+        shp[k] = g
+    if contour_level is not None and contour_plane is not None:
+        tag = f'iso-contour {contour_level:g}'
+        for k, xy in iso_contours(contour_plane, cells, particles, contour_level,
+                                  comp, names).items():
+            shp[k] = {**polygon_shape(xy), 'outline': tag}
     nnd = {}
     if 'NND' in shapes:
         by_cell = {}
         for k, l, _, sl in names:
             by_cell.setdefault(l, []).append(
-                (k, shp[k]['x'] + sl[1].start, shp[k]['y'] + sl[0].start))
+                (k, shp[k]['x'], shp[k]['y']))
         for pts in by_cell.values():
             xy = np.array([(x, y) for _, x, y in pts])
             d = np.sqrt(((xy[:, None] - xy[None]) ** 2).sum(-1))
@@ -956,12 +1156,16 @@ def measure_particles(planes: np.ndarray, cells, particles: Particles, channels:
     for k, l, name, sl in names:
         m = comp[sl] == k
         g = shp[k]
-        a = g['area']
+        a = int(m.sum())
         row = {'roi': f'cell{l:03d}', 'status': cells.status.get(l, 'ok'), 'particle': name,
                'area_px': a, 'area_um2': round(a * cal * cal, 6) if px_um else ''}
+        if contour_level is not None:
+            # area_px / area_um2 stay the pixel ROI the intensities are measured on
+            row['shape_outline'] = g['outline']
+            row[f'shape_area_{unit}2'] = _fmt(g['area'] * cal * cal)
         if 'Centroid' in shapes:
-            row[f'x_{unit}'] = _fmt((g['x'] + sl[1].start) * cal)
-            row[f'y_{unit}'] = _fmt((g['y'] + sl[0].start) * cal)
+            row[f'x_{unit}'] = _fmt(g['x'] * cal)
+            row[f'y_{unit}'] = _fmt(g['y'] * cal)
         if 'Perim.' in shapes:
             row[f'perimeter_{unit}'] = _fmt(g['perim'] * cal)
         if 'Circ.' in shapes:
