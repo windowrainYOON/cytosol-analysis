@@ -687,8 +687,13 @@ def run(out_dir) -> int:
         # user-named groups: group column, per-image / per-group summaries, saved and restored
         from .groups import GROUP_FILE, apply_groups, read_groups, summarize, write_groups
         win.set_group([own], 'ctrl')
-        if win.file_list.item(win.items.index(own)).text() != f'[ctrl] {own.label}':
-            raise AssertionError('group not shown in the list')
+        leaf = win.file_list.item(win.items.index(own))
+        if leaf.text(0) != own.label or leaf.parent() is None or not leaf.parent().text(0).startswith('ctrl'):
+            raise AssertionError('group not shown as a folder in the list')
+        from .groups import auto_groups, suggest_name
+        if suggest_name(['abc', 'abc_0001', 'abc_0002.tif']) != 'abc' \
+                or auto_groups(['abc', 'abc_0001', 'x', 'abc_0002']) != {0: 'abc', 1: 'abc', 3: 'abc'}:
+            raise AssertionError('group name from file names')
         pm = pp.measure
         pm.batch_rows = [r for rs in pm.measure_items([own]).values() for r in rs]
         if not pm.batch_rows or pm.batch_rows[0].get('group') != 'ctrl':
@@ -757,6 +762,12 @@ def run(out_dir) -> int:
         win.add_files([out / 'selftest.TCF'])
         win.add_files([out / 'selftest.TCF'])
         n = len(win.items)
+        win.apply_auto_groups({'tcf': win.items[-2:]})
+        folder = win.file_list.item(n - 1).parent()
+        win.file_list.clearSelection()
+        folder.setSelected(True)
+        if win.file_list.selected_rows() != [n - 2, n - 1] or win.file_list.selected_group() != 'tcf':
+            raise AssertionError('group folder selection')
         win.file_list.clearSelection()
         win.file_list.setCurrentRow(n - 1)
         win.file_list.item(n - 2).setSelected(True)

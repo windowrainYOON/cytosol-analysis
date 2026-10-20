@@ -84,7 +84,11 @@ A GUI for working on a whole set of images at once:
 
 - Add TCF / CZI / OIR / TIFF files with **파일 추가…** or by dragging files or folders
   onto the window. **그룹 지정…** puts the selected images in a group you name
-  (shown as `[group] name`; **그룹 이름 변경…**, **그룹 해제**). Measurement rows
+  (the name offered is what their file names share without the trailing
+  number: abc, abc_0001, abc_0002 → abc); **자동 그룹** groups every image
+  (or the selected ones) by that rule; **그룹 이름 변경…**, **그룹 해제**. The
+  list shows each group as a folder you can expand or collapse, and
+  selecting a folder selects its images. Measurement rows
   get a `group` column, and saving measurements or exports writes
   `image_groups.csv` (image, image ID, group), which loading that folder
   again reads back. A TCF becomes one entry with HT and FL aligned on the HT
