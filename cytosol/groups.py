@@ -5,12 +5,58 @@ from __future__ import annotations
 
 import csv
 import math
+import re
 from pathlib import Path
 
 import numpy as np
 
 GROUP_FILE = 'image_groups.csv'  # image -> group, saved with measurements, read on folder load
 UNGROUPED = 'ungrouped'
+
+
+_SEP = ' _-.'
+IMAGE_SUFFIXES = ('.tcf', '.czi', '.oir', '.tif', '.tiff')
+_NUMBERED = re.compile(r'[ _\-.]*\d+$')
+
+
+def _stem(label: str) -> str:
+    """Name without an image file extension (TCF labels keep their dots)."""
+    p = Path(label)
+    return p.stem if p.suffix.lower() in IMAGE_SUFFIXES else p.name
+
+
+def base_name(label: str) -> str:
+    """Image name without its trailing number: abc_0001 -> abc."""
+    stem = _stem(label)
+    return _NUMBERED.sub('', stem).rstrip(_SEP) or stem
+
+
+def suggest_name(labels) -> str:
+    """Group name for a set of images: the start their names share, without
+    a cut-off number or separator at its end (abc, abc_0001, abc_0002 -> abc)."""
+    stems = [_stem(x) for x in labels]
+    if not stems:
+        return ''
+    if len(stems) == 1:
+        return base_name(stems[0])
+    pre = stems[0]
+    for s in stems[1:]:
+        n = 0
+        while n < min(len(pre), len(s)) and pre[n] == s[n]:
+            n += 1
+        pre = pre[:n]
+    if pre and pre[-1].isdigit() and any(len(s) > len(pre) and s[len(pre)].isdigit() for s in stems):
+        pre = pre.rstrip('0123456789')  # a number cut in the middle (abc_000|1)
+    return pre.rstrip(_SEP)
+
+
+def auto_groups(labels) -> dict[int, str]:
+    """Index -> group for images whose names differ only by a trailing
+    number (abc, abc_0001, abc_0002 -> abc); images alone stay out."""
+    by = {}
+    for i, x in enumerate(labels):
+        by.setdefault(base_name(x), []).append(i)
+    return {i: name for name, idx in by.items() if len(idx) > 1 for i in idx}
 
 
 def _number(v):

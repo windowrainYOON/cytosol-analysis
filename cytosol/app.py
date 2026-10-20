@@ -43,7 +43,6 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMessageBox,
     QProgressDialog,
@@ -69,7 +68,8 @@ from .lut import (
 )
 from .coloc_panel import ColocPanel, write_coloc_csv
 from .intensity import is_particle_file, is_region_file, save_particles, write_rows
-from .groups import GROUP_FILE, apply_groups, read_groups, write_groups
+from .groups import GROUP_FILE, apply_groups, auto_groups, read_groups, suggest_name, write_groups
+from .image_tree import ImageTree
 from .intensity_panel import IntensityPanel
 from .imageid import ROI_EXT, match_roi, plan_pairing
 from .marker_panel import MarkerPanel
@@ -966,9 +966,9 @@ class MainWindow(QMainWindow):
         self.panels: list[ChannelPanel] = []
 
         # left: file list
-        self.file_list = QListWidget()
-        self.file_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
-        self.file_list.setToolTip('Shift/Ctrl(⌘)+클릭으로 여러 개 선택, Delete 키로 목록에서 제거')
+        self.file_list = ImageTree()
+        self.file_list.setToolTip('Shift/Ctrl(⌘)+클릭으로 여러 개 선택, Delete 키로 목록에서 제거.\n'
+                                  '그룹은 폴더처럼 펼치거나 접을 수 있고, 그룹을 고르면 그 안의 이미지가 모두 선택됩니다.')
         self.file_list.currentRowChanged.connect(self._select)
         for key in (QKeySequence.StandardKey.Delete, QKeySequence(Qt.Key.Key_Backspace)):
             sc = QShortcut(key, self.file_list)
@@ -989,6 +989,10 @@ class MainWindow(QMainWindow):
                              '입자 ROI 측정 결과에 group 열과 그룹별 요약이 붙고, 저장할 때 '
                              f'{GROUP_FILE}에 기록돼 폴더를 다시 불러오면 복원됩니다.')
         group_btn.clicked.connect(self.assign_group)
+        auto_btn = QPushButton('자동 그룹')
+        auto_btn.setToolTip('이름이 끝의 번호만 다른 이미지끼리 묶습니다 (abc, abc_0001, abc_0002 → abc).\n'
+                            '2개 이상 선택하면 선택한 이미지만, 아니면 모든 이미지를 대상으로 합니다.')
+        auto_btn.clicked.connect(self.auto_group)
         rename_btn = QPushButton('그룹 이름 변경…')
         rename_btn.clicked.connect(self.rename_group)
         ungroup_btn = QPushButton('그룹 해제')
@@ -999,7 +1003,7 @@ class MainWindow(QMainWindow):
         ll.addWidget(QLabel('이미지 (TCF / CZI / OIR / TIF, 끌어다 놓기 가능)'))
         ll.addWidget(self.file_list)
         row = QHBoxLayout()
-        for b in (group_btn, rename_btn, ungroup_btn):
+        for b in (group_btn, auto_btn, rename_btn, ungroup_btn):
             row.addWidget(b)
         ll.addLayout(row)
         self.align_tcf = QCheckBox('TCF: HT와 FL을 정렬해 한 이미지로')
@@ -1330,13 +1334,11 @@ class MainWindow(QMainWindow):
 
     def _add_item(self, item: ImageItem):
         self.items.append(item)
-        entry = QListWidgetItem(item.label)
-        self.file_list.addItem(entry)
+        self.file_list.rebuild(self.items)
         self._update_tooltip(len(self.items) - 1)
 
     def _update_tooltip(self, row):
         it = self.items[row]
-        self.file_list.item(row).setText(f'[{it.group}] {it.label}' if it.group else it.label)
         tip = [f'그룹: {it.group}'] if it.group else []
         tip += [str(it.path), f'이미지 ID: {it.image_id} '
                f'({it.image.metadata.get("image_id_source", "")})']
@@ -1347,7 +1349,7 @@ class MainWindow(QMainWindow):
             tip += [f'  {p.name}' for p in it.linked[:20]]
         if it.cells is not None and len(it.cells):
             tip.append(f'세포 ROI {len(it.cells)}개')
-        self.file_list.item(row).setToolTip('\n'.join(tip))
+        self.file_list.item(row).setToolTip(0, '\n'.join(tip))
 
     def add_files(self, paths, pair=False):
         """Open images and attach ROI files to them by image ID.
@@ -1474,7 +1476,7 @@ class MainWindow(QMainWindow):
     # ---- groups ---------------------------------------------------------
 
     def _selected_items(self):
-        rows = sorted({i.row() for i in self.file_list.selectedIndexes()})
+        rows = self.file_list.selected_rows()
         if not rows and self.file_list.currentRow() >= 0:
             rows = [self.file_list.currentRow()]
         return [self.items[r] for r in rows]
@@ -1492,6 +1494,7 @@ class MainWindow(QMainWindow):
                                          else f'이미지 {len(items)}개를 그룹에서 뺐습니다.')
 
     def _groups_changed(self):
+        self.file_list.rebuild(self.items)
         for row in range(len(self.items)):
             self._update_tooltip(row)
         for box in self._measure_boxes():
@@ -1503,10 +1506,13 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, '그룹 지정', '목록에서 이미지를 선택하세요.')
             return
         names = self.groups()
-        now = items[0].group if items[0].group in names else ''
+        # first choice: the name the selected images share (abc, abc_0001 -> abc)
+        guess = suggest_name([it.label for it in items]) or f'Group {len(names) + 1}'
+        choices = list(dict.fromkeys([guess] + names))
         name, ok = QInputDialog.getItem(
-            self, '그룹 지정', f'선택한 이미지 {len(items)}개의 그룹 이름 (새 이름을 쓰거나 고르세요):',
-            names or ['Group 1'], names.index(now) if now else 0, True)
+            self, '그룹 지정', f'선택한 이미지 {len(items)}개의 그룹 이름\n'
+            '(파일 이름에서 추천한 이름입니다. 고치거나 있는 그룹을 고르세요):',
+            choices, 0, True)
         name = name.strip()
         if ok and name:
             self.set_group(items, name)
@@ -1517,7 +1523,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, '그룹 이름 변경', '아직 그룹이 없습니다. ‘그룹 지정…’으로 만드세요.')
             return
         sel = self._selected_items()
-        now = sel[0].group if sel and sel[0].group else names[0]
+        now = self.file_list.selected_group() or (sel[0].group if sel and sel[0].group else names[0])
         old, ok = QInputDialog.getItem(self, '그룹 이름 변경', '바꿀 그룹:', names,
                                        names.index(now), False)
         if not ok:
@@ -1526,6 +1532,37 @@ class MainWindow(QMainWindow):
         new = new.strip()
         if ok and new and new != old:
             self.set_group([it for it in self.items if it.group == old], new)
+
+    def auto_group(self):
+        """Group images whose names differ only by a trailing number."""
+        items = self._selected_items()
+        if len(items) < 2:
+            items = self.items
+        found = auto_groups([it.label for it in items])
+        if not found:
+            QMessageBox.information(self, '자동 그룹', '끝의 번호만 다른 이름의 이미지가 없습니다.')
+            return
+        plan = {}
+        for i, name in found.items():
+            plan.setdefault(name, []).append(items[i])
+        lines = [f'{name}: {len(its)}개' for name, its in plan.items()]
+        moved = sum(1 for i, name in found.items() if items[i].group and items[i].group != name)
+        text = '다음 그룹을 만듭니다:\n\n' + '\n'.join(lines[:30])
+        if len(lines) > 30:
+            text += f'\n… 외 {len(lines) - 30}개'
+        if moved:
+            text += f'\n\n이미 다른 그룹에 있는 이미지 {moved}개도 옮겨집니다.'
+        if QMessageBox.question(self, '자동 그룹', text) != QMessageBox.StandardButton.Yes:
+            return
+        self.apply_auto_groups(plan)
+
+    def apply_auto_groups(self, plan):
+        for name, its in plan.items():
+            for it in its:
+                it.group = name
+        self._groups_changed()
+        self.statusBar().showMessage(f'자동 그룹: {len(plan)}개 그룹, 이미지 '
+                                     f'{sum(map(len, plan.values()))}개')
 
     def _load_groups(self, files, errors=None) -> int:
         n = 0
@@ -1542,7 +1579,7 @@ class MainWindow(QMainWindow):
 
     def remove_selected(self):
         """Remove every selected image (or the current one) from the list."""
-        rows = sorted({i.row() for i in self.file_list.selectedIndexes()}, reverse=True)
+        rows = self.file_list.selected_rows()[::-1]
         if not rows and self.file_list.currentRow() >= 0:
             rows = [self.file_list.currentRow()]
         if not rows:
@@ -1554,13 +1591,13 @@ class MainWindow(QMainWindow):
             current_removed |= removed is self.current
             self.stack_views.pop(id(removed), None)
             removed.image.release()
-            self.file_list.takeItem(row)
             if self.figure_win is not None:
                 self.figure_win.spec.forget_item(removed)
+        self.file_list.clearSelection()
+        self.file_list.rebuild(self.items)
         self.file_list.blockSignals(False)
         if self.figure_win is not None:
             self.figure_win.refresh_sources()
-        self.file_list.clearSelection()
         if self.items:
             row = self.items.index(self.current) if not current_removed \
                 else min(rows[-1], len(self.items) - 1)
