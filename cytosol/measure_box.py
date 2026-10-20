@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .groups import GROUP_FILE, summarize, write_groups
-from .intensity import STATS, measure_cells, overlay_image, region_names, save_particles, write_rows
+from .intensity import STATS, measure_cells, overlay_image, region_names, write_rows
 from .lut import item_folder, item_stem
 
 
@@ -429,8 +429,8 @@ class MeasureBox(QWidget):
         regions = self.regions(it)
         particles = self.particles_for(it) if uses_particles(regions) else None
         if particles is not None and particles.mask.any():
-            files.append(save_particles(f'{stem}_particles.zip', cells, particles,
-                                        it.id_properties()))
+            files += self.win.particle_panel.save_particle_files(
+                it, f'{stem}_particles.zip', cells, particles)
         if self.extra_files is not None:
             files += self.extra_files(it, stem)
         extra = self.overlay_regions(it) if self.overlay_regions is not None else None

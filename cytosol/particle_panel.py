@@ -36,10 +36,11 @@ from .intensity import (
     ParticleSettings,
     bit_depth,
     detect_particles,
+    iso_contours,
     load_particles,
     make_regions,
     measure_particles,
-    save_particles,
+    save_particle_sets,
     trace_outlines,
     whole_image_cells,
 )
@@ -137,10 +138,32 @@ class ParticlePanel(QWidget):
         self.min_px.setSuffix(' px')
         self.min_px.setToolTip('이보다 작은 입자는 버립니다 (ImageJ Analyze Particles의 최소 크기).')
         pl.addRow('최소 입자 크기', self.min_px)
-        self.show_particles = QCheckBox('이미지에 입자 경계 표시 (자홍색)')
+        self.show_particles = QCheckBox('이미지에 입자 경계 표시 (픽셀 ROI 자홍색, 등강도선 주황색)')
         self.show_particles.setChecked(True)
         self.show_particles.toggled.connect(lambda _: self.schedule())
         pl.addRow(self.show_particles)
+        self.contour_on = QCheckBox('형태는 등강도선으로 측정 (서브픽셀)')
+        self.contour_on.setChecked(True)
+        self.contour_on.setToolTip(
+            '입자마다 형태(둘레, 원형도, solidity, 종횡비, Feret, 타원, 중심)를 픽셀 경계 대신 '
+            '등강도선으로 잽니다: 주변 배경에서 봉우리까지 아래 레벨만큼 올라간 밝기의 지점을 '
+            '픽셀 사이 보간으로 이은 윤곽. 강도는 항상 픽셀 ROI로 잽니다. '
+            '끄면 ImageJ Analyze Particles와 같은 픽셀 경계 값입니다.')
+        self.contour_level = QDoubleSpinBox()
+        self.contour_level.setRange(0.05, 0.95)
+        self.contour_level.setSingleStep(0.05)
+        self.contour_level.setDecimals(2)
+        self.contour_level.setValue(0.5)
+        self.contour_level.setToolTip('배경(0)과 입자 봉우리(1) 사이 어느 높이에 윤곽을 그릴지. '
+                                      '0.5 = half-max (반치폭).')
+        row = QHBoxLayout()
+        row.addWidget(self.contour_on)
+        row.addWidget(QLabel('레벨'))
+        row.addWidget(self.contour_level)
+        row.addStretch()
+        pl.addRow(row)
+        self.contour_on.toggled.connect(self._contour_changed)
+        self.contour_level.valueChanged.connect(self._contour_changed)
         self.part_info = QLabel()
         self.part_info.setWordWrap(True)
         self.part_info.setStyleSheet('color: gray; font-size: 11px;')
@@ -280,7 +303,37 @@ class ParticlePanel(QWidget):
         return tuple(k for k in SHAPES if self.shape_boxes[k].isChecked())
 
     def measure_key(self):
-        return self.per_particle.isChecked(), self.shapes()
+        return self.per_particle.isChecked(), self.shapes(), self.contour_value()
+
+    def contour_value(self) -> float | None:
+        """Level of the iso-intensity outlines used for shape, None for pixel edges."""
+        return round(self.contour_level.value(), 4) if self.contour_on.isChecked() else None
+
+    def contour_plane(self, item, particles):
+        """The plane particle outlines are drawn on: the channel they were found in."""
+        if item is None:
+            return None
+        s = item.particle_settings
+        c = s.channel_for(item) if s is not None else None
+        if c is None and particles is not None:
+            c = particles.channel
+        if c is None:
+            c = self.part_channel.currentData()
+        if c is None or c < 0 or c >= len(item.channels):
+            return None
+        return item.planes()[c]
+
+    def save_particle_files(self, item, path, cells, particles) -> list[str]:
+        """<stem>_particles.zip (pixel ROIs, intensity) and, when shape uses
+        iso-intensity outlines, <stem>_particles_contour.zip next to it."""
+        level = self.contour_value()
+        plane = self.contour_plane(item, particles) if level is not None else None
+        return save_particle_sets(path, cells, particles, item.id_properties(), plane, level)
+
+    def _contour_changed(self, *_):
+        self.contour_level.setEnabled(self.contour_on.isChecked())
+        self._draw_particles()
+        self.measure.schedule()
 
     def particle_rows(self, item, cells, particles, channels, stats):
         """One row per particle ROI ('입자마다'); None for the per-cell rows."""
@@ -290,8 +343,10 @@ class ParticlePanel(QWidget):
             return []
         s = item.particle_settings
         within = s.within if s is not None else self.within.currentData()
+        level = self.contour_value()
+        plane = self.contour_plane(item, particles) if level is not None else None
         return measure_particles(item.planes(), cells, particles, item.channels, item.pixel_um,
-                                 channels, stats, self.shapes(), within)
+                                 channels, stats, self.shapes(), within, plane, level)
 
     def _mode_changed(self, per_particle):
         self.cell_opts.setVisible(not per_particle)
@@ -418,12 +473,12 @@ class ParticlePanel(QWidget):
         if not path:
             return
         try:
-            save_particles(path, self.cells_for(it), p, it.id_properties())
+            files = self.save_particle_files(it, path, self.cells_for(it), p)
         except Exception as exc:
             traceback.print_exc()
             QMessageBox.warning(self, '저장 실패', str(exc))
             return
-        self.status(f'입자 ROI 저장: {path}')
+        self.status('입자 ROI 저장: ' + ', '.join(files))
 
     def load_particles_current(self):
         it = self.item
@@ -460,12 +515,29 @@ class ParticlePanel(QWidget):
         if (self._hidden or p is None or cells is None or not self.show_particles.isChecked()
                 or self.win._stack_on()):
             canvas.show_particles([])
+            canvas.show_particle_contours([])
             return
         loops = getattr(p, '_outline', None)
         if loops is None:
             loops = _outlines(p, cells) if p.mask.any() else []
             p._outline = loops
         canvas.show_particles(loops)
+        level = self.contour_value()
+        iso = []
+        if level is not None and p.mask.any():
+            cached = getattr(p, '_contours', None)
+            key = (level, it.z, it.t)
+            if cached is not None and cached[0] == key:
+                iso = cached[1]
+            else:
+                plane = self.contour_plane(it, p)
+                if plane is not None:
+                    try:
+                        iso = list(iso_contours(plane, cells, p, level).values())
+                    except Exception:
+                        traceback.print_exc()
+                p._contours = (key, iso)
+        canvas.show_particle_contours(iso)
 
     def refresh(self):
         """Find the current image's particles when someone looks: this tab, or
