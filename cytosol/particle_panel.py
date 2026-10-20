@@ -221,7 +221,7 @@ class ParticlePanel(QWidget):
         lay.addWidget(reg)
         self.measure = MeasureBox(win, 'particle_tab', self.regions_for, 'particle_intensity',
                                   '입자 강도 측정', cells=self.cells_for, rows=self.particle_rows,
-                                  key=self.measure_key)
+                                  key=self.measure_key, summary=True)
         lay.addWidget(self.measure, 1)
 
     # ---- helpers ----------------------------------------------------------

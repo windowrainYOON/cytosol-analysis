@@ -684,6 +684,37 @@ def run(out_dir) -> int:
                      'RoiSet.zip', 'particles.zip', 'regions.zip', 'image.png'):
             if not (out / 'intensity_gui' / f'{stem}_{name}').exists():
                 raise AssertionError(f'missing {stem}_{name}')
+        # user-named groups: group column, per-image / per-group summaries, saved and restored
+        from .groups import GROUP_FILE, apply_groups, read_groups, summarize, write_groups
+        win.set_group([own], 'ctrl')
+        if win.file_list.item(win.items.index(own)).text() != f'[ctrl] {own.label}':
+            raise AssertionError('group not shown in the list')
+        pm = pp.measure
+        pm.batch_rows = [r for rs in pm.measure_items([own]).values() for r in rs]
+        if not pm.batch_rows or pm.batch_rows[0].get('group') != 'ctrl':
+            raise AssertionError('no group column in particle rows')
+        win.set_group([own], 'treated')
+        if pm.batch_rows[0]['group'] != 'treated':
+            raise AssertionError('rows did not follow the renamed group')
+        summ = summarize(pm.batch_rows, False)
+        mean = [r for r in summ if r['parameter'] == 'n_particles' and r['region'] == 'particle']
+        vals = [r['n_particles'] for r in pm.batch_rows if r['region'] == 'particle']
+        if len(mean) != 1 or mean[0]['group'] != 'treated' or mean[0]['n'] != len(vals) \
+                or abs(mean[0]['mean'] - np.mean(vals)) > 1e-6 or mean[0]['max'] != max(vals):
+            raise AssertionError(f'group summary: {mean}')
+        pm.view.setCurrentIndex(pm.view.findData('sum_group'))
+        if pm.table.rowCount() != len(summ):
+            raise AssertionError('summary not shown')
+        files = pm.write_summaries(out / 'intensity_gui', pm.batch_rows)
+        if len(files) != 2:
+            raise AssertionError(f'summary files {files}')
+        write_groups(out / 'intensity_gui' / GROUP_FILE, win.items)
+        own.group = ''
+        if apply_groups(win.items, read_groups(out / 'intensity_gui' / GROUP_FILE)) != 1 \
+                or own.group != 'treated':
+            raise AssertionError('groups not restored')
+        win.set_group([own], '')
+        pm.view.setCurrentIndex(0)
         # particles over the whole image of an image without cell ROIs
         bare = _synthetic_item()
         win._add_item(bare)

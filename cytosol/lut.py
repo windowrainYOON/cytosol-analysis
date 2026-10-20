@@ -90,6 +90,8 @@ class ImageItem:
     # (None: none, or loaded as fixed outlines) and the current plane's particles
     particle_settings: object = None
     particles: object = None
+    # user-named group of images (cytosol.groups); '' = none
+    group: str = ''
     # cytosol.prefetch.TimeCache that reads this image's timepoints ahead
     time_cache: object = field(default=None, repr=False)
     _planes: np.ndarray | None = field(default=None, repr=False)
