@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -68,6 +69,7 @@ from .lut import (
 )
 from .coloc_panel import ColocPanel, write_coloc_csv
 from .intensity import is_particle_file, is_region_file, save_particles, write_rows
+from .groups import GROUP_FILE, apply_groups, read_groups, write_groups
 from .intensity_panel import IntensityPanel
 from .imageid import ROI_EXT, match_roi, plan_pairing
 from .marker_panel import MarkerPanel
@@ -132,7 +134,7 @@ def folder_files(folder: Path) -> list[Path]:
     """Images and ROI files anywhere under folder (hidden files skipped)."""
     return sorted(q for q in folder.rglob('*')
                   if q.is_file() and not q.name.startswith('.')
-                  and q.suffix.lower() in SUPPORTED + ROI_EXT)
+                  and (q.suffix.lower() in SUPPORTED + ROI_EXT or q.name == GROUP_FILE))
 
 
 def polygon_path(*polys) -> QPainterPath:
@@ -982,10 +984,24 @@ class MainWindow(QMainWindow):
         rm_btn = QPushButton('목록에서 제거')
         rm_btn.setToolTip('선택한 이미지를 모두 목록에서 제거합니다 (파일은 지우지 않습니다).')
         rm_btn.clicked.connect(self.remove_selected)
+        group_btn = QPushButton('그룹 지정…')
+        group_btn.setToolTip('선택한 이미지들을 한 그룹으로 묶습니다 (새 이름을 쓰거나 있는 그룹을 고르세요).\n'
+                             '입자 ROI 측정 결과에 group 열과 그룹별 요약이 붙고, 저장할 때 '
+                             f'{GROUP_FILE}에 기록돼 폴더를 다시 불러오면 복원됩니다.')
+        group_btn.clicked.connect(self.assign_group)
+        rename_btn = QPushButton('그룹 이름 변경…')
+        rename_btn.clicked.connect(self.rename_group)
+        ungroup_btn = QPushButton('그룹 해제')
+        ungroup_btn.setToolTip('선택한 이미지를 그룹에서 뺍니다.')
+        ungroup_btn.clicked.connect(lambda: self.set_group(self._selected_items(), ''))
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.addWidget(QLabel('이미지 (TCF / CZI / OIR / TIF, 끌어다 놓기 가능)'))
         ll.addWidget(self.file_list)
+        row = QHBoxLayout()
+        for b in (group_btn, rename_btn, ungroup_btn):
+            row.addWidget(b)
+        ll.addLayout(row)
         self.align_tcf = QCheckBox('TCF: HT와 FL을 정렬해 한 이미지로')
         self.align_tcf.setChecked(True)
         self.align_tcf.setToolTip(
@@ -1302,7 +1318,7 @@ class MainWindow(QMainWindow):
         files, _ = QFileDialog.getOpenFileNames(
             self, '이미지 파일 선택', '',
             'Microscopy (*.tcf *.TCF *.czi *.oir *.tif *.tiff *.TIF *.TIFF);;'
-            '이미지 + ROI (*.tcf *.TCF *.czi *.oir *.tif *.tiff *.TIF *.TIFF *.zip *.roi);;'
+            '이미지 + ROI + 그룹 (*.tcf *.TCF *.czi *.oir *.tif *.tiff *.TIF *.TIFF *.zip *.roi image_groups.csv);;'
             'All files (*)',
         )
         self.add_files([Path(f) for f in files])
@@ -1320,7 +1336,9 @@ class MainWindow(QMainWindow):
 
     def _update_tooltip(self, row):
         it = self.items[row]
-        tip = [str(it.path), f'이미지 ID: {it.image_id} '
+        self.file_list.item(row).setText(f'[{it.group}] {it.label}' if it.group else it.label)
+        tip = [f'그룹: {it.group}'] if it.group else []
+        tip += [str(it.path), f'이미지 ID: {it.image_id} '
                f'({it.image.metadata.get("image_id_source", "")})']
         if it.source_name != it.path.name:
             tip.append(f'원본: {it.source_name}')
@@ -1341,8 +1359,11 @@ class MainWindow(QMainWindow):
         listed with it, otherwise the best of them (full raw stack first) is
         opened in its place. Without pair every chosen image is opened.
         """
+        group_files = [p for p in paths if p.name == GROUP_FILE]
         paths = [p for p in paths if p.suffix.lower() in SUPPORTED + ROI_EXT]
         if not paths:
+            if group_files:
+                self._load_groups(group_files)
             return
         plan = plan_pairing(paths)
         if not pair:
@@ -1428,6 +1449,7 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 errors.append(f'{f.name}: {exc}')
                 traceback.print_exc()
+        n_grouped = self._load_groups(group_files, errors) if group_files else 0
         for row in range(len(self.items)):
             self._update_tooltip(row)
 
@@ -1442,10 +1464,81 @@ class MainWindow(QMainWindow):
         msg = f'이미지 {len(self.items)}개'
         if n_roi or plan['exports']:
             msg += f' · ROI {n_roi}개 연결, 내보낸 파일 {n_linked}개 짝지음'
+        if n_grouped:
+            msg += f' · 그룹 복원 {n_grouped}개'
         if notes:
             msg += f' · 짝 없는 ROI {len(notes)}개'
             print('\n'.join(notes))
         self.statusBar().showMessage(msg)
+
+    # ---- groups ---------------------------------------------------------
+
+    def _selected_items(self):
+        rows = sorted({i.row() for i in self.file_list.selectedIndexes()})
+        if not rows and self.file_list.currentRow() >= 0:
+            rows = [self.file_list.currentRow()]
+        return [self.items[r] for r in rows]
+
+    def groups(self) -> list[str]:
+        """Group names in list order."""
+        return list(dict.fromkeys(it.group for it in self.items if it.group))
+
+    def set_group(self, items, name):
+        for it in items:
+            it.group = name
+        self._groups_changed()
+        if items:
+            self.statusBar().showMessage(f'이미지 {len(items)}개 → 그룹 ‘{name}’' if name
+                                         else f'이미지 {len(items)}개를 그룹에서 뺐습니다.')
+
+    def _groups_changed(self):
+        for row in range(len(self.items)):
+            self._update_tooltip(row)
+        for box in self._measure_boxes():
+            box.regroup()
+
+    def assign_group(self):
+        items = self._selected_items()
+        if not items:
+            QMessageBox.information(self, '그룹 지정', '목록에서 이미지를 선택하세요.')
+            return
+        names = self.groups()
+        now = items[0].group if items[0].group in names else ''
+        name, ok = QInputDialog.getItem(
+            self, '그룹 지정', f'선택한 이미지 {len(items)}개의 그룹 이름 (새 이름을 쓰거나 고르세요):',
+            names or ['Group 1'], names.index(now) if now else 0, True)
+        name = name.strip()
+        if ok and name:
+            self.set_group(items, name)
+
+    def rename_group(self):
+        names = self.groups()
+        if not names:
+            QMessageBox.information(self, '그룹 이름 변경', '아직 그룹이 없습니다. ‘그룹 지정…’으로 만드세요.')
+            return
+        sel = self._selected_items()
+        now = sel[0].group if sel and sel[0].group else names[0]
+        old, ok = QInputDialog.getItem(self, '그룹 이름 변경', '바꿀 그룹:', names,
+                                       names.index(now), False)
+        if not ok:
+            return
+        new, ok = QInputDialog.getText(self, '그룹 이름 변경', f'‘{old}’의 새 이름:', text=old)
+        new = new.strip()
+        if ok and new and new != old:
+            self.set_group([it for it in self.items if it.group == old], new)
+
+    def _load_groups(self, files, errors=None) -> int:
+        n = 0
+        for f in files:
+            try:
+                n += apply_groups(self.items, read_groups(f))
+            except Exception as exc:
+                traceback.print_exc()
+                if errors is not None:
+                    errors.append(f'{f.name}: {exc}')
+        if n:
+            self._groups_changed()
+        return n
 
     def remove_selected(self):
         """Remove every selected image (or the current one) from the list."""
@@ -2179,6 +2272,7 @@ class MainWindow(QMainWindow):
                 traceback.print_exc()
             it.image.release()
         prog.setValue(len(items))
+        write_groups(Path(out) / GROUP_FILE, items)
         msg = f'파일 {len(files)}개를 저장했습니다.\n{out}'
         if errors:
             msg += '\n\n실패:\n' + '\n'.join(errors)
@@ -2236,8 +2330,11 @@ class MainWindow(QMainWindow):
         prog.setValue(len(items))
         write_csv(Path(out) / 'cell_rois.csv', rows)
         write_coloc_csv(Path(out) / 'coloc2.csv', coloc)
+        boxes = {box.suffix: box for box in self._measure_boxes()}
         for suffix, int_rows in intensity.items():
             write_rows(Path(out) / f'{suffix}.csv', int_rows)
+            boxes[suffix].write_summaries(out, int_rows)
+        write_groups(Path(out) / GROUP_FILE, items)
         msg = f'이미지 {n_done}개를 이미지별 폴더에 저장했습니다 (파일 {n_files}개'
         msg += f', ROI 측정 {len(rows)}행).' if rows else ').'
         msg += f'\n{out}'

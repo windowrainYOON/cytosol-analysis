@@ -83,7 +83,11 @@ render(read_image('cells.czi'), 'figures/', prefix='cells', scale_um=10,
 A GUI for working on a whole set of images at once:
 
 - Add TCF / CZI / OIR / TIFF files with **파일 추가…** or by dragging files or folders
-  onto the window. A TCF becomes one entry with HT and FL aligned on the HT
+  onto the window. **그룹 지정…** puts the selected images in a group you name
+  (shown as `[group] name`; **그룹 이름 변경…**, **그룹 해제**). Measurement rows
+  get a `group` column, and saving measurements or exports writes
+  `image_groups.csv` (image, image ID, group), which loading that folder
+  again reads back. A TCF becomes one entry with HT and FL aligned on the HT
   grid (channels `RI`, `CH0…`): FL is resampled by pixel size around the shared
   image center plus a small automatic registration (at most 2 µm), and in Z
   from `3DFL/OffsetZ` (the center of the FL stack measured from the bottom of
@@ -182,6 +186,13 @@ A GUI for working on a whole set of images at once:
     ImageJ traced ROIs, so Measure on them in ImageJ gives the same
     perimeter. Small particles have solidity below 1 even when round (the
     hull runs over pixel corners, as in ImageJ).
+    **Summaries** (v0.19): 모든 이미지 측정 adds the views **요약: 이미지별** /
+    **요약: 그룹별**, and saving writes `<suffix>_summary_image.csv` and
+    `<suffix>_summary_group.csv` (plus `<name>_<suffix>_summary.csv` per
+    image): one row per image or group (and region in 세포별 mode) and
+    parameter with `n` (particles or cells), `mean`, `sd` (n − 1), `min`,
+    `max`; group rows also give `n_images`. Positions, angles and the time
+    point are left out.
   - **강도 측정 tab**: regions set by logic over `cell`, `nuc`, `cyto` and
     `particle` (`cyto - particle`, `cell & particle`, `(cell - nuc) | particle`;
     `&` intersection, `|` union, `-` difference), shown filled in cyan on the

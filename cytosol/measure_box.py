@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .groups import GROUP_FILE, summarize, write_groups
 from .intensity import STATS, measure_cells, overlay_image, region_names, save_particles, write_rows
 from .lut import item_folder, item_stem
 
@@ -50,9 +51,11 @@ class MeasureBox(QWidget):
     are <stem>_<suffix>.csv per image and <suffix>.csv for the set."""
 
     def __init__(self, win, tab_attr: str, regions, suffix: str, title: str,
-                 extra_files=None, overlay_regions=None, cells=None, rows=None, key=None):
+                 extra_files=None, overlay_regions=None, cells=None, rows=None, key=None,
+                 summary=False):
         super().__init__()
         self.win = win
+        self.summary = summary  # also n/mean/SD/min/max per image and per group
         # rows(item, cells, particles, channels, stats) -> rows, or None for
         # the per-cell region rows; key() -> what else the rows depend on
         self.rows_fn = rows
@@ -97,6 +100,9 @@ class MeasureBox(QWidget):
         self.view = QComboBox()
         self.view.addItem('현재 이미지', 'current')
         self.view.addItem('모든 이미지 (일괄 측정 결과)', 'batch')
+        if summary:
+            self.view.addItem('요약: 이미지별 (일괄 측정 결과)', 'sum_image')
+            self.view.addItem('요약: 그룹별 (일괄 측정 결과)', 'sum_group')
         self.view.currentIndexChanged.connect(lambda _: self._fill_table())
         row.addWidget(self.view, 1)
         self.auto = QCheckBox('자동 갱신')
@@ -150,8 +156,12 @@ class MeasureBox(QWidget):
     def set_suffix(self, suffix: str):
         """CSV names: <stem>_<suffix>.csv per image, <suffix>.csv for the set."""
         self.suffix = suffix
-        self.save_all_btn.setToolTip(f'모든 이미지를 다시 잰 뒤 전체 결과 {suffix}.csv와, 이미지마다 '
-                                     f'<이름>_<ID> 폴더에 그 이미지의 <이름>_{suffix}.csv를 저장합니다.')
+        tip = (f'모든 이미지를 다시 잰 뒤 전체 결과 {suffix}.csv와, 이미지마다 '
+               f'<이름>_<ID> 폴더에 그 이미지의 <이름>_{suffix}.csv를 저장합니다.')
+        if self.summary:
+            tip += (f'\n요약: {suffix}_summary_image.csv (이미지별), {suffix}_summary_group.csv '
+                    f'(그룹별) — 파라미터마다 n, 평균, SD, 최소, 최대.')
+        self.save_all_btn.setToolTip(tip)
 
     def status(self, msg):
         self.win.statusBar().showMessage(msg)
@@ -198,7 +208,8 @@ class MeasureBox(QWidget):
             rows = measure_cells(it.planes(), cells, regions, it.channels, it.pixel_um,
                                  particles, self.channels_for(it), self.stats())
         z = 'MIP' if it.z == 'mip' else ('mid' if it.z == 'mid' else f'z {int(it.z) + 1}')
-        head = {'image': it.label, 'image_id': it.image_id, 'source': it.source_name,
+        head = {'group': it.group} if any(i.group for i in self.win.items) else {}
+        head |= {'image': it.label, 'image_id': it.image_id, 'source': it.source_name,
                 'timepoint': it.t + 1, 'plane': z}
         if particles is not None and particles.channel is not None:
             head['particle_channel'] = it.channels[particles.channel]
@@ -250,9 +261,34 @@ class MeasureBox(QWidget):
     # ---- table ------------------------------------------------------------------
 
     def _rows_shown(self):
-        if self.view.currentData() == 'batch':
+        view = self.view.currentData()
+        if view == 'batch':
             return self.batch_rows, True
+        if view in ('sum_image', 'sum_group'):
+            return summarize(self.batch_rows, view == 'sum_image'), True
         return self.rows, False
+
+    def regroup(self):
+        """Give rows measured before a group change their image's new group."""
+        groups = {it.image_id: it.group for it in self.win.items}
+        show = any(groups.values())
+        for rows in (self.rows, self.batch_rows):
+            for i, r in enumerate(rows):
+                rest = {k: v for k, v in r.items() if k != 'group'}
+                rows[i] = ({'group': groups.get(r.get('image_id'), r.get('group', ''))} | rest
+                           if show else rest)
+        self._fill_table()
+
+    def write_summaries(self, folder, rows) -> list[str]:
+        """<suffix>_summary_image.csv and <suffix>_summary_group.csv of a set."""
+        if not self.summary or not rows:
+            return []
+        files = []
+        for by_image, name in ((True, 'image'), (False, 'group')):
+            path = Path(folder) / f'{self.suffix}_summary_{name}.csv'
+            if write_rows(path, summarize(rows, by_image)):
+                files.append(str(path))
+        return files
 
     def _fill_table(self):
         rows, batch = self._rows_shown()
@@ -280,9 +316,13 @@ class MeasureBox(QWidget):
         self.table.resizeColumnsToContents()
         self.table.blockSignals(False)
         if batch:
-            n = len({r['image_id'] for r in rows})
-            self.info.setText(f'일괄 측정: 이미지 {n}개, {len(rows)}행' if rows
-                              else '‘모든 이미지 측정’을 누르세요.')
+            src = self.batch_rows
+            n = len({r['image_id'] for r in src})
+            text = f'일괄 측정: 이미지 {n}개, {len(src)}행' if src else '‘모든 이미지 측정’을 누르세요.'
+            if src and rows is not src:
+                text += (' · 요약: 파라미터마다 n(입자 또는 세포 수), 평균, SD, 최소, 최대'
+                         ' (그룹은 이미지 목록의 ‘그룹 지정…’)')
+            self.info.setText(text)
         else:
             it = self.win.current
             cells = self.cells(it) if it is not None else None
@@ -410,6 +450,9 @@ class MeasureBox(QWidget):
         try:
             rows = self.measure_item(it)
             write_rows(path, rows)
+            if self.summary:
+                write_rows(Path(path).with_name(Path(path).stem + '_summary.csv'),
+                           summarize(rows, True))
             if self.with_roi.isChecked():
                 self.save_companions(path, it)
         except Exception as exc:
@@ -424,6 +467,10 @@ class MeasureBox(QWidget):
         if not write_rows(path, rows):
             return []
         files = [str(path)]
+        if self.summary:
+            summ = path.with_name(f'{path.stem}_summary.csv')
+            if write_rows(summ, summarize(rows, True)):
+                files.append(str(summ))
         if self.with_roi.isChecked() if companions is None else companions:
             files += self.save_companions(path, it)
         return files
@@ -456,11 +503,18 @@ class MeasureBox(QWidget):
                 it.image.release()
             rows += item_rows
         write_rows(Path(out) / f'{self.suffix}.csv', rows)
+        summaries = self.write_summaries(out, rows)
+        grouped = write_groups(Path(out) / GROUP_FILE, items)
         self.batch_rows = rows
         self.view.setCurrentIndex(self.view.findData('batch'))
         self._fill_table()
         msg = (f'이미지 {n}개의 {self.title} 결과를 이미지별 폴더에, 전체 {len(rows)}행을 '
-               f'{self.suffix}.csv에 저장했습니다.\n{out}')
+               f'{self.suffix}.csv에 저장했습니다.')
+        if summaries:
+            msg += f'\n요약: {", ".join(Path(f).name for f in summaries)}'
+        if grouped:
+            msg += f'\n그룹: {GROUP_FILE}'
+        msg += f'\n{out}'
         if errors:
             msg += '\n\n실패:\n' + '\n'.join(errors)
         QMessageBox.information(self, '저장 완료', msg)
