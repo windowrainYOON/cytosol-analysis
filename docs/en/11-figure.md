@@ -3,7 +3,7 @@
 [← Manual index](README.md) · [한국어](../ko/11-figure.md)
 
 Lays images out as a table with row and column labels, zoom insets and scale
-bars, ready for a paper figure. Open it with **Tool › Figure…** or
+bars, ready for a paper figure. Open it with **Figure › Figure 창 열기…** or
 `Ctrl+Shift+F`. Saving the figure and saving/loading inset ROIs use the
 buttons in this window. The figure layout is also saved in the project file.
 

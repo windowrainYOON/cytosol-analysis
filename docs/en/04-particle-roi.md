@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/04-particle-roi.md)
 
-Open this tab with **Tool › 입자 ROI** (it appears on the right; turn the item off to close it). Its results are saved from **파일 › 내보내기** (File › Export).
+Open or close this tab with **입자 ROI › 입자 ROI 탭 열기** (Open 입자 ROI tab) in the menu bar. This tab's saves and loads are in the same **입자 ROI** menu.
 
 This tab finds particles (bright spots, puncta, condensates) in one channel
 inside each cell from the [세포질 ROI tab](03-cytosol-roi.md), or in the whole
@@ -64,8 +64,8 @@ exactly the ImageJ Analyze Particles values.
 
 - **이 설정을 모든 이미지에 적용** (Apply these settings to all images): the
   same channel (by name) and method for every image.
-- Saving / loading particle ROIs: **파일 › 내보내기 › 입자 ROI › 입자 ROI 저장
-  (현재 이미지)…** saves them and **파일 › 불러오기 (파일)…** opens them again.
+- Saving / loading particle ROIs: **입자 ROI › 입자 ROI 저장 (현재 이미지)…**
+  saves them and **입자 ROI › 입자 ROI 불러오기…** (or **파일 › 불러오기**) opens them again.
   `<name>_particles.zip`, one ImageJ ROI per particle (`partCCC-NN`, outlines
   on the pixel edges so ImageJ's mask equals the particle; the settings are
   stored in the ROI properties). The iso-contours are saved next to it as

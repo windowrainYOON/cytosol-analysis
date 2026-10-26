@@ -2,9 +2,9 @@
 
 [← Manual index](README.md) · [한국어](../ko/02-lut-export.md)
 
-The **LUT** tab (always open) sets how each channel is displayed (its LUT).
-Images are exported with **파일 › 내보내기 › 이미지 (TIFF / MP4)…** (File ›
-Export › Images). The LUTs set here are used by the preview, every RGB export, the 스택 tab
+The **LUT** tab (always open) sets how each channel is displayed (its LUT);
+the [marker settings](05-markers.md) sit fixed at its bottom. Images are
+exported with **LUT › 이미지 내보내기 (TIFF / MP4)…** in the menu bar. The LUTs set here are used by the preview, every RGB export, the 스택 tab
 (when linked) and the Figure window.
 
 ## Showing channels
@@ -40,13 +40,13 @@ between files of the same type with the same channel count.
 - **모든 채널 LUT를 전체 이미지에 적용** (Apply all channel LUTs to all images).
 - **색상도 함께 적용** (Apply colors too): when off, only min/max/gamma are
   copied and each image keeps its colors.
-- LUT presets: **파일 › 내보내기 › LUT 프리셋…** saves the current image's LUTs
-  as a JSON file; choosing that file in **파일 › 불러오기 (파일)…** applies it to
-  every image.
+- LUT presets: **LUT › LUT 프리셋 저장…** saves the current image's LUTs as a
+  JSON file; **LUT › LUT 프리셋 불러오기…** (or choosing the file in
+  **파일 › 불러오기 (자동 인식)…**) applies it to every image.
 
 ## Image export (TIFF / MP4)
 
-**파일 › 내보내기 › 이미지 (TIFF / MP4)…** (`Ctrl+E`) opens an options window.
+**LUT › 이미지 내보내기 (TIFF / MP4)…** (`Ctrl+E`) opens an options window.
 The options are kept for the next export and saved in the project.
 
 0. **저장할 이미지** (Images to save): **현재 이미지만** (current image only)

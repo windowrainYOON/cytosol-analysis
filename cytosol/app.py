@@ -94,6 +94,16 @@ SLIDER_STEPS = 1000
 # Cmd/Ctrl + drag zoom: e^(rate × pixels) at sensitivity 1 (×2 per ~170 px)
 ZOOM_DRAG_RATE = 0.004
 ZOOM_KEY_STEP = 1.25  # '[' / ']'
+MARKER_FORMAT = 'cytosol-viewer-markers'
+# what each feature menu's 불러오기 offers: (name, file dialog filter)
+IMPORT_KINDS = {
+    'lut': ('LUT 프리셋', 'LUT 프리셋 (*.json)'),
+    'marker': ('마커 설정', '마커 설정 (*.json)'),
+    'crop': ('Crop 영역 ROI', 'Crop 영역 ROI (*_crops.zip *.zip *.roi)'),
+    'cell': ('세포질 ROI', 'ImageJ ROI (*.zip *.roi)'),
+    'particle': ('입자 ROI', '입자 ROI (*_particles.zip *.zip)'),
+    'line': ('라인 프로파일 선 ROI', '선 ROI (*_line.roi *.roi)'),
+}
 
 
 def to_qimage(rgb: np.ndarray) -> QImage:
@@ -1057,7 +1067,7 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self.worklog = WorkLog()
         self.setStatusBar(LoggingStatusBar(self))
-        # export options shared by every save in 파일 → 내보내기
+        # export options shared by every folder save (in the 파일 menu)
         self.opt_per_image = QAction('이미지별 폴더에 나눠 저장', self, checkable=True)
         self.opt_per_image.setChecked(True)
         self.opt_per_image.setToolTip('폴더에 저장할 때 이미지마다 하위 폴더(이미지 이름_이미지 ID)를 '
@@ -1118,7 +1128,7 @@ class MainWindow(QMainWindow):
         ll.addWidget(folder_btn)
         ll.addWidget(rm_btn)
 
-        # crop regions of the current image (Tool > Crop tab)
+        # crop regions of the current image (Crop menu > Crop 탭)
         self.crop_list = QListWidget()
         self.crop_list.setMinimumHeight(160)
         self.crop_list.currentRowChanged.connect(
@@ -1140,7 +1150,7 @@ class MainWindow(QMainWindow):
         crop_page = QWidget()
         cbl = QVBoxLayout(crop_page)
         help_ = QLabel('Crop 영역은 내보낼 때 각각 따로 저장되고, Figure 칸의 영역으로도 고를 수 있습니다. '
-                       '영역 안을 드래그하면 옮겨집니다. 저장: 파일 → 내보내기 → Crop 영역 ROI.')
+                       '영역 안을 드래그하면 옮겨집니다. 저장·불러오기: 메뉴 막대의 Crop.')
         help_.setWordWrap(True)
         help_.setStyleSheet('color: gray; font-size: 11px;')
         cbl.addWidget(help_)
@@ -1183,7 +1193,7 @@ class MainWindow(QMainWindow):
         self.line_btn.setCheckable(True)
         fit_btn = QPushButton('화면 맞춤')
         fit_btn.setToolTip('확대/축소: Cmd(Windows는 Ctrl) + 위/아래 드래그, [ 축소, ] 확대.\n'
-                           '민감도는 Tool → 설정…에서 바꿉니다.')
+                           '민감도는 파일 → 설정…에서 바꿉니다.')
         fit_btn.clicked.connect(self.canvas.fit)
         self.zoom_btn = QPushButton('영역 확대')
         self.zoom_btn.setCheckable(True)
@@ -1262,11 +1272,11 @@ class MainWindow(QMainWindow):
         bl = QVBoxLayout(batch)
         bl.addWidget(all_luts)
         bl.addWidget(self.copy_color)
-        note = QLabel('LUT 프리셋 저장: 파일 → 내보내기, 불러오기: 파일 → 불러오기')
+        note = QLabel('LUT 프리셋 저장·불러오기와 이미지 내보내기: 메뉴 막대의 LUT')
         note.setStyleSheet('color: gray; font-size: 11px;')
         bl.addWidget(note)
 
-        # image export options: shown in the dialog of 파일 → 내보내기 → 이미지
+        # image export options: shown in the dialog of LUT → 이미지 내보내기
         self.exp_full = QCheckBox('전체 이미지')
         self.exp_full.setChecked(True)
         self.exp_crops = QCheckBox('Crop 영역 각각')
@@ -1308,19 +1318,31 @@ class MainWindow(QMainWindow):
         row.addWidget(self.exp_fps)
         el.addLayout(row)
 
-        lut_tab = QWidget()
-        rl = QVBoxLayout(lut_tab)
-        rl.addWidget(QLabel('채널 LUT'))
-        self.visibility = VisibilityRow()
-        rl.addWidget(self.visibility)
-        rl.addWidget(scroll, 1)
-        rl.addWidget(batch)
-
         def scrolled(w):
             s = QScrollArea()
             s.setWidgetResizable(True)
             s.setWidget(w)
             return s
+
+        # LUT tab: channel LUTs on top, the markers (always used) fixed below
+        lut_top = QWidget()
+        rl = QVBoxLayout(lut_top)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.addWidget(QLabel('채널 LUT'))
+        self.visibility = VisibilityRow()
+        rl.addWidget(self.visibility)
+        rl.addWidget(scroll, 1)
+        rl.addWidget(batch)
+        marker_box = QGroupBox('마커 (scale bar · 시간 · bleach ROI)')
+        ml = QVBoxLayout(marker_box)
+        ml.setContentsMargins(4, 4, 4, 4)
+        ml.addWidget(scrolled(self.markers))
+        lut_tab = QSplitter(Qt.Orientation.Vertical)
+        lut_tab.addWidget(lut_top)
+        lut_tab.addWidget(marker_box)
+        lut_tab.setStretchFactor(0, 3)
+        lut_tab.setStretchFactor(1, 2)
+        lut_tab.setChildrenCollapsible(False)
 
         self.roi_panel = RoiPanel(self)
         self.particle_panel = ParticlePanel(self)
@@ -1351,7 +1373,7 @@ class MainWindow(QMainWindow):
         for i in range(right.count()):  # the two base tabs stay
             for side in (QTabBar.ButtonPosition.LeftSide, QTabBar.ButtonPosition.RightSide):
                 right.tabBar().setTabButton(i, side, None)
-        # feature tabs, opened from the Tool menu (in this order)
+        # feature tabs, opened from each feature's menu (in this order)
         self.tab_pages = {
             'crop_tab': (crop_page, 'Crop'),
             'roi_tab': (scrolled(self.roi_panel), '세포질 ROI'),
@@ -1360,7 +1382,6 @@ class MainWindow(QMainWindow):
             'coloc_tab': (scrolled(self.coloc_panel), 'Coloc 2'),
             'profile_tab': (self.profile_panel, '라인 프로파일'),
             'stack_tab': (scrolled(self.stack_panel), '스택'),
-            'marker_tab': (scrolled(self.markers), '마커'),
         }
         self.canvas.lineDrawn.connect(self._line_drawn)
         self.line_btn.toggled.connect(self._line_mode)
@@ -1396,12 +1417,31 @@ class MainWindow(QMainWindow):
         return a
 
     def _build_menus(self):
+        """파일 holds projects, loading by kind, the work log, settings and
+        saving everything at once; every feature has its own menu next to it
+        with its tab and its own saves and loads."""
         mb = self.menuBar()
         act = self._act
+        self.tool_actions = {}  # feature tab name -> its checkable "탭 열기" action
+
+        def tab_action(menu, name):
+            title = self.tab_pages[name][1]
+            a = QAction(f'{title} 탭 열기', self, checkable=True)
+            a.setToolTip(f'‘{title}’ 탭을 오른쪽에 열거나 닫습니다.')
+            a.toggled.connect(lambda on, n=name: self.show_tab(n) if on else self.hide_tab(n))
+            menu.addAction(a)
+            menu.addSeparator()
+            self.tool_actions[name] = a
+
+        def load_action(menu, text, kind):
+            act(menu, text, lambda: self.import_kind_dialog(kind),
+                tip=f'{IMPORT_KINDS[kind][0]} 파일을 골라 불러옵니다. 이미지 ID가 맞는 열린 이미지에, '
+                    '없으면 현재 이미지에 붙습니다.')
+
         m = mb.addMenu('파일')
         act(m, '새 프로젝트', self.new_project, QKeySequence.StandardKey.New)
-        act(m, '불러오기 (파일)…', self.import_files_dialog, QKeySequence.StandardKey.Open,
-            '프로젝트(.cyproj), 이미지, ROI(세포·입자·Crop·라인, .zip/.roi), LUT 프리셋(.json), '
+        act(m, '불러오기 (자동 인식)…', self.import_files_dialog, QKeySequence.StandardKey.Open,
+            '프로젝트(.cyproj), 이미지, ROI(세포·입자·Crop·라인, .zip/.roi), LUT 프리셋·마커 설정(.json), '
             '그룹(image_groups.csv)을 골라 불러옵니다. 종류는 자동으로 알아봅니다.')
         act(m, '불러오기 (폴더)…', self.import_folder_dialog, 'Ctrl+Shift+O',
             '폴더 안의 원본 이미지, 내보낸 TIFF, ROI를 이미지 ID로 짝지어 불러옵니다. '
@@ -1412,72 +1452,90 @@ class MainWindow(QMainWindow):
         act(m, '프로젝트 저장', self.save_project, QKeySequence.StandardKey.Save)
         act(m, '프로젝트 다른 이름으로 저장…', lambda: self.save_project(ask=True), 'Ctrl+Shift+S')
         m.addSeparator()
-        ex = m.addMenu('내보내기')
-        act(ex, '이미지 (TIFF / MP4)…', self.export_images_dialog, 'Ctrl+E')
-        sub = ex.addMenu('Crop 영역 ROI')
-        act(sub, '현재 이미지…', self.save_crops_current)
-        act(sub, '모든 이미지 (폴더)…', self.save_crops_all)
-        rp, pp, ip = self.roi_panel, self.particle_panel, self.intensity_panel
-        sub = ex.addMenu('세포질 ROI')
-        for a in (rp.save_cell, rp.save_nuc, rp.save_cyto):
-            sub.addAction(a)
-        sub.addSeparator()
-        act(sub, 'ROI 저장 (현재 이미지)…', rp.save_current,
-            tip='.zip: ImageJ RoiSet 하나로, .roi: ROI마다 .roi 파일 하나씩')
-        act(sub, '모든 이미지 ROI 저장 (폴더)…', rp.save_all)
-        sub.addSeparator()
-        self._measure_menu(sub, rp.measure)
-        sub = ex.addMenu('입자 ROI')
-        act(sub, '입자 ROI 저장 (현재 이미지)…', pp.save_particles_current)
-        sub.addSeparator()
-        self._measure_menu(sub, pp.measure)
-        sub = ex.addMenu('강도 측정 (논리 영역)')
-        self._measure_menu(sub, ip.measure)
-        sub = ex.addMenu('라인 프로파일')
-        act(sub, 'CSV…', self.profile_panel.save_csv)
-        act(sub, '그래프 (PNG / PDF / SVG / TIFF)…', self.profile_panel.save_plot)
-        cp = self.coloc_panel
-        sub = ex.addMenu('Coloc 2')
-        act(sub, 'CSV (현재 이미지)…', cp.save_csv,
-            tip='현재 이미지의 결과 (ROI마다 한 행, 열 이름은 Coloc 2와 같음)')
-        act(sub, '모든 이미지 CSV (폴더)…', cp.save_all)
-        act(sub, '그래프…', cp.save_plot)
-        act(sub, 'PDF 리포트…', cp.save_pdf,
-            tip='선택한 ROI의 히스토그램과 모든 값 (Coloc 2의 PDF와 같은 내용)')
-        sub = ex.addMenu('스택 투영')
-        act(sub, '현재 투영 (TIFF / MP4)…', lambda: self.stack_export_dialog('current'))
-        act(sub, '3D 회전 시리즈 (TIFF 스택 / MP4)…', lambda: self.stack_export_dialog('rotation'))
-        sub = ex.addMenu('이미지 정보')
-        act(sub, 'CSV…', self.info_panel.save_csv)
-        act(sub, '원본 메타데이터…', self.info_panel.save_raw,
-            tip='파일에 들어 있는 메타데이터 전체(CZI/OIR XML, TCF 속성)를 그대로 저장합니다.')
-        act(ex, 'LUT 프리셋…', self.save_preset)
-        act(ex, '작업 기록 (CSV)…', self.save_log_csv)
-        ex.addSeparator()
-        ex.addAction(self.opt_per_image)
-        ex.addAction(self.opt_with_roi)
         act(m, '모든 분석 결과 통합 저장 (이미지별 폴더)…', self.export_everything, 'Ctrl+Shift+E',
             '이미지마다 폴더를 하나씩 만들어 그 이미지의 TIFF, Crop·세포·입자·논리 영역 ROI, '
             '측정값 CSV, 이미지 정보, Coloc 2 결과를 모두 넣고, 프로젝트 파일도 함께 저장합니다.')
+        m.addAction(self.opt_per_image)
+        m.addAction(self.opt_with_roi)
+        m.addSeparator()
+        act(m, '작업 기록 보기…', self.open_log, 'Ctrl+Shift+L')
+        act(m, '작업 기록 저장 (CSV)…', self.save_log_csv)
+        s = act(m, '설정…', self.open_settings, QKeySequence.StandardKey.Preferences)
+        s.setMenuRole(QAction.MenuRole.PreferencesRole)
         m.addSeparator()
         q = act(m, '종료', self.close, QKeySequence.StandardKey.Quit)
         q.setMenuRole(QAction.MenuRole.QuitRole)
 
-        t = mb.addMenu('Tool')
-        self.tool_actions = {}
-        for name, (_, title) in self.tab_pages.items():
-            a = QAction(title, self, checkable=True)
-            a.setToolTip(f'‘{title}’ 탭을 오른쪽에 열거나 닫습니다.')
-            a.toggled.connect(lambda on, n=name: self.show_tab(n) if on else self.hide_tab(n))
-            t.addAction(a)
-            self.tool_actions[name] = a
-        t.addSeparator()
-        act(t, 'Figure…', self.open_figure, 'Ctrl+Shift+F',
-            'LUT/crop을 적용한 이미지로 행·열 표 형태의 figure 만들기')
-        act(t, '작업 기록…', self.open_log, 'Ctrl+Shift+L')
-        t.addSeparator()
-        s = act(t, '설정…', self.open_settings, QKeySequence.StandardKey.Preferences)
-        s.setMenuRole(QAction.MenuRole.PreferencesRole)
+        rp, pp, ip, cp = self.roi_panel, self.particle_panel, self.intensity_panel, self.coloc_panel
+
+        sub = mb.addMenu('LUT')
+        act(sub, '이미지 내보내기 (TIFF / MP4)…', self.export_images_dialog, 'Ctrl+E')
+        sub.addSeparator()
+        act(sub, 'LUT 프리셋 저장…', self.save_preset,
+            tip='현재 이미지의 채널 LUT를 JSON 파일로 저장합니다.')
+        load_action(sub, 'LUT 프리셋 불러오기…', 'lut')
+
+        sub = mb.addMenu('마커')
+        act(sub, '마커 설정 저장…', self.save_marker_settings,
+            tip='scale bar, 시간 표시, bleach ROI 표시 설정을 JSON 파일로 저장합니다.')
+        load_action(sub, '마커 설정 불러오기…', 'marker')
+
+        sub = mb.addMenu('Crop')
+        tab_action(sub, 'crop_tab')
+        act(sub, 'Crop 영역 ROI 저장 (현재 이미지)…', self.save_crops_current)
+        act(sub, 'Crop 영역 ROI 저장 (모든 이미지, 폴더)…', self.save_crops_all)
+        load_action(sub, 'Crop 영역 ROI 불러오기…', 'crop')
+
+        sub = mb.addMenu('세포질 ROI')
+        tab_action(sub, 'roi_tab')
+        for a in (rp.save_cell, rp.save_nuc, rp.save_cyto):
+            sub.addAction(a)
+        act(sub, 'ROI 저장 (현재 이미지)…', rp.save_current,
+            tip='.zip: ImageJ RoiSet 하나로, .roi: ROI마다 .roi 파일 하나씩')
+        act(sub, '모든 이미지 ROI 저장 (폴더)…', rp.save_all)
+        load_action(sub, 'ROI 불러오기…', 'cell')
+        sub.addSeparator()
+        self._measure_menu(sub, rp.measure)
+
+        sub = mb.addMenu('입자 ROI')
+        tab_action(sub, 'particle_tab')
+        act(sub, '입자 ROI 저장 (현재 이미지)…', pp.save_particles_current)
+        load_action(sub, '입자 ROI 불러오기…', 'particle')
+        sub.addSeparator()
+        self._measure_menu(sub, pp.measure)
+
+        sub = mb.addMenu('강도 측정')
+        tab_action(sub, 'intensity_tab')
+        self._measure_menu(sub, ip.measure)
+
+        sub = mb.addMenu('Coloc 2')
+        tab_action(sub, 'coloc_tab')
+        act(sub, 'CSV 저장 (현재 이미지)…', cp.save_csv,
+            tip='현재 이미지의 결과 (ROI마다 한 행, 열 이름은 Coloc 2와 같음)')
+        act(sub, '모든 이미지 CSV 저장 (폴더)…', cp.save_all)
+        act(sub, '그래프 저장…', cp.save_plot)
+        act(sub, 'PDF 리포트 저장…', cp.save_pdf,
+            tip='선택한 ROI의 히스토그램과 모든 값 (Coloc 2의 PDF와 같은 내용)')
+
+        sub = mb.addMenu('라인 프로파일')
+        tab_action(sub, 'profile_tab')
+        act(sub, 'CSV 저장…', self.profile_panel.save_csv)
+        act(sub, '그래프 저장 (PNG / PDF / SVG / TIFF)…', self.profile_panel.save_plot)
+        load_action(sub, '선 ROI 불러오기…', 'line')
+
+        sub = mb.addMenu('스택')
+        tab_action(sub, 'stack_tab')
+        act(sub, '현재 투영 저장 (TIFF / MP4)…', lambda: self.stack_export_dialog('current'))
+        act(sub, '3D 회전 시리즈 저장 (TIFF 스택 / MP4)…', lambda: self.stack_export_dialog('rotation'))
+
+        sub = mb.addMenu('이미지 정보')
+        act(sub, 'CSV 저장…', self.info_panel.save_csv)
+        act(sub, '원본 메타데이터 저장…', self.info_panel.save_raw,
+            tip='파일에 들어 있는 메타데이터 전체(CZI/OIR XML, TCF 속성)를 그대로 저장합니다.')
+
+        sub = mb.addMenu('Figure')
+        act(sub, 'Figure 창 열기…', self.open_figure, 'Ctrl+Shift+F',
+            'LUT/crop을 적용한 이미지로 행·열 표 형태의 figure 만들기 (저장은 Figure 창 안에서)')
 
     def _measure_menu(self, menu, box):
         self._act(menu, '측정 CSV 저장 (현재 이미지)…', box.save_current)
@@ -1504,7 +1562,7 @@ class MainWindow(QMainWindow):
         self.log_win.raise_()
         self.log_win.activateWindow()
 
-    # ---- tabs (Tool menu) ----------------------------------------------------
+    # ---- feature tabs (each feature's menu) ----------------------------------------------------
 
     def _tab_name(self, widget):
         for name, (w, _) in self.tab_pages.items():
@@ -1524,7 +1582,7 @@ class MainWindow(QMainWindow):
         return [n for n in self.tab_pages if self.tab_open(n)]
 
     def show_tab(self, name, focus=True):
-        """Add a feature tab next to LUT / 이미지 정보 (Tool menu order) and show it."""
+        """Add a feature tab next to LUT / 이미지 정보 (menu order) and show it."""
         page, title = self.tab_pages[name]
         tabs = self.right_tabs
         if tabs.indexOf(page) < 0:
@@ -1630,9 +1688,23 @@ class MainWindow(QMainWindow):
             '*.zip *.roi *.json image_groups.csv);;'
             'Cytosol Viewer 프로젝트 (*.cyproj);;'
             'Microscopy (*.tcf *.TCF *.czi *.oir *.tif *.tiff *.TIF *.TIFF);;'
-            'ImageJ ROI (*.zip *.roi);;LUT 프리셋 (*.json);;All files (*)')
+            'ImageJ ROI (*.zip *.roi);;LUT 프리셋 / 마커 설정 (*.json);;All files (*)')
         if files:
             self.import_paths([Path(f) for f in files])
+
+    def import_kind_dialog(self, kind):
+        """불러오기 in a feature menu: files of that kind (still recognised by
+        their content, so a file of another kind is put where it belongs)."""
+        name, filt = IMPORT_KINDS[kind]
+        start = str(self.project_path.parent) if self.project_path else ''
+        files, _ = QFileDialog.getOpenFileNames(self, f'{name} 불러오기', start,
+                                                f'{filt};;All files (*)')
+        if not files:
+            return
+        if kind in ('crop', 'cell', 'particle', 'line') and not self.items:
+            QMessageBox.information(self, f'{name} 불러오기', '먼저 이미지를 불러오세요.')
+            return
+        self.import_paths([Path(f) for f in files])
 
     def import_folder_dialog(self):
         folder = QFileDialog.getExistingDirectory(self, '불러올 폴더 선택')
@@ -1653,7 +1725,10 @@ class MainWindow(QMainWindow):
             paths = [p for p in paths if p not in projects]
         folders = [p for p in paths if p.is_dir()]
         presets = [p for p in paths if p.suffix.lower() == '.json' and self._is_preset(p)]
-        files = [p for p in paths if p not in folders and p not in presets]
+        markers = [p for p in paths if p.suffix.lower() == '.json' and self._is_marker_file(p)]
+        files = [p for p in paths if p not in folders and p not in presets and p not in markers]
+        for p in markers:
+            self.load_marker_settings(p)
         for d in folders:
             self.add_files(folder_files(d), pair=True)
         if files:
@@ -1663,6 +1738,38 @@ class MainWindow(QMainWindow):
         self._refresh_crop_list(select=0)
         if self.current is not None:
             self.update_preview()
+
+    @staticmethod
+    def _is_marker_file(path) -> bool:
+        import json
+
+        try:
+            return json.loads(Path(path).read_text()).get('format') == MARKER_FORMAT
+        except Exception:
+            return False
+
+    def save_marker_settings(self):
+        import json
+
+        from .project import widget_state
+
+        path, _ = QFileDialog.getSaveFileName(self, '마커 설정 저장', 'markers.json', 'JSON (*.json)')
+        if not path:
+            return
+        Path(path).write_text(json.dumps({'format': MARKER_FORMAT, 'version': 1,
+                                          'state': widget_state(self.markers)},
+                                         ensure_ascii=False, indent=1), encoding='utf-8')
+        self.statusBar().showMessage(f'마커 설정 저장: {Path(path).name}')
+
+    def load_marker_settings(self, path):
+        import json
+
+        from .project import restore_widgets
+
+        state = json.loads(Path(path).read_text(encoding='utf-8')).get('state', {})
+        restore_widgets(self.markers, state)
+        self.markers.changed.emit()
+        self.statusBar().showMessage(f'마커 설정 불러옴: {Path(path).name}')
 
     @staticmethod
     def _is_preset(path) -> bool:
@@ -1731,7 +1838,7 @@ class MainWindow(QMainWindow):
             return
         if kind == 'rotation' and not self.stack_panel.mode_3d.isChecked():
             QMessageBox.information(self, '3D 회전 시리즈',
-                                    '스택 탭에서 3D projection을 켠 뒤 저장하세요 (Tool → 스택).')
+                                    '스택 탭에서 3D projection을 켠 뒤 저장하세요 (스택 → 스택 탭 열기).')
             self.show_tab('stack_tab')
             return
         box = self.stack_panel.save_box

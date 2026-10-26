@@ -16,7 +16,7 @@ channel (e.g. 0–4095 for 12-bit) are taken from the file's metadata.
 
 ## Adding images
 
-- **파일 추가…** (Add files) under the image list, **파일 › 불러오기 (파일)…**
+- **파일 추가…** (Add files) under the image list, **파일 › 불러오기 (자동 인식)…**
   (File › Load files, `Ctrl+O`), or drag files onto the window. **불러오기**
   also recognises projects (`.cyproj`), ROIs, crops and LUT presets (see
   [Menus, project files and the work log](13-project-menus.md#loading)). Files
@@ -83,7 +83,7 @@ measurement tabs.
   the background (up to 1.5 GB; progress in the status bar), so scrubbing
   only redraws.
 - **Right-drag on the image** moves through T (left/right) and Z (up/down)
-  at the same time. Its speed is set in **Tool › 설정…** (Settings).
+  at the same time. Its speed is set in **파일 › 설정…** (Settings).
 - **Mouse wheel** (without `Cmd`/`Ctrl`): one timepoint per notch. On images
   that are not time series it scrolls the view.
 
@@ -91,7 +91,7 @@ measurement tabs.
 
 - Hold `Cmd` (Windows `Ctrl`) and drag up to zoom in around the point you
   pressed, down to zoom out. The wheel does not zoom. The speed is
-  **확대/축소 드래그** (Zoom drag) in **Tool › 설정…** (default 0.6).
+  **확대/축소 드래그** (Zoom drag) in **파일 › 설정…** (default 0.6).
 - `]` zooms in, `[` zooms out (around the view centre, 1.25× per press).
 - **영역 확대** (Zoom to area): press it and drag a rectangle; `Shift`+drag
   does the same without the button.
@@ -108,8 +108,8 @@ and their colors and contrast set, in the
 ## Crop regions
 
 Crops are rectangular regions of an image that can be viewed, projected and
-exported on their own. Turn on **Tool › Crop** to get the **Crop** tab on the
-right.
+exported on their own. Choose **Crop › Crop 탭 열기** (Open Crop tab) in the menu
+bar to get the **Crop** tab on the right.
 
 1. Press **Crop 추가 (드래그)** (Add crop, drag) and drag on the image.
    `Shift`+drag draws a square. Repeat for more regions; each is numbered on
@@ -122,8 +122,9 @@ right.
    image afterwards by dragging.
 6. Saving: image exports write every crop separately (`<name>_crop1_*`) and
    the regions themselves as ImageJ rectangles, `<name>_crops.zip`.
-   **파일 › 내보내기 › Crop 영역 ROI** (File › Export › Crop ROIs) saves only
-   the regions. Loading that file with **불러오기** brings the crops back.
+   **Crop › Crop 영역 ROI 저장** (Save crop ROIs) saves only the regions.
+   Loading that file with **Crop › Crop 영역 ROI 불러오기…** (or
+   **파일 › 불러오기**) brings the crops back.
 
 ## Image ID
 

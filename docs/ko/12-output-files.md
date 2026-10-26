@@ -11,7 +11,7 @@
 
 | 파일 | 만드는 곳 | 내용 |
 |---|---|---|
-| `<이름>_full_composite.tif` | 파일 › 내보내기 › 이미지 | LUT와 마커가 들어간 합성 RGB. Crop은 `<이름>_crop1_composite.tif`, … |
+| `<이름>_full_composite.tif` | LUT › 이미지 내보내기 | LUT와 마커가 들어간 합성 RGB. Crop은 `<이름>_crop1_composite.tif`, … |
 | `<이름>_full_C<i>_<채널>.tif` | 저장, **채널별 RGB** | 채널마다 RGB |
 | `<이름>_full_raw.tif` | 저장, **원본값 스택** | 원본값 ImageJ hyperstack(타임시리즈는 TZCYX) |
 | `….mp4` | MP4를 고른 저장 / 스택 탭 | 시점(또는 각도)마다 한 프레임인 동영상 |
@@ -29,7 +29,7 @@
 | `<이름>_regions.zip` | 강도 측정 탭 | `rgnCCC-R`, 식은 `region` 속성 |
 | `<이름>_bleach_rois.zip` | 모든 저장(bleach 영역이 있는 CZI) | 타원 또는 다각형 |
 | `<이름>_line.roi` | 라인 프로파일 탭 | 두께가 들어간 직선 |
-| `<이름>_crops.zip` | 이미지 내보내기, 파일 › 내보내기 › Crop 영역 ROI, 통합 저장 | `cropN` 사각형(속성 `crop_region`) |
+| `<이름>_crops.zip` | 이미지 내보내기, Crop › Crop 영역 ROI 저장, 통합 저장 | `cropN` 사각형(속성 `crop_region`) |
 | inset `.roi` / `.zip` | Figure 창 | 원본 이미지 좌표의 사각형 |
 
 ## 표 (CSV)
@@ -46,7 +46,7 @@
 | `<이름>_info.csv` | — | 이미지 정보 탭(모든 분석 결과 통합 저장) |
 | — | `image_groups.csv` | 이미지, 이미지 ID, 그룹 |
 | 라인 프로파일 `.csv` | — | 거리 + 채널마다 한 열 |
-| — | 작업 기록 `.csv` | 시간, 이미지, 이미지 ID, 내용(파일 › 내보내기 › 작업 기록) |
+| — | 작업 기록 `.csv` | 시간, 이미지, 이미지 ID, 내용(파일 › 작업 기록 저장 (CSV)) |
 
 ## 프로젝트 (`.cyproj`)
 
@@ -58,7 +58,7 @@
 
 ## 결과 다시 불러오기
 
-**파일 › 불러오기 (파일)…**(`Ctrl+O`)는 고른 파일의 종류를 알아서 처리합니다:
+**파일 › 불러오기 (자동 인식)…**(`Ctrl+O`)는 고른 파일의 종류를 알아서 처리합니다:
 `.cyproj`는 프로젝트로 열고, 이미지는 목록에 추가하며, ROI(세포 `RoiSet`, 입자,
 Crop, 선, 논리 영역, bleach)는 이미지 ID가 맞는 열린 이미지에, 없으면 현재 이미지에
 붙입니다. LUT 프리셋 `.json`은 모든 이미지에, `image_groups.csv`는 그룹에

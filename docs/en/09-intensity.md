@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/09-intensity.md)
 
-Open this tab with **Tool › 강도 측정** (it appears on the right; turn the item off to close it). Its results are saved from **파일 › 내보내기** (File › Export).
+Open or close this tab with **강도 측정 › 강도 측정 탭 열기** (Open 강도 측정 tab) in the menu bar. This tab's saves and loads are in the same **강도 측정** menu.
 
 ## 강도 측정 tab
 
@@ -80,15 +80,15 @@ The 세포질 ROI, 입자 ROI and 강도 측정 tabs share the same measurement 
 
 ### Saving
 
-All three tabs with a measurement table save from their own menu under
-**파일 › 내보내기** (**세포질 ROI**, **입자 ROI**, **강도 측정 (논리 영역)**).
+All three tabs with a measurement table save from their own menu in the
+menu bar (**세포질 ROI**, **입자 ROI**, **강도 측정**).
 
 - **측정 CSV 저장 (현재 이미지)…** (Save measurement CSV, current image).
 - **모든 이미지 측정 + 저장 (폴더)…** (Measure all and save): measures every
   image again, then writes the set's CSV (`<suffix>.csv`) and each image's
   `<name>_<suffix>.csv` in its `<name>_<ID>` folder (plus the summaries in
   the 입자 ROI tab and `image_groups.csv`).
-- With **파일 › 내보내기 › 측정·프로파일 저장 시 ROI와 ROI가 그려진 이미지(.png)도
+- With **파일 › 측정·프로파일 저장 시 ROI와 ROI가 그려진 이미지(.png)도
   함께** (on by default, shared by every tab) the save also writes
   `<name>_RoiSet.zip` (cell, nucleus, cytosol), `<name>_particles.zip` when
   particles are used, the logic-region ROIs, and `<name>_image.png` (the

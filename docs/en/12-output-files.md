@@ -12,7 +12,7 @@ you chose. Every TIFF, ROI and CSV carries the image ID (see
 
 | File | Written by | Contents |
 |---|---|---|
-| `<name>_full_composite.tif` | 파일 › 내보내기 › 이미지 | Composite RGB with LUTs and markers; with crops `<name>_crop1_composite.tif`, … |
+| `<name>_full_composite.tif` | LUT › 이미지 내보내기 | Composite RGB with LUTs and markers; with crops `<name>_crop1_composite.tif`, … |
 | `<name>_full_C<i>_<channel>.tif` | export, **채널별 RGB** | One RGB image per channel |
 | `<name>_full_raw.tif` | export, **원본값 스택** | ImageJ hyperstack of the original values (TZCYX for time series) |
 | `….mp4` | export / 스택 tab with MP4 chosen | Movie, one frame per timepoint (or angle) |
@@ -30,7 +30,7 @@ you chose. Every TIFF, ROI and CSV carries the image ID (see
 | `<name>_regions.zip` | 강도 측정 tab | `rgnCCC-R`, the expression in the `region` property |
 | `<name>_bleach_rois.zip` | every export (CZI with bleach regions) | Ovals or polygons |
 | `<name>_line.roi` | 라인 프로파일 tab | Straight line with its width |
-| `<name>_crops.zip` | image export, 파일 › 내보내기 › Crop 영역 ROI, save all results | `cropN` rectangles (property `crop_region`) |
+| `<name>_crops.zip` | image export, Crop › Crop 영역 ROI 저장, save all results | `cropN` rectangles (property `crop_region`) |
 | inset `.roi` / `.zip` | Figure window | Rectangles in original-image coordinates |
 
 ## Tables (CSV)
@@ -47,7 +47,7 @@ you chose. Every TIFF, ROI and CSV carries the image ID (see
 | `<name>_info.csv` | — | 이미지 정보 tab (save all results) |
 | — | `image_groups.csv` | Image, image ID, group |
 | line profile `.csv` | — | Distance + one column per channel |
-| — | work log `.csv` | Time, image, image ID, action (파일 › 내보내기 › 작업 기록) |
+| — | work log `.csv` | Time, image, image ID, action (파일 › 작업 기록 저장 (CSV)) |
 
 ## Project (`.cyproj`)
 
@@ -60,7 +60,7 @@ settings, the figure layout and the work log are stored with them. See
 
 ## Loading results back
 
-**파일 › 불러오기 (파일)…** (`Ctrl+O`) detects what each chosen file is:
+**파일 › 불러오기 (자동 인식)…** (`Ctrl+O`) detects what each chosen file is:
 a `.cyproj` opens as a project, images are added to the list, ROIs (cell
 `RoiSet`, particles, crops, line, logic regions, bleach) go to the open image
 with the matching image ID, otherwise to the current image, a LUT preset

@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/07-line-profile.md)
 
-Open this tab with **Tool › 라인 프로파일** (it appears on the right; turn the item off to close it). Its results are saved from **파일 › 내보내기** (File › Export).
+Open or close this tab with **라인 프로파일 › 라인 프로파일 탭 열기** (Open 라인 프로파일 tab) in the menu bar. This tab's saves and loads are in the same **라인 프로파일** menu.
 
 Plots each channel's raw intensity along a line, like ImageJ's RGB Profiler
 (Plot Profile per channel), in the channel colors, against distance in µm.
@@ -28,14 +28,14 @@ end points in pixels.
 
 ## Saving
 
-From **파일 › 내보내기 › 라인 프로파일** (File › Export › Line profile):
+From the **라인 프로파일** menu in the menu bar:
 
-- **CSV…**: distance plus one column per channel.
-- **그래프 (PNG / PDF / SVG / TIFF)…** (Graph): PNG/TIFF at 300 dpi, PDF or SVG.
-- With **파일 › 내보내기 › 측정·프로파일 저장 시 ROI와 ROI가 그려진 이미지(.png)도
+- **CSV 저장…**: distance plus one column per channel.
+- **그래프 저장 (PNG / PDF / SVG / TIFF)…** (Graph): PNG/TIFF at 300 dpi, PDF or SVG.
+- With **파일 › 측정·프로파일 저장 시 ROI와 ROI가 그려진 이미지(.png)도
   함께** (on by default) the save also writes `<name>_line.roi` (ImageJ straight-line
   ROI, with its width) and `<name>_image.png` (the image with the current LUTs
-  and the line) in the same folder. Choosing a `_line.roi` in **파일 › 불러오기 (파일)…** draws the line again.
+  and the line) in the same folder. Choosing a `_line.roi` in **라인 프로파일 › 선 ROI 불러오기…** (or **파일 › 불러오기**) draws the line again.
 
 ## Agreement with ImageJ
 
