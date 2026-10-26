@@ -648,17 +648,43 @@ def run(out_dir) -> int:
         wheel(120)
         if win.current.t != t_before:
             raise AssertionError('wheel back')
-        # Tool menu tabs: open next to LUT / 이미지 정보 in menu order, close again
+        # feature-menu tabs: open next to LUT / 이미지 정보 in menu order, close again
         win.hide_tab('profile_tab')
         win.tool_actions['crop_tab'].setChecked(True)
         win.tool_actions['coloc_tab'].setChecked(True)
         tabs = [win.right_tabs.tabText(i) for i in range(win.right_tabs.count())]
         if tabs[:3] != ['LUT', '이미지 정보', 'Crop'] or 'Coloc 2' not in tabs \
                 or '라인 프로파일' in tabs or not win.tab_current('coloc_tab'):
-            raise AssertionError(f'Tool menu tabs: {tabs}')
+            raise AssertionError(f'menu tabs: {tabs}')
         win.tool_actions['coloc_tab'].setChecked(False)
         if win.tab_open('coloc_tab'):
-            raise AssertionError('Tool menu did not close the tab')
+            raise AssertionError('menu did not close the tab')
+        # one menu per feature next to 파일; the markers sit fixed in the LUT tab
+        menus = [a.text() for a in win.menuBar().actions()]
+        want = ['파일', 'LUT', '마커', 'Crop', '세포질 ROI', '입자 ROI', '강도 측정', 'Coloc 2',
+                '라인 프로파일', '스택', '이미지 정보', 'Figure']
+        if menus != want or 'marker_tab' in win.tab_pages:
+            raise AssertionError(f'menus: {menus}')
+        lut_page = win.right_tabs.widget(0)
+        if not lut_page.isAncestorOf(win.markers):
+            raise AssertionError('markers are not in the LUT tab')
+        # marker settings: save, change, load back (also through 불러오기)
+        import json as _json
+        win.markers.sb_len.setValue(7.5)
+        win.markers.ts_prefix.setText('t=')
+        mpath = out / 'markers.json'
+        mpath.write_text(_json.dumps({'format': 'cytosol-viewer-markers', 'version': 1,
+                                      'state': __import__('cytosol.project', fromlist=['x'])
+                                      .widget_state(win.markers)}))
+        win.markers.sb_len.setValue(0)
+        win.markers.ts_prefix.setText('')
+        if not win._is_marker_file(mpath) or win._is_preset(mpath):
+            raise AssertionError('marker file detection')
+        win.import_paths([mpath])
+        if win.markers.sb_len.value() != 7.5 or win.markers.ts_prefix.text() != 't=':
+            raise AssertionError('marker settings not loaded')
+        win.markers.sb_len.setValue(0)
+        win.markers.ts_prefix.setText('')
         # project file: everything back after closing the work
         from .cellroi import CellRois
         from .intensity import ParticleSettings

@@ -42,8 +42,8 @@ fibre input; the actual power at the sample is not in any file.
 
 - **표 복사** (Copy tables, button in the tab): both tables as tab-separated
   text, to paste into Excel.
-- **파일 › 내보내기 › 이미지 정보 › CSV…** (File › Export › Image info › CSV).
+- **이미지 정보 › CSV 저장…** (Image info menu › Save CSV).
   **모든 분석 결과 통합 저장** (Save all results, `Ctrl+Shift+E`) also writes
   `<name>_info.csv` per image.
-- **파일 › 내보내기 › 이미지 정보 › 원본 메타데이터…** (Raw metadata): the complete metadata in the
+- **이미지 정보 › 원본 메타데이터 저장…** (Raw metadata): the complete metadata in the
   file (CZI/OIR XML, TCF attributes), unchanged.

@@ -87,7 +87,7 @@ class ProfilePanel(QWidget):
         self.info.setWordWrap(True)
         self.info.setStyleSheet('color: gray; font-size: 11px;')
         pl.addWidget(self.info)
-        # 파일 → 내보내기 → 라인 프로파일 saves; with_roi (set by the window):
+        # the 라인 프로파일 menu saves; with_roi (set by the window):
         # also <name>_line.roi and <name>_image.png next to the file
         self.with_roi = None
         lay.addWidget(plot_box, 1)

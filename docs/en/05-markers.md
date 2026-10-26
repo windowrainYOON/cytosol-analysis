@@ -1,8 +1,8 @@
-# 마커 tab (scale bar, time stamp, bleach ROIs)
+# 마커 (Markers, at the bottom of the LUT tab: scale bar, time stamp, bleach ROIs)
 
 [← Manual index](README.md) · [한국어](../ko/05-markers.md)
 
-Open this tab with **Tool › 마커** (it appears on the right; turn the item off to close it). Its results are saved from **파일 › 내보내기** (File › Export).
+The marker settings are always shown in the **마커** box at the bottom of the **LUT** tab (drag the border above it to resize). The **마커** menu in the menu bar saves and loads them ([below](#saving-and-loading-the-settings)).
 
 The markers set here are drawn on the preview and burned into every RGB
 export (TIFF and MP4) and 스택 tab save. Raw-value stacks never get
@@ -58,3 +58,11 @@ after each bleach) are listed in the [이미지 정보 tab](10-image-info.md).
 
 When an image has no recorded bleach regions, the box says
 **이 이미지에는 bleach 영역 기록이 없습니다** (no bleach regions recorded).
+
+## Saving and loading the settings
+
+- **마커 › 마커 설정 저장…** (Save marker settings): the scale bar, time stamp and
+  bleach ROI display settings as a JSON file (`markers.json`).
+- **마커 › 마커 설정 불러오기…** (Load marker settings), or choosing the file in
+  **파일 › 불러오기 (자동 인식)…**, puts them back. Project files also keep the
+  marker settings.

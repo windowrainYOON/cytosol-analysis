@@ -1,6 +1,6 @@
 """Work log: what was done, when and on which image. Every lasting status
 bar message is recorded (detections, edits, loads, saves, ...), kept in the
-project file and shown in Tool > 작업 기록."""
+project file and shown in 파일 > 작업 기록 보기."""
 
 from __future__ import annotations
 
@@ -86,7 +86,7 @@ class LogWindow(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         lay.addWidget(self.table, 1)
         note = QLabel('상태 표시줄에 나온 작업(검출, 수정, 측정, 불러오기, 저장 …)이 시간 순서로 쌓이고 '
-                      '프로젝트 파일에 함께 저장됩니다. CSV로 저장: 파일 → 내보내기 → 작업 기록.')
+                      '프로젝트 파일에 함께 저장됩니다. CSV로 저장: 파일 → 작업 기록 저장.')
         note.setWordWrap(True)
         note.setStyleSheet('color: gray; font-size: 11px;')
         lay.addWidget(note)

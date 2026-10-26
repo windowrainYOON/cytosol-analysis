@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/06-stack.md)
 
-Open this tab with **Tool › 스택** (it appears on the right; turn the item off to close it). Its results are saved from **파일 › 내보내기** (File › Export).
+Open or close this tab with **스택 › 스택 탭 열기** (Open 스택 tab) in the menu bar. This tab's saves and loads are in the same **스택** menu.
 
 While this tab is open, the image area shows its projection instead of a
 single slice. It needs an image with a Z stack; the whole stack is loaded
@@ -17,7 +17,7 @@ when the tab opens (status: **Z 스택 불러오는 중…**) and released after
 
 - **Z 슬라이스** (Z slices): first–last slice; **전체** (All) selects every slice.
 - **선택한 Crop 영역만 (빠름)** (Selected crop only, faster): project only the
-  crop selected in the list of the **Crop** tab (**Tool › Crop**).
+  crop selected in the list of the **Crop** tab (**Crop › Crop 탭 열기**).
 
 ## 2D projection
 
@@ -51,13 +51,12 @@ timepoint; turning it afterwards only re-projects (about 0.05 s).
 
 ## 저장 (Saving)
 
-Choose an item in **파일 › 내보내기 › 스택 투영** (File › Export › Stack
-projection); a window with the options below opens.
+Choose an item in the **스택** menu of the menu bar; a window with the options below opens.
 
-- **현재 투영 (TIFF / MP4)…** (Current projection): an RGB image with
+- **현재 투영 저장 (TIFF / MP4)…** (Current projection): an RGB image with
   the LUTs and markers plus a float32 ImageJ stack of the projected values.
   With **타임시리즈는 모든 시점 저장** every timepoint is projected and saved.
-- **3D 회전 시리즈 (TIFF 스택 / MP4)…** (3D rotation series): angles
+- **3D 회전 시리즈 저장 (TIFF 스택 / MP4)…** (3D rotation series): angles
   **회전** from → to, **간격** (step), as a TIFF stack.
 - Choose **MP4 동영상** as the file type in the save dialog to get a movie
   instead (one frame per timepoint or angle, at **MP4 프레임 속도**, fps).

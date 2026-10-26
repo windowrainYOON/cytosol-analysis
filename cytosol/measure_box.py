@@ -135,7 +135,7 @@ class MeasureBox(QWidget):
         tl.addLayout(row)
         self.all_t = QCheckBox('일괄 측정에 모든 시점 포함')
         tl.addWidget(self.all_t)
-        # saving is in 파일 → 내보내기; with_roi: also <name>_RoiSet.zip,
+        # saving is in the menu of each tab; with_roi: also <name>_RoiSet.zip,
         # <name>_particles.zip and <name>_image.png (ROIs on the LUT image)
         self.with_roi = getattr(win, 'opt_with_roi', None)
         self.save_tip = ''

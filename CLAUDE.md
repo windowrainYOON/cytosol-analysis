@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.24.0)
+## Window structure (v0.25.0)
 
 - **Left**: image list with group folders (`image_tree.py`, `groups.py`),
   buttons 파일 추가… / 폴더 불러오기… / groups.
@@ -32,27 +32,32 @@ owner writes in Korean, so reply in Korean.
   - Mouse wheel (no modifier): moves T on time series (`MainWindow._wheel_t`),
     otherwise scrolls. `Ctrl`+wheel does nothing.
   - Right-drag: T (left/right) and Z (up/down). Middle-drag: pan.
-- **Right tabs**: `LUT` and `이미지 정보` are always present. The other tabs
+- **Right tabs**: `LUT` (channel LUTs on top, `MarkerPanel` fixed below in a
+  vertical splitter) and `이미지 정보` are always present. The other tabs
   live in `MainWindow.tab_pages` (crop_tab, roi_tab, particle_tab,
-  intensity_tab, coloc_tab, profile_tab, stack_tab, marker_tab) and are shown
-  / hidden by the **Tool** menu (`show_tab`, `hide_tab`, `tab_open`,
-  `tab_current`). Panels ask `win.tab_current('<name>')` to know whether they
-  are the visible tab (don't compare `right_tabs.currentIndex()` to fixed
-  numbers; tab positions change).
-- **Menus** (`MainWindow._build_menus`):
-  - **파일**: 새 프로젝트, 불러오기 (파일)/(폴더), 최근 프로젝트, 프로젝트 저장 /
-    다른 이름으로, **내보내기** submenu (one entry per analysis: 이미지, Crop
-    영역 ROI, 세포질 ROI, 입자 ROI, 강도 측정, 라인 프로파일, Coloc 2, 스택 투영,
-    이미지 정보, LUT 프리셋, 작업 기록, plus the shared options
-    `opt_per_image` and `opt_with_roi`), 모든 분석 결과 통합 저장, 종료.
-  - **Tool**: checkable tab actions, Figure…, 작업 기록…, 설정….
-  - Rule from the owner: big features are entered from **Tool**, every
-    save/load of results lives in **파일**. Panels keep no save/load buttons;
-    they expose methods (`save_current`, `save_all`, `save_csv`, ...) that
-    the menu calls. Option widgets that belong to a save (image export
-    options `exp_box`, stack `save_box`) are shown in a dialog
-    (`_options_dialog`) when the menu item is chosen. The Figure window keeps
-    its own save buttons.
+  intensity_tab, coloc_tab, profile_tab, stack_tab) and are shown / hidden
+  by the "… 탭 열기" check action in each feature's menu (`tool_actions`,
+  `show_tab`, `hide_tab`, `tab_open`, `tab_current`). Panels ask
+  `win.tab_current('<name>')` to know whether they are the visible tab
+  (don't compare `right_tabs.currentIndex()` to fixed numbers).
+- **Menus** (`MainWindow._build_menus`), in this order:
+  - **파일**: 새 프로젝트, 불러오기 (자동 인식) / (폴더), 최근 프로젝트,
+    프로젝트 저장 / 다른 이름으로, 모든 분석 결과 통합 저장, the shared options
+    `opt_per_image` and `opt_with_roi`, 작업 기록 보기 / 저장, 설정, 종료.
+  - One menu per feature: **LUT** (이미지 내보내기, LUT 프리셋 저장/불러오기),
+    **마커** (설정 저장/불러오기, JSON with `format: cytosol-viewer-markers`),
+    **Crop**, **세포질 ROI**, **입자 ROI**, **강도 측정**, **Coloc 2**,
+    **라인 프로파일**, **스택**, **이미지 정보**, **Figure**. Each holds its tab
+    action, its saves and its loads (`import_kind_dialog(kind)`, kinds in
+    `IMPORT_KINDS`; it only pre-filters the file chooser, `import_paths`
+    still detects by content).
+  - Rule from the owner (2026-10-26, v0.25): every feature gets its own
+    menu next to 파일 with its own save and load items; only bulk saving
+    (통합 저장), projects and auto-detecting load stay in 파일. Panels keep no
+    save/load buttons; they expose methods (`save_current`, `save_all`,
+    `save_csv`, ...) that the menus call. Option widgets that belong to a
+    save (image export options `exp_box`, stack `save_box`) are shown in a
+    dialog (`_options_dialog`). The Figure window keeps its own save buttons.
 - **Status bar**: `LoggingStatusBar` (`worklog.py`); every lasting message
   (`showMessage` without timeout) goes into the `WorkLog` and marks the
   project dirty. Use `statusBar().showMessage(...)` for anything the user
@@ -116,7 +121,7 @@ QT_QPA_PLATFORM=offscreen python3 -m cytosol.selftest /tmp/selftest-out
 ```
 
 The self-test builds synthetic images, drives the main window (zoom, wheel,
-Tool tabs, every analysis, exports, project round trip, 불러오기) and must
+feature menus and tabs, markers, every analysis, exports, project round trip, 불러오기) and must
 print PASS. CI (`.github/workflows/*.yml`, Windows) runs it on the packaged
 exe for every push to `main` and `claude/**`. Add a check to `selftest.py`
 for each new feature; reset shared panel state afterwards so later checks are
@@ -172,4 +177,5 @@ not affected.
 | #33–#34 | 0.21–0.22 | Particle shape from sub-pixel iso-intensity contours; pixel / contour intensity ROI |
 | #35 | 0.23 | CZI bleach ROIs, 이미지 정보 tab, CZI time / single-channel fixes |
 | #36 | | User manuals `docs/ko`, `docs/en` |
-| this PR | 0.24 | Project files (`.cyproj`), 파일 / Tool menus, 불러오기 with automatic detection, tabs opened from Tool, Crop tab, work log, settings (mouse sensitivity), `Cmd`+drag / `[` `]` zoom, wheel = time, this file |
+| #37 | 0.24 | Project files (`.cyproj`), 파일 / Tool menus, 불러오기 with automatic detection, tabs opened from Tool, Crop tab, work log, settings (mouse sensitivity), `Cmd`+drag / `[` `]` zoom, wheel = time, this file |
+| this PR | 0.25 | One menu per feature next to 파일 (tab, saves, loads), markers fixed under the LUT tab, marker settings save/load, Tool menu removed |

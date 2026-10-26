@@ -250,7 +250,7 @@ class RoiPanel(QWidget):
         hint.setStyleSheet('color: gray;')
         el.addWidget(hint)
 
-        # which ROIs 파일 → 내보내기 → 세포질 ROI writes (menu check items)
+        # which ROIs the 세포질 ROI menu writes (menu check items)
         self.save_cell = QAction('저장할 ROI: 세포 전체', self, checkable=True)
         self.save_nuc = QAction('저장할 ROI: 핵', self, checkable=True)
         self.save_cyto = QAction('저장할 ROI: 세포질 (핵 제외)', self, checkable=True)

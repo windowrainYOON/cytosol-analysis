@@ -91,18 +91,19 @@ render(read_image('cells.czi'), 'figures/', prefix='cells', scale_um=10,
 
 A GUI for working on a whole set of images at once:
 
-- **Menus**: **파일** (File) holds every load and save: new / open / save a
-  project (`.cyproj`: image paths relative to the project plus all ROIs,
-  crops, groups, LUTs, tab and measurement settings, the figure layout and
-  the work log, so a project continues where it was left), **불러오기**
-  (load files or a folder; projects, images, cell / particle / crop / line
-  ROIs, LUT presets and `image_groups.csv` are recognised automatically and
-  attached to the matching open image), the **내보내기** (Export) submenu with
-  one entry per analysis, and **모든 분석 결과 통합 저장** (save all results).
-  **Tool** opens the analysis tabs (Crop, 세포질 ROI, 입자 ROI, 강도 측정,
-  Coloc 2, 라인 프로파일, 스택, 마커) next to the always-present **LUT** and
-  **이미지 정보** tabs, plus the Figure window, the work log (every lasting
-  status message with time and image) and the settings (mouse sensitivity).
+- **Menus**: **파일** (File) holds projects (new / open / save; `.cyproj`:
+  image paths relative to the project plus all ROIs, crops, groups, LUTs,
+  tab and measurement settings, the figure layout and the work log, so a
+  project continues where it was left), **불러오기** (load files or a folder;
+  projects, images, cell / particle / crop / line ROIs, LUT presets, marker
+  settings and `image_groups.csv` are recognised automatically and attached to
+  the matching open image), **모든 분석 결과 통합 저장** (save all results), the
+  work log (every lasting status message with time and image) and the
+  settings (mouse sensitivity). Next to it every feature has its own menu
+  (LUT, 마커, Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, 스택,
+  이미지 정보, Figure) that opens its tab on the right and holds its own saves
+  and loads. The **LUT** and **이미지 정보** tabs are always there; the marker
+  settings are fixed at the bottom of the LUT tab.
 - Zoom with `Cmd`/`Ctrl` + drag up/down or `]` / `[`; the mouse wheel moves
   through time on time series and scrolls otherwise.
 - Add TCF / CZI / OIR / TIFF files with **파일 › 불러오기** or by dragging files or folders
@@ -351,7 +352,7 @@ A GUI for working on a whole set of images at once:
   - optional per-channel RGB,
   - an ImageJ hyperstack of the original values for all Z, carrying the channel
     LUTs, display ranges and µm calibration, ready for measurement in Fiji.
-- **이미지별 폴더에 나눠 저장** (on by default, an option in 파일 › 내보내기 shared by
+- **이미지별 폴더에 나눠 저장** (on by default, an option in the 파일 menu shared by
   every folder save): each image's files go into their own subfolder
   `<chosen folder>/<name>_<image ID>/`.
 - **모든 분석 결과 통합 저장** (File menu, Ctrl+Shift+E): for every image, one folder
@@ -411,10 +412,10 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
    middle-button drag pans in any tool (right-button too on images without T
    or Z). A cell is always one filled piece
    (ImageJ polygon ROIs cannot have holes), so cut from its border.
-4. **ImageJ ROI 파일** (파일 › 내보내기 › 세포질 ROI): `ROI 저장 (현재 이미지)…` writes a RoiSet `.zip` (ROI Manager › Open)
+4. **ImageJ ROI 파일** (세포질 ROI menu): `ROI 저장 (현재 이미지)…` writes a RoiSet `.zip` (ROI Manager › Open)
    or, when saved as `.roi`, one `.roi` file per ROI. Per cell: `cellNNN`
    (whole cell polygon), `nucNNN` (nucleus polygon) and `cytoNNN` (cell minus
-   nucleus, a composite ROI). 파일 › 불러오기 reads `.zip` / `.roi` files back
+   nucleus, a composite ROI). `ROI 불러오기…` (or 파일 › 불러오기) reads `.zip` / `.roi` files back
    for editing. `모든 이미지 ROI 저장` writes one RoiSet per image plus
    `cell_rois.csv` with cell, nucleus and cytosol areas (with
    `이미지별 폴더에 나눠 저장`, each RoiSet and its own CSV go in `<name>/`).
@@ -429,7 +430,7 @@ rois.save('cells_RoiSet.zip')
 
 ### Figure 만들기 (figure table)
 
-`Tool › Figure…` (`Ctrl+Shift+F`) opens a window
+`Figure › Figure 창 열기…` (`Ctrl+Shift+F`) opens a window
 that lays images out as a table with row and column labels:
 
 - **Table**: add, delete and reorder rows and columns; double-click a row or

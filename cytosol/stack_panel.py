@@ -75,7 +75,7 @@ class StackPanel(QWidget):
         row.addWidget(all_z)
         rf.addRow('Z 슬라이스', row)
         self.only_crop = QCheckBox('선택한 Crop 영역만 (빠름)')
-        self.only_crop.setToolTip('LUT 탭 왼쪽 Crop 목록에서 선택한 영역만 투영합니다.')
+        self.only_crop.setToolTip('Crop 탭의 목록에서 선택한 영역만 투영합니다.')
         rf.addRow(self.only_crop)
         lay.addWidget(rng)
 
@@ -201,7 +201,7 @@ class StackPanel(QWidget):
         rot.addWidget(QLabel('간격'))
         rot.addWidget(self.rot_step)
         sl.addLayout(rot)
-        # shown in the dialog of 파일 → 내보내기 → 스택 (not in the tab)
+        # shown in the dialog of 스택 → 저장 (not in the tab)
         self.save_box = save_box
 
         self.status = QLabel()
