@@ -39,7 +39,7 @@ the detector maximum), read from the metadata.
 | Format | Reader | Notes |
 |---|---|---|
 | TCF (HDF5) | `h5py` | `modality='3D'` (default) or `'2DMIP'` gives refractive index (stored uint16 / 10000); `'3DFL'` / `'2DFLMIP'` gives fluorescence per channel. HT and FL have different XY pixel sizes and Z ranges (`Data/3DFL` `OffsetZ`). |
-| CZI | `czifile` | `scene=` selects a scene in multi-scene files. |
+| CZI | `czifile` | `scene=` selects a scene in multi-scene files. Frame times come from the `TimeStamps` attachment; bleach regions and events (`metadata['bleach_rois']`, `metadata['bleach']`) from the experiment XML and the `EventList` attachment. |
 | OIR | `oirfile` | |
 | TIFF | `tifffile` | ImageJ hyperstacks and OME-TIFF keep T/Z/C, pixel size, channel names and colors (ImageJ LUTs, OME `Color`). A plain multi-page TIFF is a Z stack; an RGB TIFF gives channels R/G/B. |
 
@@ -268,6 +268,29 @@ A GUI for working on a whole set of images at once:
   gap, edge margin, position and color; the time stamp also has the unit
   (auto, s, min, h, hh:mm:ss, mm:ss, frame), decimals, prefix, a time offset
   and an optional progress bar. Used by the preview and every TIFF export.
+  **Bleach ROI**: the bleach regions a Zeiss CZI records (FRAP etc.; from
+  the executed bleach events, else the regions marked for bleaching) drawn as
+  outlines: **화면에 표시** shows/hides them on the preview, **저장하는 RGB
+  이미지에 선 포함** burns them into exported RGB TIFFs / MP4s (never into the
+  raw stack); color, line width and region names are adjustable. Every export
+  also writes them as ImageJ ROIs, `<name>_bleach_rois.zip` (ovals for
+  circles, sub-pixel polygons otherwise), which folder loading attaches back to
+  the image.
+- **이미지 정보 tab**: the acquisition metadata as two tables, copyable and
+  savable as CSV (also written as `<name>_info.csv` by 모든 데이터 일괄 저장),
+  plus the raw metadata (CZI/OIR XML, TCF attributes). Per channel:
+  fluorophore and its Ex/Em, laser wavelength, laser intensity (the stored
+  setting, %), the laser line's rated maximum and the nominal power (maximum ×
+  setting; the power at the sample is not in any file), exposure time or pixel
+  dwell / frame time / averaging, detector, detector voltage (gain), digital
+  gain, offset, detection range, pinhole (µm and AU). Generally: size, pixel
+  size and field of view, Z step, frame interval and duration, objective (NA,
+  immersion), instrument and software, and for CZI the bleaching (laser and
+  intensity, iterations, duration, number of bleaches, the frames that follow
+  each bleach, pre-bleach frames) and each bleach ROI's position and size. CZI
+  is read fully; OIR (laser %, PMT HV/offset/gain, pinhole, dye, scan speed),
+  TCF (FL Ex/Em, light intensity %, exposure) and TIFF (ImageJ / OME
+  metadata) give what they store.
 - **Per-channel LUT** with a live preview: show/hide, color, min/max (slider,
   number or histogram), gamma, `Auto` (0.5–99.8 percentile) and `Min/Max`
   (the current image's data min–max). The sliders and histogram span the

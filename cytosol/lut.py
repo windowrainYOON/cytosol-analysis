@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from .io import Image
-from .render import ScaleBarStyle, TimeStampStyle, channel_colors, project
+from .render import OutlineStyle, ScaleBarStyle, TimeStampStyle, channel_colors, project
 
 
 @dataclass
@@ -94,6 +94,7 @@ class ImageItem:
     group: str = ''
     # cytosol.prefetch.TimeCache that reads this image's timepoints ahead
     time_cache: object = field(default=None, repr=False)
+    _bleach: list | None = field(default=None, repr=False)  # overrides the file's bleach ROIs
     _planes: np.ndarray | None = field(default=None, repr=False)
     _planes_z: object = field(default=None, repr=False)
     _planes_preview: bool = field(default=False, repr=False)  # approximate, for drawing only
@@ -183,9 +184,25 @@ class ImageItem:
             self._planes = None
             self._planes_preview = False
 
+    @property
+    def bleach_rois(self) -> list:
+        """Bleach regions (cytosol.imageinfo.BleachRoi) from the file, or
+        loaded from a saved _bleach_rois.zip."""
+        if self._bleach is not None:
+            return self._bleach
+        return self.image.metadata.get('bleach_rois') or []
+
+    @bleach_rois.setter
+    def bleach_rois(self, rois):
+        self._bleach = list(rois) if rois is not None else None
+
     def decorate(self, rgb, scale: ScaleBarStyle | None = None,
-                 time: TimeStampStyle | None = None, t: int | None = None) -> np.ndarray:
-        """Burn the scale bar and (for time series) the time stamp into an RGB image."""
+                 time: TimeStampStyle | None = None, t: int | None = None,
+                 outline: OutlineStyle | None = None, region=None) -> np.ndarray:
+        """Burn the bleach-region outlines, the scale bar and (for time series)
+        the time stamp into an RGB image; region: the crop the image shows."""
+        if outline is not None:
+            rgb = outline.draw(rgb, self.bleach_rois, region[:2] if region else (0, 0))
         if scale is not None:
             rgb = scale.draw(rgb, self.pixel_um)
         if time is not None and self.nt > 1:
@@ -394,6 +411,8 @@ def export_item(
     stem: str | None = None,
     rgb_format: str = 'tif',
     fps: float = 10.0,
+    outline: OutlineStyle | None = None,
+    bleach_file: bool = True,
 ) -> list[str]:
     """Write TIFFs for one image; returns the written paths.
 
@@ -413,6 +432,9 @@ def export_item(
     rgb_format: for a series of timepoints, write the RGB outputs as 'tif'
     (T-frame stack), 'mp4' (H.264 movie at fps) or 'both'. A single
     timepoint always gives a TIFF; the raw stack is always a TIFF.
+    outline: how the file's bleach regions are burned into the RGB outputs
+    (None or disabled: not drawn). bleach_file: also write the bleach
+    regions as ImageJ ROIs, <name>_bleach_rois.zip.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -425,13 +447,19 @@ def export_item(
     if crops:
         regions += [(f'crop{k}', r) for k, r in enumerate(item.crops, 1)]
     times = list(range(item.nt)) if all_times and item.nt > 1 else [item.t]
-    return _export_regions(item, [(r, out_dir / f'{stem}_{tag}') for tag, r in regions],
-                           composite, per_channel, raw_stack, scale, time, times,
-                           rgb_format, fps)
+    written = _export_regions(item, [(r, out_dir / f'{stem}_{tag}') for tag, r in regions],
+                              composite, per_channel, raw_stack, scale, time, times,
+                              rgb_format, fps, outline)
+    if bleach_file and item.bleach_rois:
+        from .imageinfo import save_bleach_rois
+
+        written.append(save_bleach_rois(out_dir / f'{stem}_bleach_rois.zip', item.bleach_rois,
+                                        item.id_properties()))
+    return written
 
 
 def _export_regions(item, regions, composite, per_channel, raw_stack,
-                    scale, time, times, rgb_format='tif', fps=10.0) -> list[str]:
+                    scale, time, times, rgb_format='tif', fps=10.0, outline=None) -> list[str]:
     """Write every output of every region in one pass over the timepoints.
 
     Loading a timepoint (and, for TCF, aligning HT and FL) is the slow part,
@@ -465,7 +493,8 @@ def _export_regions(item, regions, composite, per_channel, raw_stack,
         for k, t in enumerate(times):
             item.set_t(t)
             for path, region, chans, frames in rgb_jobs:
-                rgb = item.decorate(item.composite(region, channels=chans), scale, time, t)
+                rgb = item.decorate(item.composite(region, channels=chans), scale, time, t,
+                                    outline, region)
                 frames.append((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
             if raw_stack:
                 if k == 0:

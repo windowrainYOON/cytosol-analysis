@@ -10,6 +10,7 @@ read from the file's metadata.
 from __future__ import annotations
 
 import threading
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -233,6 +234,11 @@ def _tcf_fl_channels(grp) -> list[str]:
     return sorted(k for k in grp.keys() if k.startswith('CH'))
 
 
+def _tcf_fl_attrs(grp) -> dict:
+    """Per FL channel attributes (Excitation, Emission, ExposureTime, Intensity, ...)."""
+    return {ch: _attrs(grp[ch]) for ch in _tcf_fl_channels(grp)}
+
+
 def _tcf_fl_info(grp):
     """Channel names, colors and timepoint list of an FL modality group."""
     names, colors = [], []
@@ -373,6 +379,7 @@ def read_tcf(path, modality: str = '3D', timepoint: int = 0) -> Image:
             'file': _attrs(f),
             'device': _attrs(f['Info/Device']) if 'Info/Device' in f else {},
             'group': ga,
+            'fl_channels': _tcf_fl_attrs(grp) if 'FL' in modality else {},
         }
     planes = _LRU(PLANE_CACHE)
     lock = threading.Lock()  # the time-series read-ahead calls in from its own thread
@@ -617,6 +624,7 @@ def read_tcf_aligned(path, timepoint: int = 0, refine: bool = True) -> Image:
             'device': _attrs(f['Info/Device']) if 'Info/Device' in f else {},
             'group': ha,
             'fl_group': fa,
+            'fl_channels': _tcf_fl_attrs(fg),
         }
     ht_grid, fl_grid = _grid(ha), _grid(fa)
     if ht_mod == '3D' and fl_mod == '3DFL' and 'OffsetZ' in fa:
@@ -799,6 +807,8 @@ def read_czi(path, scene: int | None = None) -> Image:
         x = img.asxarray()
         xml = czi.metadata()
         guid = czi.header.primary_file_guid or czi.header.file_guid
+        stamps, events = _czi_attachments(czi)
+    had_c = 'C' in x.dims and x.sizes['C'] > 1
     x = x.squeeze()
     for ax in ('C', 'Z'):
         if ax not in x.dims:
@@ -806,7 +816,12 @@ def read_czi(path, scene: int | None = None) -> Image:
     extra = [d for d in x.dims if d not in ('T', 'C', 'Z', 'Y', 'X')]
     if extra:
         raise ValueError(f'unsupported CZI axes {extra}; select them first')
+    nt = x.sizes.get('T', 1)
     x, times, loader = _split_time(x)
+    if nt > 1 and len(stamps) == nt and len(set(stamps)) == nt:
+        # czifile's T coordinates are not the acquisition times; the
+        # TimeStamps attachment is (seconds, one per frame)
+        times = [t - stamps[0] for t in stamps]
     scales = dict(x.attrs.get('coord_scales', {}))
     to_um = {'meter': 1e6, 'micrometer': 1.0}
     units = x.attrs.get('coord_units', {})
@@ -825,11 +840,40 @@ def read_czi(path, scene: int | None = None) -> Image:
         'file_guid': str(guid) if guid else None,
         'scene': scene,
     }
-    names = [str(c) for c in x.coords['C'].values]
+    from .imageinfo import czi_bleach_info, czi_bleach_rois
+
+    try:
+        meta['bleach'] = czi_bleach_info(xml, events, stamps)
+        meta['bleach_rois'] = czi_bleach_rois(xml)
+    except Exception:  # metadata extras never block opening the image
+        traceback.print_exc()
     info = x.attrs.get('channels') or {}
+    names = [str(c) for c in x.coords['C'].values] if 'C' in x.coords else []
+    if not had_c and len(names) <= 1 and len(info) == 1:
+        names = [str(next(iter(info)))]  # the squeezed single channel: its name
+    if len(names) != x.sizes['C']:
+        names = [f'C{i}' for i in range(x.sizes['C'])]
     colors = [_argb_to_rgb(info.get(n, {}).get('Color')) for n in names]
     image = Image(np.asarray(x.values), names, vx, meta, colors, times=times, loader=loader)
     return _set_ranges(image, [_czi_range(xml, image.data.dtype)] * len(names))
+
+
+def _czi_attachments(czi):
+    """(frame timestamps s, [(event time s, event type)]) from the CZI attachments."""
+    stamps, events = [], []
+    try:
+        ts = czi.timestamps
+        stamps = [float(t) for t in ts] if ts is not None else []
+    except Exception:
+        stamps = []
+    try:
+        for a in czi.attachments():
+            if a.attachment_entry.name == 'EventList':
+                for e in a.data():
+                    events.append((float(e.time), getattr(e.event_type, 'name', str(e.event_type))))
+    except Exception:
+        events = []
+    return stamps, events
 
 
 def _czi_range(xml: str, dtype):
@@ -1017,7 +1061,11 @@ def read_tiff(path) -> Image:
             vx['Z'] = float(ij['spacing']) * _TIFF_UNITS_UM.get(str(ij.get('unit', 'micron')), 1.0)
         if ij.get('finterval'):
             times = [i * float(ij['finterval']) for i in range(nt)]
-        luts = ij.get('LUTs') or []
+        luts = ij.get('LUTs')
+        if luts is None:
+            luts = []
+        elif isinstance(luts, np.ndarray) and luts.ndim == 2:
+            luts = [luts]  # one channel: tifffile gives the LUT itself
         for i, lut in enumerate(luts[:nc]):
             lut = np.asarray(lut)
             if lut.ndim == 2 and lut.shape[0] == 3:
@@ -1025,6 +1073,8 @@ def read_tiff(path) -> Image:
                 if top.max() > 0:
                     colors[i] = tuple(float(c) for c in top)
         labels = ij.get('Labels')
+        if isinstance(labels, str) and nc == 1:
+            labels = [labels]
         if isinstance(labels, (list, tuple)) and len(labels) == nc and all(labels):
             names = [str(n) for n in labels]
         if rgb and nc == 3 and not any(colors):

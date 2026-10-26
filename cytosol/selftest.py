@@ -497,6 +497,8 @@ def run(out_dir) -> int:
         win.show()
         app.processEvents()
         win.add_files([out / 'selftest.TCF'])
+        if win.info_panel.summary is None or win.info_panel.gen.rowCount() == 0:
+            raise AssertionError('image info tab empty')
         # dragging T draws read-ahead timepoints; releasing settles on the last one
         win.t_slider.setSliderDown(True)
         win.t_slider.setValue(1)
@@ -823,6 +825,44 @@ def run(out_dir) -> int:
             raise AssertionError('removing every image left state behind')
         win.close()
 
+    def bleach_info():
+        from .imageinfo import (czi_bleach_info, czi_bleach_rois, is_bleach_file,
+                                load_bleach_rois, summarize)
+        from .lut import ImageItem, export_item
+        from .render import OutlineStyle
+        xml = ('<ImageDocument><Metadata><Experiment><BleachingSetup IsActivated="true">'
+               '<ExtensionSettings><Iterations>2</Iterations></ExtensionSettings></BleachingSetup>'
+               '<TimelineElement Id="1"><Duration>0.2</Duration><EventInformation><Bleaching>'
+               '<BleachingType>TimedBleaching</BleachingType><BleachingRegions><BleachRegion>'
+               '<Name>Region 1</Name><BleachRegionGeometryString>F1M60,40C71,40 80,49 80,60'
+               'C80,71 71,80 60,80 49,80 40,71 40,60 40,49 49,40 60,40z</BleachRegionGeometryString>'
+               '<Laserlines><Laserline><Wavelength>405</Wavelength><Intensity>10</Intensity>'
+               '</Laserline></Laserlines></BleachRegion></BleachingRegions></Bleaching>'
+               '</EventInformation><Bounds StartT="3" /></TimelineElement></Experiment>'
+               '</Metadata></ImageDocument>')
+        rois = czi_bleach_rois(xml)
+        info = czi_bleach_info(xml, [(1.0, 'BLEACH_START'), (1.2, 'BLEACH_STOP')],
+                               [0.0, 0.5, 0.9, 1.3, 1.8])
+        x0, y0, x1, y1 = rois[0].bounds()
+        if len(rois) != 1 or abs(x0 - 40) > 0.5 or abs(y1 - 80) > 0.5 or rois[0].lasers != [(405.0, 10.0)]:
+            raise AssertionError(f'bleach ROI parse: {rois}')
+        if info['frames_after'] != [3] or info['count'] != 1:
+            raise AssertionError(f'bleach events: {info}')
+        it = ImageItem(path=item.path, image=item.image, label='bleach')
+        it.luts = item.luts
+        it.bleach_rois = rois
+        rgb = it.decorate(it.composite(), outline=OutlineStyle(color=(1, 1, 0), thickness_px=2))
+        if not ((rgb[..., 0] > 0.9) & (rgb[..., 1] > 0.9) & (rgb[..., 2] < 0.1)).any():
+            raise AssertionError('bleach outline not drawn')
+        files = export_item(it, out / 'export_bleach', crops=False, raw_stack=False)
+        zips = [f for f in files if f.endswith('_bleach_rois.zip')]
+        if not zips or not is_bleach_file(zips[0]) or len(load_bleach_rois(zips[0])) != 1:
+            raise AssertionError(f'bleach ROI file: {files}')
+        s = summarize(it)
+        if not any(sec == 'Bleach ROI' for sec, _, _ in s.general):
+            raise AssertionError('bleach ROI missing from the summary')
+        return f'{len(s.general)} info rows, {Path(zips[0]).name}'
+
     step('readers import', readers)
     step('HDF5 non-ASCII path', hdf5_unicode_path)
     step('TIFF export', tiff_export)
@@ -838,6 +878,7 @@ def run(out_dir) -> int:
     step('lazy TCF planes', lazy_tcf)
     step('time-series read-ahead', read_ahead)
     step('Z-stack projections', projections)
+    step('bleach ROIs + image info', bleach_info)
     step('main window', window)
 
     text = '\n'.join(log) + f'\n\n{"PASSED" if ok else "FAILED"}\n'

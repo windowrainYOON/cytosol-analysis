@@ -72,6 +72,8 @@ from .groups import GROUP_FILE, apply_groups, auto_groups, read_groups, suggest_
 from .image_tree import ImageTree
 from .intensity_panel import IntensityPanel
 from .imageid import ROI_EXT, match_roi, plan_pairing
+from .imageinfo import is_bleach_file, load_bleach_rois, summarize
+from .info_panel import InfoPanel
 from .marker_panel import MarkerPanel
 from .lineprofile import read_line_roi
 from .prefetch import TimeCache
@@ -128,6 +130,13 @@ CELL_COLORS = [QColor(c) for c in (
     '#ff9678', '#96b4ff',
 )]
 LASSO_COLORS = {'add': QColor(80, 255, 120), 'sub': QColor(255, 80, 80), 'new': QColor(80, 220, 255)}
+
+
+def write_csv_rows(path: Path, rows):
+    import csv
+
+    with open(path, 'w', newline='', encoding='utf-8-sig') as f:
+        csv.writer(f).writerows(rows)
 
 
 def folder_files(folder: Path) -> list[Path]:
@@ -1292,6 +1301,8 @@ class MainWindow(QMainWindow):
         intensity_scroll.setWidgetResizable(True)
         intensity_scroll.setWidget(self.intensity_panel)
         self.intensity_tab = right.addTab(intensity_scroll, '강도 측정')
+        self.info_panel = InfoPanel()
+        self.info_tab = right.addTab(self.info_panel, '이미지 정보')
         self.canvas.lineDrawn.connect(self._line_drawn)
         self.line_btn.toggled.connect(self._line_mode)
         self.profile_panel.draw_btn.toggled.connect(self.line_btn.setChecked)
@@ -1435,6 +1446,16 @@ class MainWindow(QMainWindow):
             it, how = match_roi(f, self.items, item_stem)
             if it is None:
                 notes.append(f'{f.name}: {how}')
+                continue
+            if is_bleach_file(f):  # bleach regions saved with the images
+                try:
+                    it.bleach_rois = load_bleach_rois(f)
+                    it._info_summary = None
+                    if f not in it.linked:
+                        it.linked.append(f)
+                except Exception as exc:
+                    errors.append(f'{f.name}: {exc}')
+                    traceback.print_exc()
                 continue
             if is_region_file(f):  # logic regions saved by the 강도 측정 tab
                 if f not in it.linked:
@@ -1636,6 +1657,7 @@ class MainWindow(QMainWindow):
             self.coloc_panel.bind(None)
             self.particle_panel.bind(None)
             self.intensity_panel.bind(None)
+            self.info_panel.bind(None)
             self.canvas.show_line(None)
             self.roi_panel.bind(None)
             self.roi_panel.draw_overlay(hidden=True)
@@ -1685,6 +1707,8 @@ class MainWindow(QMainWindow):
         self.coloc_panel.bind(it)
         self.particle_panel.bind(it)
         self.intensity_panel.bind(it)
+        self.info_panel.bind(it)
+        self.markers.set_bleach_count(it.bleach_rois, it.pixel_um)
         c, z, h, w = it.image.shape
         px = it.pixel_um
         self.info.setText(
@@ -2118,7 +2142,8 @@ class MainWindow(QMainWindow):
             rgb = self.roi_panel.preview_rgb(it)
         else:
             rgb = it.composite(it.crops[sel] if only else None)
-        rgb = it.decorate(rgb, self.markers.scale_style(), self.markers.time_style())
+        rgb = it.decorate(rgb, self.markers.scale_style(), self.markers.time_style(),
+                          outline=self.markers.outline_style(), region=it.crops[sel] if only else None)
         self._t_preview_label(it.t)
         self.canvas.set_image(to_qimage(rgb), refit=refit and only)
         if refit and not only:
@@ -2299,6 +2324,7 @@ class MainWindow(QMainWindow):
             all_times=self.exp_all_t.isChecked(),
             rgb_format=self.exp_format.currentData(),
             fps=self.exp_fps.value(),
+            outline=self.markers.outline_style(export=True),
         )
 
     def _export(self, items):
@@ -2376,6 +2402,7 @@ class MainWindow(QMainWindow):
                         it, folder / f'{item_stem(it)}_particles.zip', pcells, p)
                 if has_cells:
                     self.intensity_panel._region_file(it, folder / item_stem(it))
+                write_csv_rows(folder / f'{item_stem(it)}_info.csv', summarize(it).rows_csv())
                 if it.coloc:
                     write_coloc_csv(folder / f'{item_stem(it)}_coloc2.csv', it.coloc)
                     coloc += it.coloc
