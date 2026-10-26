@@ -3,8 +3,9 @@
 [← 설명서 목차](README.md) · [English](../en/11-figure.md)
 
 이미지를 행·열 이름이 있는 표로 배치하고 확대 inset과 scale bar를 넣어 논문
-figure를 만듭니다. 왼쪽 패널의 **Figure 만들기…**, **Figure** 메뉴, 또는
-`Ctrl+Shift+F`로 엽니다.
+figure를 만듭니다. **Tool › Figure…** 또는 `Ctrl+Shift+F`로 엽니다. Figure 저장과
+inset ROI 저장·불러오기는 이 창 안의 버튼으로 합니다. Figure 구성은 프로젝트
+파일에도 저장됩니다.
 
 칸에는 불러온 이미지가 현재 LUT로 나옵니다. 메인 창에서 바꾼 내용은 Figure 창으로
 돌아오면 반영됩니다.

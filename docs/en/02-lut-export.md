@@ -1,9 +1,10 @@
-# LUT · 내보내기 tab (display and export)
+# LUT tab and image export
 
 [← Manual index](README.md) · [한국어](../ko/02-lut-export.md)
 
-This tab sets how each channel is displayed (its LUT) and exports images.
-The LUTs set here are used by the preview, every RGB export, the 스택 tab
+The **LUT** tab (always open) sets how each channel is displayed (its LUT).
+Images are exported with **파일 › 내보내기 › 이미지 (TIFF / MP4)…** (File ›
+Export › Images). The LUTs set here are used by the preview, every RGB export, the 스택 tab
 (when linked) and the Figure window.
 
 ## Showing channels
@@ -39,10 +40,17 @@ between files of the same type with the same channel count.
 - **모든 채널 LUT를 전체 이미지에 적용** (Apply all channel LUTs to all images).
 - **색상도 함께 적용** (Apply colors too): when off, only min/max/gamma are
   copied and each image keeps its colors.
-- **LUT 프리셋 저장… / 불러오기…** (Save / load LUT preset): LUTs as a JSON file.
+- LUT presets: **파일 › 내보내기 › LUT 프리셋…** saves the current image's LUTs
+  as a JSON file; choosing that file in **파일 › 불러오기 (파일)…** applies it to
+  every image.
 
-## Export — 일괄 저장 (TIFF / MP4)
+## Image export (TIFF / MP4)
 
+**파일 › 내보내기 › 이미지 (TIFF / MP4)…** (`Ctrl+E`) opens an options window.
+The options are kept for the next export and saved in the project.
+
+0. **저장할 이미지** (Images to save): **현재 이미지만** (current image only)
+   or **모든 이미지** (all images).
 1. **범위** (Scope): **전체 이미지** (whole image, `<name>_full_*`) and/or
    **Crop 영역 각각** (each crop region, `<name>_crop1_*`, `<name>_crop2_*`, …).
 2. What to write:
@@ -60,18 +68,17 @@ between files of the same type with the same channel count.
      (동영상)** (H.264 movie, one frame per timepoint, at the fps next to it)
      or **TIFF + MP4**. Single-timepoint images and raw stacks are always TIFF.
 4. **이미지별 폴더에 나눠 저장** (Separate folder per image; on by default,
-   shared with the 세포질 ROI tab): each image's files go into
-   `<chosen folder>/<name>_<image ID>/`.
-5. **현재 이미지만 저장…** (Current image only) or **모든 이미지 저장…** (All
-   images), then choose the folder.
+   the same as the item in the **파일 › 내보내기** menu): each image's files go
+   into `<chosen folder>/<name>_<image ID>/`.
+5. Press **저장…** (Save) and choose the folder. Crop regions, if any, are
+   also written as `<name>_crops.zip`.
 
 CZI bleach regions are written as `<name>_bleach_rois.zip` with every export,
 and drawn into RGB images when the [마커 tab](05-markers.md) says so.
 
-## Export everything — 모든 데이터 일괄 저장
+## Save all results — 모든 분석 결과 통합 저장
 
-**모든 데이터 일괄 저장 (TIFF + ROI, 이미지별 폴더)…** (also **파일** menu,
-`Ctrl+Shift+E`) makes one folder per image and puts in it everything that
+**파일 › 모든 분석 결과 통합 저장 (이미지별 폴더)…** (`Ctrl+Shift+E`) makes one folder per image and puts in it everything that
 exists for that image:
 
 - the TIFF/MP4 exports above,
@@ -80,6 +87,7 @@ exists for that image:
 - `<name>_info.csv` (image information), `<name>_coloc2.csv` (if Coloc 2 was run),
 
 plus, in the top folder, the combined `cell_rois.csv`, `coloc2.csv`, the
-intensity CSVs with their summaries and `image_groups.csv`.
+intensity CSVs with their summaries, `image_groups.csv` and a project file
+for that folder, `project.cyproj`.
 
 See [Output files](12-output-files.md) for every file name.

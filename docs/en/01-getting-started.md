@@ -16,9 +16,13 @@ channel (e.g. 0–4095 for 12-bit) are taken from the file's metadata.
 
 ## Adding images
 
-- **파일 추가…** (Add files) under the image list, **파일 › 파일 열기…**
-  (File › Open, `Ctrl+O`), or drag files onto the window.
-- **폴더 불러오기…** (Load folder, `Ctrl+Shift+O`), or drop a folder: scans the
+- **파일 추가…** (Add files) under the image list, **파일 › 불러오기 (파일)…**
+  (File › Load files, `Ctrl+O`), or drag files onto the window. **불러오기**
+  also recognises projects (`.cyproj`), ROIs, crops and LUT presets (see
+  [Menus, project files and the work log](13-project-menus.md#loading)). Files
+  already in the list are not opened again.
+- **폴더 불러오기…** (Load folder), **파일 › 불러오기 (폴더)…**
+  (`Ctrl+Shift+O`), or drop a folder: scans the
   folder and its subfolders and pairs original images, exported TIFFs and ROI
   files (`.zip` / `.roi`) by image ID (see below). If an original is missing,
   the best export (raw stack first) opens in its place; ROIs are attached to
@@ -79,11 +83,16 @@ measurement tabs.
   the background (up to 1.5 GB; progress in the status bar), so scrubbing
   only redraws.
 - **Right-drag on the image** moves through T (left/right) and Z (up/down)
-  at the same time.
+  at the same time. Its speed is set in **Tool › 설정…** (Settings).
+- **Mouse wheel** (without `Cmd`/`Ctrl`): one timepoint per notch. On images
+  that are not time series it scrolls the view.
 
 ### Zoom and pan
 
-- Mouse wheel: zoom in/out.
+- Hold `Cmd` (Windows `Ctrl`) and drag up to zoom in around the point you
+  pressed, down to zoom out. The wheel does not zoom. The speed is
+  **확대/축소 드래그** (Zoom drag) in **Tool › 설정…** (default 0.6).
+- `]` zooms in, `[` zooms out (around the view centre, 1.25× per press).
 - **영역 확대** (Zoom to area): press it and drag a rectangle; `Shift`+drag
   does the same without the button.
 - **화면 맞춤** (Fit to window): back to the whole image.
@@ -94,23 +103,27 @@ measurement tabs.
 
 Channels are shown or hidden with the **채널 표시** (Show channels) checkboxes,
 and their colors and contrast set, in the
-[LUT · 내보내기 tab](02-lut-export.md).
+[LUT tab](02-lut-export.md).
 
 ## Crop regions
 
 Crops are rectangular regions of an image that can be viewed, projected and
-exported on their own.
+exported on their own. Turn on **Tool › Crop** to get the **Crop** tab on the
+right.
 
 1. Press **Crop 추가 (드래그)** (Add crop, drag) and drag on the image.
    `Shift`+drag draws a square. Repeat for more regions; each is numbered on
-   the image and listed under **Crop 영역 (각각 따로 저장)** (Crop regions,
-   each saved separately).
+   the image and listed in the tab.
 2. Drag inside an existing crop to move it.
 3. **선택한 Crop만 보기** (Show selected crop only) previews one region.
 4. **선택 삭제** / **전체 삭제** (Delete selected / Delete all).
 5. **같은 크기 이미지에 복사** (Copy to images of the same size): copies this
    image's crops to every other image with the same size; move them per
    image afterwards by dragging.
+6. Saving: image exports write every crop separately (`<name>_crop1_*`) and
+   the regions themselves as ImageJ rectangles, `<name>_crops.zip`.
+   **파일 › 내보내기 › Crop 영역 ROI** (File › Export › Crop ROIs) saves only
+   the regions. Loading that file with **불러오기** brings the crops back.
 
 ## Image ID
 
@@ -123,10 +136,11 @@ preview and in the list tooltip.
 Every export carries it: TIFFs (ImageJ `Info` / `Properties`:
 `CytosolImageID`, `CytosolSource`; in Fiji Image › Show Info), every ROI in a
 RoiSet, and an `image_id` column in every CSV. This is how
-**폴더 불러오기…** pairs files, and why **ROI 불러오기…** warns you when ROIs
-were saved from another image.
+**폴더 불러오기…** pairs files, and how **불러오기** (Load) decides which image
+a ROI file belongs to.
 
 ## Next
 
-- Adjust display and export images: [LUT · 내보내기 tab](02-lut-export.md)
+- Adjust display and export images: [LUT tab and image export](02-lut-export.md)
+- Save the work and carry on later: [Menus, project files and the work log](13-project-menus.md)
 - Find cells: [세포질 ROI tab](03-cytosol-roi.md)
