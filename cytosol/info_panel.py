@@ -69,19 +69,15 @@ class InfoPanel(QWidget):
         self.copy_btn = QPushButton('표 복사')
         self.copy_btn.setToolTip('두 표를 탭으로 구분된 글로 복사합니다 (엑셀에 붙여넣기).')
         self.copy_btn.clicked.connect(self.copy)
-        self.csv_btn = QPushButton('CSV로 저장…')
-        self.csv_btn.clicked.connect(self.save_csv)
-        self.raw_btn = QPushButton('원본 메타데이터 저장…')
-        self.raw_btn.setToolTip('파일에 들어 있는 메타데이터 전체(CZI/OIR XML, TCF 속성)를 그대로 저장합니다.')
-        self.raw_btn.clicked.connect(self.save_raw)
-        for b in (self.copy_btn, self.csv_btn, self.raw_btn):
-            row.addWidget(b)
+        row.addWidget(self.copy_btn)
+        hint = QLabel('저장: 파일 → 내보내기 → 이미지 정보')
+        hint.setStyleSheet('color: gray; font-size: 11px;')
+        row.addWidget(hint, 1)
         lay.addLayout(row)
         self._enable(False)
 
     def _enable(self, on):
-        for b in (self.copy_btn, self.csv_btn, self.raw_btn):
-            b.setEnabled(on)
+        self.copy_btn.setEnabled(on)
 
     def bind(self, item, refresh=False):
         self.item = item

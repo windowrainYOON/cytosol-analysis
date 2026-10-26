@@ -92,6 +92,8 @@ class ImageItem:
     particles: object = None
     # user-named group of images (cytosol.groups); '' = none
     group: str = ''
+    # how the file was read (cytosol.io.read_image keywords), to open it again
+    load_kwargs: dict = field(default_factory=dict)
     # cytosol.prefetch.TimeCache that reads this image's timepoints ahead
     time_cache: object = field(default=None, repr=False)
     _bleach: list | None = field(default=None, repr=False)  # overrides the file's bleach ROIs
@@ -105,7 +107,8 @@ class ImageItem:
 
         path = Path(path)
         image = read_image(path, **read_kwargs)
-        item = cls(path=path, image=image, label=label or path.name)
+        item = cls(path=path, image=image, label=label or path.name,
+                   load_kwargs=dict(read_kwargs))
         item.reset_luts()
         return item
 
@@ -418,6 +421,7 @@ def export_item(
 
     full:  export the whole image  -> <name>_full_*.tif
     crops: export each crop region -> <name>_crop1_*.tif, <name>_crop2_*.tif, ...
+           and the regions themselves as ImageJ rectangles -> <name>_crops.zip
     For each of those regions:
       composite:   RGB 8-bit TIFF of visible channels with the LUTs applied.
       per_channel: one RGB 8-bit TIFF per channel in its color.
@@ -450,6 +454,11 @@ def export_item(
     written = _export_regions(item, [(r, out_dir / f'{stem}_{tag}') for tag, r in regions],
                               composite, per_channel, raw_stack, scale, time, times,
                               rgb_format, fps, outline)
+    if crops and item.crops:
+        from .crops import save_crop_rois
+
+        written.append(save_crop_rois(out_dir / f'{stem}_crops.zip', item.crops,
+                                      item.id_properties()))
     if bleach_file and item.bleach_rois:
         from .imageinfo import save_bleach_rois
 

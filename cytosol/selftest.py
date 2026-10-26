@@ -308,8 +308,14 @@ def run(out_dir) -> int:
     def image_id_pairing():
         from .app import load_items
         from .imageid import plan_pairing, roi_id, tiff_id
-        files = [Path(f) for f in export_item_files]
-        ids = {tiff_id(f)[0] for f in files} | {roi_id(out / 'selftest_RoiSet.zip')}
+        from .crops import is_crop_file, load_crop_rois
+        crop_zips = [Path(f) for f in export_item_files if f.endswith('_crops.zip')]
+        if len(crop_zips) != 1 or not is_crop_file(crop_zips[0]) \
+                or load_crop_rois(crop_zips[0]) != item.crops:
+            raise AssertionError(f'crop ROI file: {crop_zips}')
+        files = [Path(f) for f in export_item_files if f.endswith('.tif')]
+        ids = {tiff_id(f)[0] for f in files} | {roi_id(out / 'selftest_RoiSet.zip')} \
+            | {roi_id(crop_zips[0])}
         if ids != {item.image_id}:
             raise AssertionError(f'IDs in exports: {ids}')
         plan = plan_pairing(files + [out / 'selftest_RoiSet.zip'])
@@ -535,7 +541,7 @@ def run(out_dir) -> int:
             raise AssertionError('right-drag left a wrong plane')
         win.z_slider.setValue(4)
         win._z_changed()
-        win.right_tabs.setCurrentIndex(win.stack_tab)
+        win.show_tab('stack_tab')
         app.processEvents()
         win.stack_panel.mode_3d.setChecked(True)
         win.stack_panel.angle_spin.setValue(45)
@@ -587,7 +593,7 @@ def run(out_dir) -> int:
         win.canvas.fit()
         win.line_btn.setChecked(True)
         app.processEvents()
-        if win.right_tabs.currentIndex() != win.profile_tab or not win.canvas.line_mode:
+        if not win.tab_current('profile_tab') or not win.canvas.line_mode:
             raise AssertionError('line profile mode did not open its tab')
         win.canvas.lineDrawn.emit(5.0, 5.0, 50.0, 40.0)
         win.profile_panel.width.setValue(3)
@@ -671,13 +677,13 @@ def run(out_dir) -> int:
         own.cells.renumber()
         win._add_item(own)
         win.file_list.setCurrentRow(len(win.items) - 1)
-        win.right_tabs.setCurrentIndex(win.roi_tab)
+        win.show_tab('roi_tab')
         app.processEvents()
         cm = win.roi_panel.measure
         cm.refresh(force=True)
         if len(cm.rows) != 3 * len(own.cells):
             raise AssertionError(f'cell intensity rows {len(cm.rows)} for {len(own.cells)} cells')
-        win.right_tabs.setCurrentIndex(win.particle_tab)
+        win.show_tab('particle_tab')
         pp = win.particle_panel
         pp.part_channel.setCurrentIndex(1)
         pp.part_on.setChecked(True)
@@ -701,7 +707,7 @@ def run(out_dir) -> int:
         if len(pp.measure.rows) != 2 * len(own.cells) \
                 or 'n_particles' not in pp.measure.rows[0]:
             raise AssertionError(f'particle rows: {len(pp.measure.rows)}')
-        win.right_tabs.setCurrentIndex(win.intensity_tab)
+        win.show_tab('intensity_tab')
         ip = win.intensity_panel
         ip.expr.setText('cyto - particle; cell & particle')
         ip.measure.refresh(force=True)
@@ -767,7 +773,7 @@ def run(out_dir) -> int:
         bare = _synthetic_item()
         win._add_item(bare)
         win.file_list.setCurrentRow(len(win.items) - 1)
-        win.right_tabs.setCurrentIndex(win.particle_tab)
+        win.show_tab('particle_tab')
         app.processEvents()
         if pp.within.currentData() != 'image':
             raise AssertionError('whole image not preselected without cell ROIs')

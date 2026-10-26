@@ -291,27 +291,6 @@ class ColocPanel(QWidget):
         vl.addWidget(self.warn)
         lay.addWidget(res, 1)
 
-        io = QGroupBox('저장')
-        il = QVBoxLayout(io)
-        row = QHBoxLayout()
-        b = QPushButton('CSV 저장…')
-        b.setToolTip('현재 이미지의 결과 (ROI마다 한 행, 열 이름은 Coloc 2와 같음)')
-        b.clicked.connect(self.save_csv)
-        row.addWidget(b)
-        b = QPushButton('모든 이미지 CSV 저장 (폴더)…')
-        b.clicked.connect(self.save_all)
-        row.addWidget(b)
-        il.addLayout(row)
-        row = QHBoxLayout()
-        b = QPushButton('그래프 저장…')
-        b.clicked.connect(self.save_plot)
-        row.addWidget(b)
-        b = QPushButton('PDF 리포트 저장…')
-        b.setToolTip('선택한 ROI의 히스토그램과 모든 값 (Coloc 2의 PDF와 같은 내용)')
-        b.clicked.connect(self.save_pdf)
-        row.addWidget(b)
-        il.addLayout(row)
-        lay.addWidget(io)
         self._draw()
 
     # ---- settings ---------------------------------------------------------
@@ -616,7 +595,7 @@ class ColocPanel(QWidget):
         out = QFileDialog.getExistingDirectory(self, 'Coloc 2 결과를 저장할 폴더')
         if not out:
             return
-        per_image = self.win.roi_panel.per_image.isChecked()
+        per_image = self.win.opt_per_image.isChecked()
         records = []
         try:
             for it in items:

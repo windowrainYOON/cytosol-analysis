@@ -33,7 +33,6 @@ class StackPanel(QWidget):
     ``lutChanged`` when only the LUT link or source changed."""
 
     changed = Signal()
-    saveRequested = Signal(str)  # 'current' or 'rotation'
     refreshRequested = Signal()  # re-apply the LUT to the 3D structure
 
     def __init__(self, parent=None):
@@ -169,7 +168,7 @@ class StackPanel(QWidget):
         lay.addWidget(lut_box)
 
         # save
-        save_box = QGroupBox('저장')
+        save_box = QGroupBox('스택 투영 저장')
         sl = QVBoxLayout(save_box)
         self.save_full = QCheckBox('3D는 원본 해상도로 저장')
         self.save_full.setChecked(True)
@@ -186,9 +185,6 @@ class StackPanel(QWidget):
         fps_row.addWidget(self.fps)
         fps_row.addStretch()
         sl.addLayout(fps_row)
-        save_cur = QPushButton('현재 투영 저장 (TIFF / MP4)…')
-        save_cur.clicked.connect(lambda: self.saveRequested.emit('current'))
-        sl.addWidget(save_cur)
         rot = QHBoxLayout()
         self.rot_from = QSpinBox()
         self.rot_to = QSpinBox()
@@ -198,17 +194,15 @@ class StackPanel(QWidget):
             sp.setSuffix('°')
             sp.setValue(v)
         self.rot_step.setRange(1, 180)
-        rot.addWidget(QLabel('회전'))
+        rot.addWidget(QLabel('3D 회전 시리즈'))
         rot.addWidget(self.rot_from)
         rot.addWidget(QLabel('→'))
         rot.addWidget(self.rot_to)
         rot.addWidget(QLabel('간격'))
         rot.addWidget(self.rot_step)
         sl.addLayout(rot)
-        self.save_rot = QPushButton('3D 회전 시리즈 저장 (TIFF 스택 / MP4)…')
-        self.save_rot.clicked.connect(lambda: self.saveRequested.emit('rotation'))
-        sl.addWidget(self.save_rot)
-        lay.addWidget(save_box)
+        # shown in the dialog of 파일 → 내보내기 → 스택 (not in the tab)
+        self.save_box = save_box
 
         self.status = QLabel()
         self.status.setWordWrap(True)
@@ -294,7 +288,7 @@ class StackPanel(QWidget):
         three = self.mode_3d.isChecked()
         self.box_2d.setVisible(not three)
         self.box_3d.setVisible(three)
-        self.save_rot.setEnabled(three)
+        self.rot_from.setEnabled(three)
         self.spacing.setEnabled(self.manual_sp.isChecked())
 
     def _spacing_note(self):

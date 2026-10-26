@@ -191,14 +191,6 @@ class ParticlePanel(QWidget):
         b.clicked.connect(self.apply_to_all)
         row.addWidget(b)
         pl.addRow(row)
-        row = QHBoxLayout()
-        b = QPushButton('입자 ROI 저장…')
-        b.clicked.connect(self.save_particles_current)
-        row.addWidget(b)
-        b = QPushButton('입자 ROI 불러오기…')
-        b.clicked.connect(self.load_particles_current)
-        row.addWidget(b)
-        pl.addRow(row)
         for w in (self.part_on, self.thr_auto, self.thr_manual):
             w.toggled.connect(self._particle_changed)
         self.part_channel.currentIndexChanged.connect(self._particle_channel_changed)
@@ -274,8 +266,7 @@ class ParticlePanel(QWidget):
         self.measure.schedule()
 
     def visible_tab(self) -> bool:
-        tabs = getattr(self.win, 'right_tabs', None)
-        return tabs is not None and tabs.currentIndex() == getattr(self.win, 'particle_tab', -1)
+        return self.measure.visible_tab()
 
     def overlay_changed(self, hidden=False):
         """Called whenever the ROI overlay is redrawn (edits, plane changes)."""

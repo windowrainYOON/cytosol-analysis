@@ -135,20 +135,11 @@ class MeasureBox(QWidget):
         tl.addLayout(row)
         self.all_t = QCheckBox('일괄 측정에 모든 시점 포함')
         tl.addWidget(self.all_t)
-        row = QHBoxLayout()
-        b = QPushButton('CSV 저장 (현재 이미지)…')
-        b.clicked.connect(self.save_current)
-        row.addWidget(b)
-        b = self.save_all_btn = QPushButton('모든 이미지 측정 + 저장 (폴더)…')
+        # saving is in 파일 → 내보내기; with_roi: also <name>_RoiSet.zip,
+        # <name>_particles.zip and <name>_image.png (ROIs on the LUT image)
+        self.with_roi = getattr(win, 'opt_with_roi', None)
+        self.save_tip = ''
         self.set_suffix(suffix)
-        b.clicked.connect(self.save_all)
-        row.addWidget(b)
-        tl.addLayout(row)
-        self.with_roi = QCheckBox('ROI(.zip)와 ROI가 그려진 이미지(.png)도 함께 저장')
-        self.with_roi.setChecked(True)
-        self.with_roi.setToolTip('<이름>_RoiSet.zip (세포·핵·세포질), 입자를 쓰면 <이름>_particles.zip, '
-                                 '<이름>_image.png (현재 LUT 이미지 위에 ROI 경계)')
-        tl.addWidget(self.with_roi)
         lay.addWidget(res, 1)
 
     # ---- helpers ----------------------------------------------------------
@@ -161,7 +152,7 @@ class MeasureBox(QWidget):
         if self.summary:
             tip += (f'\n요약: {suffix}_summary_image.csv (이미지별), {suffix}_summary_group.csv '
                     f'(그룹별) — 파라미터마다 n, 평균, SD, 최소, 최대.')
-        self.save_all_btn.setToolTip(tip)
+        self.save_tip = tip
 
     def status(self, msg):
         self.win.statusBar().showMessage(msg)
@@ -170,8 +161,8 @@ class MeasureBox(QWidget):
         self._timer.start()
 
     def visible_tab(self) -> bool:
-        tabs = getattr(self.win, 'right_tabs', None)
-        return tabs is not None and tabs.currentIndex() == getattr(self.win, self.tab_attr, -1)
+        tab_current = getattr(self.win, 'tab_current', None)
+        return tab_current is not None and tab_current(self.tab_attr)
 
     def stats(self) -> tuple:
         return tuple(k for k in STATS if self.stat_boxes[k].isChecked()) or ('Mean',)
@@ -460,7 +451,7 @@ class MeasureBox(QWidget):
             if self.summary:
                 write_rows(Path(path).with_name(Path(path).stem + '_summary.csv'),
                            summarize(rows, True))
-            if self.with_roi.isChecked():
+            if self.with_roi is None or self.with_roi.isChecked():
                 self.save_companions(path, it)
         except Exception as exc:
             traceback.print_exc()
@@ -478,7 +469,7 @@ class MeasureBox(QWidget):
             summ = path.with_name(f'{path.stem}_summary.csv')
             if write_rows(summ, summarize(rows, True)):
                 files.append(str(summ))
-        if self.with_roi.isChecked() if companions is None else companions:
+        if (self.with_roi is None or self.with_roi.isChecked()) if companions is None else companions:
             files += self.save_companions(path, it)
         return files
 

@@ -51,6 +51,8 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QSplitter,
+    QStatusBar,
+    QTabBar,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -72,6 +74,7 @@ from .groups import GROUP_FILE, apply_groups, auto_groups, read_groups, suggest_
 from .image_tree import ImageTree
 from .intensity_panel import IntensityPanel
 from .imageid import ROI_EXT, match_roi, plan_pairing
+from .crops import is_crop_file, load_crop_rois, save_crop_rois
 from .imageinfo import is_bleach_file, load_bleach_rois, summarize
 from .info_panel import InfoPanel
 from .marker_panel import MarkerPanel
@@ -83,10 +86,15 @@ from .particle_panel import ParticlePanel
 from .roi_panel import RoiPanel, write_csv
 from .stack import StackView, export_projection, export_rotation
 from .stack_panel import StackPanel
+from .settings import SettingsDialog, view_settings
+from .worklog import LoggingStatusBar, LogWindow, WorkLog
 from .version import __version__
 
 SUPPORTED = ('.tcf', '.czi', '.oir', '.tif', '.tiff')
 SLIDER_STEPS = 1000
+# Cmd/Ctrl + drag zoom: e^(rate × pixels) at sensitivity 1 (×2 per ~170 px)
+ZOOM_DRAG_RATE = 0.004
+ZOOM_KEY_STEP = 1.25  # '[' / ']'
 
 
 def to_qimage(rgb: np.ndarray) -> QImage:
@@ -159,7 +167,9 @@ def polygon_path(*polys) -> QPainterPath:
 
 
 class Canvas(QGraphicsView):
-    """Image view: wheel to zoom, drag to pan, Crop mode to draw a rectangle.
+    """Image view: Cmd/Ctrl + drag up/down (or ``zoom_by``) zooms, drag pans,
+    Crop mode draws a rectangle. The wheel goes to ``wheel_handler`` (the main
+    window moves through time with it) and otherwise scrolls the view.
 
     ROI tools: 'select' (click selects a cell, drag pans), 'add' / 'sub' / 'new'
     (drag draws a freehand area). The middle button always pans; the right
@@ -247,6 +257,11 @@ class Canvas(QGraphicsView):
         # right-drag through T / Z: can_scrub() says whether the image has them
         self.can_scrub = lambda: False
         self._scrub = None  # press position
+        # Cmd/Ctrl + drag zoom: (press position, scale at press, scene point under it)
+        self._zoom_drag = None
+        # wheel_handler(steps) -> True when it used the wheel (steps may be 0)
+        self.wheel_handler = None
+        self._wheel_acc = 0.0
 
     def set_image(self, qimg: QImage, refit=False):
         self.pix.setPixmap(QPixmap.fromImage(qimg))
@@ -491,11 +506,50 @@ class Canvas(QGraphicsView):
         self._apply_mode()
 
     def wheelEvent(self, event):
-        factor = 1.25 if event.angleDelta().y() > 0 else 0.8
-        self.scale(factor, factor)
+        mods = event.modifiers()
+        if mods & Qt.KeyboardModifier.ControlModifier:
+            event.accept()  # zooming is Cmd/Ctrl + drag, not the wheel
+            return
+        if self.wheel_handler is not None:
+            d = event.angleDelta()
+            delta = d.y() if abs(d.y()) >= abs(d.x()) else d.x()
+            # one step per wheel notch (120); trackpads send many small deltas
+            self._wheel_acc -= delta * view_settings.value('wheel_t') / 120.0
+            steps = int(self._wheel_acc)
+            self._wheel_acc -= steps
+            if self.wheel_handler(steps):
+                event.accept()
+                return
+            self._wheel_acc = 0.0
+        super().wheelEvent(event)
+
+    def zoom_by(self, factor: float, anchor=None):
+        """Zoom by factor around a viewport point (default: the view centre)."""
+        anchor = self.viewport().rect().center() if anchor is None else anchor
+        self._set_scale(self.transform().m11() * factor, anchor,
+                        self.mapToScene(anchor))
+
+    def _set_scale(self, scale, view_pos, scene_pos):
+        """Scale the view, keeping scene_pos under view_pos."""
+        from PySide6.QtGui import QTransform
+
+        scale = float(np.clip(scale, 0.01, 400.0))
+        old = self.transformationAnchor()
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.NoAnchor)
+        self.setTransform(QTransform.fromScale(scale, scale))
+        self.setTransformationAnchor(old)
+        off = self.mapToScene(view_pos) - scene_pos
+        self.centerOn(self.mapToScene(self.viewport().rect().center()) - off)
+        self._fitted = True
 
     def mousePressEvent(self, event):
         btn = event.button()
+        if btn == Qt.MouseButton.LeftButton and \
+                event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            p = event.position().toPoint()
+            self._zoom_drag = (p, self.transform().m11() or 1.0, self.mapToScene(p))
+            self.viewport().setCursor(Qt.CursorShape.SizeVerCursor)
+            return
         if btn == Qt.MouseButton.RightButton and self.view3d:
             self._rot = (event.position(), None)
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
@@ -553,6 +607,12 @@ class Canvas(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
+        if self._zoom_drag is not None:
+            p, s0, anchor = self._zoom_drag
+            dy = p.y() - event.position().y()  # up = zoom in
+            rate = ZOOM_DRAG_RATE * view_settings.value('zoom_drag')
+            self._set_scale(s0 * float(np.exp(dy * rate)), p, anchor)
+            return
         if self._scrub is not None:
             d = event.position() - self._scrub
             self.scrubDragged.emit(d.x(), d.y())
@@ -626,6 +686,10 @@ class Canvas(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        if self._zoom_drag is not None:
+            self._zoom_drag = None
+            self._apply_mode()
+            return
         if self._scrub is not None:
             self._scrub = None
             self._apply_mode()
@@ -989,6 +1053,19 @@ class MainWindow(QMainWindow):
         self.items: list[ImageItem] = []
         self.current: ImageItem | None = None
         self.panels: list[ChannelPanel] = []
+        # project file, unsaved changes and the work log (every status message)
+        self.project_path: Path | None = None
+        self.dirty = False
+        self.worklog = WorkLog()
+        self.setStatusBar(LoggingStatusBar(self))
+        # export options shared by every save in 파일 → 내보내기
+        self.opt_per_image = QAction('이미지별 폴더에 나눠 저장', self, checkable=True)
+        self.opt_per_image.setChecked(True)
+        self.opt_per_image.setToolTip('폴더에 저장할 때 이미지마다 하위 폴더(이미지 이름_이미지 ID)를 '
+                                      '만들어 그 이미지의 파일을 넣습니다.')
+        self.opt_with_roi = QAction('측정·프로파일 저장 시 ROI와 ROI가 그려진 이미지(.png)도 함께',
+                                    self, checkable=True)
+        self.opt_with_roi.setChecked(True)
 
         # left: file list
         self.file_list = ImageTree()
@@ -1042,9 +1119,9 @@ class MainWindow(QMainWindow):
         ll.addWidget(folder_btn)
         ll.addWidget(rm_btn)
 
-        # left, below files: crop regions of the current image
+        # crop regions of the current image (Tool > Crop tab)
         self.crop_list = QListWidget()
-        self.crop_list.setMaximumHeight(160)
+        self.crop_list.setMinimumHeight(160)
         self.crop_list.currentRowChanged.connect(
             lambda _: self.update_preview(refit=self.show_crop_btn.isChecked()))
         self.crop_btn = QPushButton('Crop 추가 (드래그)')
@@ -1059,26 +1136,33 @@ class MainWindow(QMainWindow):
         crop_all.setToolTip('이 이미지의 crop 영역들을 크기가 같은 다른 이미지에 복사.\n'
                             '복사한 뒤 각 이미지에서 영역 안을 드래그하면 위치를 옮길 수 있습니다.')
         crop_all.clicked.connect(self.crop_to_all)
-        crop_box = QGroupBox('Crop 영역 (각각 따로 저장)')
-        cbl = QVBoxLayout(crop_box)
+        self.show_crop_btn = QCheckBox('선택한 Crop만 보기')
+        self.show_crop_btn.toggled.connect(lambda _: self.update_preview(refit=True))
+        crop_page = QWidget()
+        cbl = QVBoxLayout(crop_page)
+        help_ = QLabel('Crop 영역은 내보낼 때 각각 따로 저장되고, Figure 칸의 영역으로도 고를 수 있습니다. '
+                       '영역 안을 드래그하면 옮겨집니다. 저장: 파일 → 내보내기 → Crop 영역 ROI.')
+        help_.setWordWrap(True)
+        help_.setStyleSheet('color: gray; font-size: 11px;')
+        cbl.addWidget(help_)
         cbl.addWidget(self.crop_btn)
-        cbl.addWidget(self.crop_list)
+        cbl.addWidget(self.crop_list, 1)
         row = QHBoxLayout()
         row.addWidget(del_crop)
         row.addWidget(clear_crop)
         cbl.addLayout(row)
         cbl.addWidget(crop_all)
-        ll.addWidget(crop_box)
-        fig_btn = QPushButton('Figure 만들기…')
-        fig_btn.setToolTip('LUT/crop을 적용한 이미지로 행·열 표 형태의 figure 만들기')
-        fig_btn.clicked.connect(self.open_figure)
-        ll.addWidget(fig_btn)
+        cbl.addWidget(self.show_crop_btn)
+        cbl.addStretch()
 
         # center: canvas + view controls
         self.canvas = Canvas()
         self.canvas.cropDrawn.connect(self._crop_drawn)
         self.canvas.cropMoved.connect(self._crop_moved)
         self.canvas.cropPicked.connect(self._crop_picked)
+        self.canvas.wheel_handler = self._wheel_t
+        for key, f in (('[', 1 / ZOOM_KEY_STEP), (']', ZOOM_KEY_STEP)):
+            QShortcut(QKeySequence(key), self, activated=lambda f=f: self.canvas.zoom_by(f))
         # Z: vertical slider left of the image (bottom = first slice)
         self.z_slider = QSlider(Qt.Orientation.Vertical)
         self.z_slider.setMinimum(1)
@@ -1095,13 +1179,12 @@ class MainWindow(QMainWindow):
         self._z_timer.setInterval(10)  # coalesce fast slider moves into one redraw
         self._z_timer.timeout.connect(self._z_changed)
         self.crop_btn.toggled.connect(self.canvas.set_crop_mode)
-        self.show_crop_btn = QCheckBox('선택한 Crop만 보기')
-        self.show_crop_btn.toggled.connect(lambda _: self.update_preview(refit=True))
+        # line drawing is switched from the 라인 프로파일 tab (draw_btn mirrors this)
         self.line_btn = QPushButton('라인 프로파일 (선 그리기)')
         self.line_btn.setCheckable(True)
-        self.line_btn.setToolTip('이미지 위에서 드래그해 선을 그리면 채널별 강도 그래프를 '
-                                 '‘라인 프로파일’ 탭에 보여줍니다. Shift: 수평·수직·45°.')
         fit_btn = QPushButton('화면 맞춤')
+        fit_btn.setToolTip('확대/축소: Cmd(Windows는 Ctrl) + 위/아래 드래그, [ 축소, ] 확대.\n'
+                           '민감도는 Tool → 설정…에서 바꿉니다.')
         fit_btn.clicked.connect(self.canvas.fit)
         self.zoom_btn = QPushButton('영역 확대')
         self.zoom_btn.setCheckable(True)
@@ -1129,9 +1212,10 @@ class MainWindow(QMainWindow):
         self.info = QLabel()
 
         bar1 = QHBoxLayout()
-        bar1.addWidget(self.show_crop_btn)
+        hint = QLabel('Cmd/Ctrl+드래그: 확대·축소 · [ ]: 축소·확대')
+        hint.setStyleSheet('color: gray; font-size: 11px;')
+        bar1.addWidget(hint)
         bar1.addStretch()
-        bar1.addWidget(self.line_btn)
         bar1.addWidget(self.zoom_btn)
         bar1.addWidget(fit_btn)
         self.t_row = QWidget()
@@ -1162,7 +1246,7 @@ class MainWindow(QMainWindow):
         cl.addWidget(self.t_row)
         cl.addLayout(bar2)
 
-        # right: channel panels + batch + export
+        # right: channel panels + batch LUT
         self.channel_box = QVBoxLayout()
         self.channel_box.addStretch()
         chan_widget = QWidget()
@@ -1175,19 +1259,15 @@ class MainWindow(QMainWindow):
         all_luts.clicked.connect(self.apply_all_channels)
         self.copy_color = QCheckBox('색상도 함께 적용')
         self.copy_color.setChecked(True)
-        save_p = QPushButton('LUT 프리셋 저장…')
-        save_p.clicked.connect(self.save_preset)
-        load_p = QPushButton('LUT 프리셋 불러오기…')
-        load_p.clicked.connect(self.load_preset)
         batch = QGroupBox('일괄 적용')
         bl = QVBoxLayout(batch)
         bl.addWidget(all_luts)
         bl.addWidget(self.copy_color)
-        row = QHBoxLayout()
-        row.addWidget(save_p)
-        row.addWidget(load_p)
-        bl.addLayout(row)
+        note = QLabel('LUT 프리셋 저장: 파일 → 내보내기, 불러오기: 파일 → 불러오기')
+        note.setStyleSheet('color: gray; font-size: 11px;')
+        bl.addWidget(note)
 
+        # image export options: shown in the dialog of 파일 → 내보내기 → 이미지
         self.exp_full = QCheckBox('전체 이미지')
         self.exp_full.setChecked(True)
         self.exp_crops = QCheckBox('Crop 영역 각각')
@@ -1214,15 +1294,8 @@ class MainWindow(QMainWindow):
             lambda _: self.exp_fps.setEnabled(wants_mp4(self.exp_format.currentData())))
         self.exp_fps.setEnabled(False)
         self.exp_all_t.toggled.connect(self.exp_format.setEnabled)
-        self.exp_per_image = QCheckBox('이미지별 폴더에 나눠 저장')
-        self.exp_per_image.setChecked(True)
-        self.exp_per_image.setToolTip('폴더 안에 이미지마다 하위 폴더(이미지 이름_이미지 ID)를 만들어 그 이미지의 파일을 넣습니다.')
-        exp_btn = QPushButton('모든 이미지 저장…')
-        exp_btn.clicked.connect(self.export_all)
-        exp_one = QPushButton('현재 이미지만 저장…')
-        exp_one.clicked.connect(self.export_current)
-        exp = QGroupBox('일괄 저장 (TIFF / MP4)')
-        el = QVBoxLayout(exp)
+        self.exp_box = QGroupBox('이미지 내보내기 (TIFF / MP4)')
+        el = QVBoxLayout(self.exp_box)
         row = QHBoxLayout()
         row.addWidget(QLabel('범위:'))
         row.addWidget(self.exp_full)
@@ -1235,15 +1308,6 @@ class MainWindow(QMainWindow):
         row.addWidget(self.exp_format, 1)
         row.addWidget(self.exp_fps)
         el.addLayout(row)
-        el.addWidget(self.exp_per_image)
-        row = QHBoxLayout()
-        row.addWidget(exp_one)
-        row.addWidget(exp_btn)
-        el.addLayout(row)
-        all_btn = QPushButton('모든 데이터 일괄 저장 (TIFF + ROI, 이미지별 폴더)…')
-        all_btn.setToolTip('이미지마다 폴더를 하나씩 만들어 그 이미지의 TIFF, ROI, 측정값 CSV를 모두 넣습니다.')
-        all_btn.clicked.connect(self.export_everything)
-        el.addWidget(all_btn)
 
         lut_tab = QWidget()
         rl = QVBoxLayout(lut_tab)
@@ -1252,28 +1316,17 @@ class MainWindow(QMainWindow):
         rl.addWidget(self.visibility)
         rl.addWidget(scroll, 1)
         rl.addWidget(batch)
-        rl.addWidget(exp)
+
+        def scrolled(w):
+            s = QScrollArea()
+            s.setWidgetResizable(True)
+            s.setWidget(w)
+            return s
+
         self.roi_panel = RoiPanel(self)
-        self.exp_per_image.toggled.connect(self.roi_panel.per_image.setChecked)
-        self.roi_panel.per_image.toggled.connect(self.exp_per_image.setChecked)
-        roi_scroll = QScrollArea()
-        roi_scroll.setWidgetResizable(True)
-        roi_scroll.setWidget(self.roi_panel)
-        right = QTabWidget()
-        right.addTab(lut_tab, 'LUT · 내보내기')
-        self.roi_tab = right.addTab(roi_scroll, '세포질 ROI')
         self.particle_panel = ParticlePanel(self)
-        particle_scroll = QScrollArea()
-        particle_scroll.setWidgetResizable(True)
-        particle_scroll.setWidget(self.particle_panel)
-        self.particle_tab = right.addTab(particle_scroll, '입자 ROI')
-        marker_scroll = QScrollArea()
-        marker_scroll.setWidgetResizable(True)
-        marker_scroll.setWidget(self.markers)
-        right.addTab(marker_scroll, '마커')
         self.stack_panel = StackPanel()
         self.stack_panel.changed.connect(self.update_preview)
-        self.stack_panel.saveRequested.connect(self.save_projection)
         self.stack_panel.refreshRequested.connect(self._refresh_3d)
         self.canvas.rotateStarted.connect(self.stack_panel.begin_drag)
         self.canvas.rotateDragged.connect(self.stack_panel.drag_rotate)
@@ -1284,31 +1337,37 @@ class MainWindow(QMainWindow):
         self._scrub0 = None  # (t, z) when a right-drag through T / Z started
         self.stack_panels: list[ChannelPanel] = []
         self.stack_views: dict[int, StackView] = {}
-        stack_scroll = QScrollArea()
-        stack_scroll.setWidgetResizable(True)
-        stack_scroll.setWidget(self.stack_panel)
-        self.stack_tab = right.addTab(stack_scroll, '스택')
         self.profile_panel = ProfilePanel()
+        self.profile_panel.with_roi = self.opt_with_roi
         self.profile_panel.changed.connect(self._draw_profile_line)
-        self.profile_tab = right.addTab(self.profile_panel, '라인 프로파일')
         self.coloc_panel = ColocPanel(self)
-        coloc_scroll = QScrollArea()
-        coloc_scroll.setWidgetResizable(True)
-        coloc_scroll.setWidget(self.coloc_panel)
-        right.addTab(coloc_scroll, 'Coloc 2')
         self.intensity_panel = IntensityPanel(self)
-        intensity_scroll = QScrollArea()
-        intensity_scroll.setWidgetResizable(True)
-        intensity_scroll.setWidget(self.intensity_panel)
-        self.intensity_tab = right.addTab(intensity_scroll, '강도 측정')
         self.info_panel = InfoPanel()
-        self.info_tab = right.addTab(self.info_panel, '이미지 정보')
+        right = QTabWidget()
+        self.right_tabs = right
+        right.setTabsClosable(True)
+        right.tabCloseRequested.connect(lambda i: self.hide_tab(self._tab_name(right.widget(i))))
+        right.addTab(lut_tab, 'LUT')
+        right.addTab(self.info_panel, '이미지 정보')
+        for i in range(right.count()):  # the two base tabs stay
+            for side in (QTabBar.ButtonPosition.LeftSide, QTabBar.ButtonPosition.RightSide):
+                right.tabBar().setTabButton(i, side, None)
+        # feature tabs, opened from the Tool menu (in this order)
+        self.tab_pages = {
+            'crop_tab': (crop_page, 'Crop'),
+            'roi_tab': (scrolled(self.roi_panel), '세포질 ROI'),
+            'particle_tab': (scrolled(self.particle_panel), '입자 ROI'),
+            'intensity_tab': (scrolled(self.intensity_panel), '강도 측정'),
+            'coloc_tab': (scrolled(self.coloc_panel), 'Coloc 2'),
+            'profile_tab': (self.profile_panel, '라인 프로파일'),
+            'stack_tab': (scrolled(self.stack_panel), '스택'),
+            'marker_tab': (scrolled(self.markers), '마커'),
+        }
         self.canvas.lineDrawn.connect(self._line_drawn)
         self.line_btn.toggled.connect(self._line_mode)
         self.profile_panel.draw_btn.toggled.connect(self.line_btn.setChecked)
         self.crop_btn.toggled.connect(lambda on: on and self.line_btn.setChecked(False))
         right.currentChanged.connect(self._tab_changed)
-        self.right_tabs = right
         self._last_shape = None
         right.setMinimumWidth(380)
 
@@ -1319,29 +1378,646 @@ class MainWindow(QMainWindow):
         split.setSizes([260, 800, 420])
         self.setCentralWidget(split)
 
-        open_act = QAction('파일 열기…', self)
-        open_act.setShortcut(QKeySequence.StandardKey.Open)
-        open_act.triggered.connect(self.add_files_dialog)
-        export_act = QAction('TIFF로 일괄 저장…', self)
-        export_act.setShortcut(QKeySequence('Ctrl+E'))
-        export_act.triggered.connect(self.export_all)
-        folder_act = QAction('폴더 불러오기 (ID로 이미지·TIFF·ROI 짝짓기)…', self)
-        folder_act.setShortcut(QKeySequence('Ctrl+Shift+O'))
-        folder_act.triggered.connect(self.add_folder_dialog)
-        menu = self.menuBar().addMenu('파일')
-        menu.addAction(open_act)
-        menu.addAction(folder_act)
-        menu.addAction(export_act)
-        everything_act = QAction('모든 데이터 일괄 저장 (이미지별 폴더)…', self)
-        everything_act.setShortcut(QKeySequence('Ctrl+Shift+E'))
-        everything_act.triggered.connect(self.export_everything)
-        menu.addAction(everything_act)
-        fig_act = QAction('Figure 만들기…', self)
-        fig_act.setShortcut(QKeySequence('Ctrl+Shift+F'))
-        fig_act.triggered.connect(self.open_figure)
-        self.menuBar().addMenu('Figure').addAction(fig_act)
         self.figure_win = None
-        self.statusBar().showMessage('파일을 추가하세요.')
+        self.log_win = None
+        self._build_menus()
+        self.statusBar().showMessage('파일을 추가하세요.', 5000)
+
+    # ---- menus ------------------------------------------------------------
+
+    def _act(self, menu, text, fn, shortcut=None, tip=None) -> QAction:
+        a = QAction(text, self)
+        if shortcut is not None:
+            a.setShortcut(QKeySequence(shortcut))
+        if tip:
+            a.setToolTip(tip)
+            a.setStatusTip(tip)
+        a.triggered.connect(lambda _=False: fn())
+        menu.addAction(a)
+        return a
+
+    def _build_menus(self):
+        mb = self.menuBar()
+        act = self._act
+        m = mb.addMenu('파일')
+        act(m, '새 프로젝트', self.new_project, QKeySequence.StandardKey.New)
+        act(m, '불러오기 (파일)…', self.import_files_dialog, QKeySequence.StandardKey.Open,
+            '프로젝트(.cyproj), 이미지, ROI(세포·입자·Crop·라인, .zip/.roi), LUT 프리셋(.json), '
+            '그룹(image_groups.csv)을 골라 불러옵니다. 종류는 자동으로 알아봅니다.')
+        act(m, '불러오기 (폴더)…', self.import_folder_dialog, 'Ctrl+Shift+O',
+            '폴더 안의 원본 이미지, 내보낸 TIFF, ROI를 이미지 ID로 짝지어 불러옵니다. '
+            '이미 열린 이미지에는 ROI·Crop·라인을 붙입니다.')
+        self.recent_menu = m.addMenu('최근 프로젝트')
+        self.recent_menu.aboutToShow.connect(self._fill_recent)
+        m.addSeparator()
+        act(m, '프로젝트 저장', self.save_project, QKeySequence.StandardKey.Save)
+        act(m, '프로젝트 다른 이름으로 저장…', lambda: self.save_project(ask=True), 'Ctrl+Shift+S')
+        m.addSeparator()
+        ex = m.addMenu('내보내기')
+        act(ex, '이미지 (TIFF / MP4)…', self.export_images_dialog, 'Ctrl+E')
+        sub = ex.addMenu('Crop 영역 ROI')
+        act(sub, '현재 이미지…', self.save_crops_current)
+        act(sub, '모든 이미지 (폴더)…', self.save_crops_all)
+        rp, pp, ip = self.roi_panel, self.particle_panel, self.intensity_panel
+        sub = ex.addMenu('세포질 ROI')
+        for a in (rp.save_cell, rp.save_nuc, rp.save_cyto):
+            sub.addAction(a)
+        sub.addSeparator()
+        act(sub, 'ROI 저장 (현재 이미지)…', rp.save_current,
+            tip='.zip: ImageJ RoiSet 하나로, .roi: ROI마다 .roi 파일 하나씩')
+        act(sub, '모든 이미지 ROI 저장 (폴더)…', rp.save_all)
+        sub.addSeparator()
+        self._measure_menu(sub, rp.measure)
+        sub = ex.addMenu('입자 ROI')
+        act(sub, '입자 ROI 저장 (현재 이미지)…', pp.save_particles_current)
+        sub.addSeparator()
+        self._measure_menu(sub, pp.measure)
+        sub = ex.addMenu('강도 측정 (논리 영역)')
+        self._measure_menu(sub, ip.measure)
+        sub = ex.addMenu('라인 프로파일')
+        act(sub, 'CSV…', self.profile_panel.save_csv)
+        act(sub, '그래프 (PNG / PDF / SVG / TIFF)…', self.profile_panel.save_plot)
+        cp = self.coloc_panel
+        sub = ex.addMenu('Coloc 2')
+        act(sub, 'CSV (현재 이미지)…', cp.save_csv,
+            tip='현재 이미지의 결과 (ROI마다 한 행, 열 이름은 Coloc 2와 같음)')
+        act(sub, '모든 이미지 CSV (폴더)…', cp.save_all)
+        act(sub, '그래프…', cp.save_plot)
+        act(sub, 'PDF 리포트…', cp.save_pdf,
+            tip='선택한 ROI의 히스토그램과 모든 값 (Coloc 2의 PDF와 같은 내용)')
+        sub = ex.addMenu('스택 투영')
+        act(sub, '현재 투영 (TIFF / MP4)…', lambda: self.stack_export_dialog('current'))
+        act(sub, '3D 회전 시리즈 (TIFF 스택 / MP4)…', lambda: self.stack_export_dialog('rotation'))
+        sub = ex.addMenu('이미지 정보')
+        act(sub, 'CSV…', self.info_panel.save_csv)
+        act(sub, '원본 메타데이터…', self.info_panel.save_raw,
+            tip='파일에 들어 있는 메타데이터 전체(CZI/OIR XML, TCF 속성)를 그대로 저장합니다.')
+        act(ex, 'LUT 프리셋…', self.save_preset)
+        act(ex, '작업 기록 (CSV)…', self.save_log_csv)
+        ex.addSeparator()
+        ex.addAction(self.opt_per_image)
+        ex.addAction(self.opt_with_roi)
+        act(m, '모든 분석 결과 통합 저장 (이미지별 폴더)…', self.export_everything, 'Ctrl+Shift+E',
+            '이미지마다 폴더를 하나씩 만들어 그 이미지의 TIFF, Crop·세포·입자·논리 영역 ROI, '
+            '측정값 CSV, 이미지 정보, Coloc 2 결과를 모두 넣고, 프로젝트 파일도 함께 저장합니다.')
+        m.addSeparator()
+        q = act(m, '종료', self.close, QKeySequence.StandardKey.Quit)
+        q.setMenuRole(QAction.MenuRole.QuitRole)
+
+        t = mb.addMenu('Tool')
+        self.tool_actions = {}
+        for name, (_, title) in self.tab_pages.items():
+            a = QAction(title, self, checkable=True)
+            a.setToolTip(f'‘{title}’ 탭을 오른쪽에 열거나 닫습니다.')
+            a.toggled.connect(lambda on, n=name: self.show_tab(n) if on else self.hide_tab(n))
+            t.addAction(a)
+            self.tool_actions[name] = a
+        t.addSeparator()
+        act(t, 'Figure…', self.open_figure, 'Ctrl+Shift+F',
+            'LUT/crop을 적용한 이미지로 행·열 표 형태의 figure 만들기')
+        act(t, '작업 기록…', self.open_log, 'Ctrl+Shift+L')
+        t.addSeparator()
+        s = act(t, '설정…', self.open_settings, QKeySequence.StandardKey.Preferences)
+        s.setMenuRole(QAction.MenuRole.PreferencesRole)
+
+    def _measure_menu(self, menu, box):
+        self._act(menu, '측정 CSV 저장 (현재 이미지)…', box.save_current)
+        self._act(menu, '모든 이미지 측정 + 저장 (폴더)…', box.save_all, tip=box.save_tip)
+
+    def _fill_recent(self):
+        self.recent_menu.clear()
+        files = [p for p in view_settings.recent() if Path(p).exists()]
+        for p in files:
+            self.recent_menu.addAction(Path(p).name, lambda p=p: self.open_project(Path(p)))
+        if not files:
+            self.recent_menu.addAction('(없음)').setEnabled(False)
+        else:
+            self.recent_menu.addSeparator()
+            self.recent_menu.addAction('목록 지우기', view_settings.clear_recent)
+
+    def open_settings(self):
+        SettingsDialog(self).exec()
+
+    def open_log(self):
+        if self.log_win is None:
+            self.log_win = LogWindow(self.worklog, self)
+        self.log_win.show()
+        self.log_win.raise_()
+        self.log_win.activateWindow()
+
+    # ---- tabs (Tool menu) ----------------------------------------------------
+
+    def _tab_name(self, widget):
+        for name, (w, _) in self.tab_pages.items():
+            if w is widget:
+                return name
+        return None
+
+    def tab_current(self, name) -> bool:
+        tabs = getattr(self, 'right_tabs', None)
+        page = getattr(self, 'tab_pages', {}).get(name)
+        return tabs is not None and page is not None and tabs.currentWidget() is page[0]
+
+    def tab_open(self, name) -> bool:
+        return self.right_tabs.indexOf(self.tab_pages[name][0]) >= 0
+
+    def open_tabs(self) -> list[str]:
+        return [n for n in self.tab_pages if self.tab_open(n)]
+
+    def show_tab(self, name, focus=True):
+        """Add a feature tab next to LUT / 이미지 정보 (Tool menu order) and show it."""
+        page, title = self.tab_pages[name]
+        tabs = self.right_tabs
+        if tabs.indexOf(page) < 0:
+            order = list(self.tab_pages)
+            pos = 2
+            for other in order[:order.index(name)]:
+                i = tabs.indexOf(self.tab_pages[other][0])
+                if i >= 0:
+                    pos = i + 1
+            tabs.insertTab(pos, page, title)
+        if focus:
+            tabs.setCurrentWidget(page)
+        act = getattr(self, 'tool_actions', {}).get(name)
+        if act is not None and not act.isChecked():
+            act.blockSignals(True)
+            act.setChecked(True)
+            act.blockSignals(False)
+
+    def hide_tab(self, name):
+        if name is None:
+            return
+        page, _ = self.tab_pages[name]
+        i = self.right_tabs.indexOf(page)
+        if i >= 0:
+            self.right_tabs.removeTab(i)
+        act = getattr(self, 'tool_actions', {}).get(name)
+        if act is not None and act.isChecked():
+            act.blockSignals(True)
+            act.setChecked(False)
+            act.blockSignals(False)
+        if name == 'crop_tab':
+            self.crop_btn.setChecked(False)
+        elif name == 'profile_tab':
+            self.line_btn.setChecked(False)
+        elif name == 'roi_tab':
+            self.roi_panel.tool_btns['select'].setChecked(True)
+
+    # ---- work log / changes -------------------------------------------------
+
+    def log(self, text):
+        self.worklog.add(text, self.current)
+        self.set_dirty()
+
+    def set_dirty(self, on=True):
+        if on and not self.items and self.project_path is None:
+            on = False  # nothing to lose yet
+        self.dirty = on
+        self._update_title()
+
+    def _update_title(self):
+        name = self.project_path.stem if self.project_path is not None else ''
+        title = f'Cytosol Viewer {__version__}' + (f' — {name}' if name else '')
+        self.setWindowTitle(title + (' *' if self.dirty else ''))
+
+    def _maybe_save(self) -> bool:
+        """Before closing the work: True to go on (saved, or not wanted)."""
+        if not self.dirty or not self.items:
+            return True
+        r = QMessageBox.question(
+            self, '저장하지 않은 변경', '프로젝트에 저장하지 않은 변경이 있습니다. 저장할까요?',
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Save)
+        if r == QMessageBox.StandardButton.Cancel:
+            return False
+        if r == QMessageBox.StandardButton.Save:
+            return self.save_project()
+        return True
+
+    def closeEvent(self, event):
+        if not self._maybe_save():
+            event.ignore()
+            return
+        for w in (self.figure_win, self.log_win):
+            if w is not None:
+                w.close()
+        super().closeEvent(event)
+
+    def save_log_csv(self):
+        if not self.worklog.entries:
+            QMessageBox.information(self, '작업 기록', '아직 기록이 없습니다.')
+            return
+        base = self.project_path.with_name(f'{self.project_path.stem}_log.csv') \
+            if self.project_path else Path('work_log.csv')
+        path, _ = QFileDialog.getSaveFileName(self, '작업 기록 저장', str(base), 'CSV (*.csv)')
+        if path:
+            n = self.worklog.write_csv(path)
+            self.statusBar().showMessage(f'작업 기록 {n}줄 저장: {path}', 8000)
+
+    # ---- loading (파일 → 불러오기) -----------------------------------------------
+
+    @staticmethod
+    def _path_key(p) -> str:
+        try:
+            return str(Path(p).resolve()).lower()
+        except OSError:
+            return str(p).lower()
+
+    def import_files_dialog(self):
+        start = str(self.project_path.parent) if self.project_path else ''
+        files, _ = QFileDialog.getOpenFileNames(
+            self, '불러오기', start,
+            '불러올 수 있는 파일 (*.cyproj *.tcf *.TCF *.czi *.oir *.tif *.tiff *.TIF *.TIFF '
+            '*.zip *.roi *.json image_groups.csv);;'
+            'Cytosol Viewer 프로젝트 (*.cyproj);;'
+            'Microscopy (*.tcf *.TCF *.czi *.oir *.tif *.tiff *.TIF *.TIFF);;'
+            'ImageJ ROI (*.zip *.roi);;LUT 프리셋 (*.json);;All files (*)')
+        if files:
+            self.import_paths([Path(f) for f in files])
+
+    def import_folder_dialog(self):
+        folder = QFileDialog.getExistingDirectory(self, '불러올 폴더 선택')
+        if folder:
+            self.import_paths([Path(folder)])
+
+    def import_paths(self, paths):
+        """Load whatever was chosen: a project opens (closing the current
+        work); LUT presets apply to every image; images, exported TIFFs, ROI
+        files and groups go through add_files; a folder is paired by image ID."""
+        from .project import is_project_file
+
+        paths = [Path(p) for p in paths]
+        projects = [p for p in paths if is_project_file(p)]
+        if projects:
+            if not self.open_project(projects[0]):
+                return
+            paths = [p for p in paths if p not in projects]
+        folders = [p for p in paths if p.is_dir()]
+        presets = [p for p in paths if p.suffix.lower() == '.json' and self._is_preset(p)]
+        files = [p for p in paths if p not in folders and p not in presets]
+        for d in folders:
+            self.add_files(folder_files(d), pair=True)
+        if files:
+            self.add_files(files, pair=True, explicit=True)
+        for p in presets:
+            self._load_preset_file(p)
+        self._refresh_crop_list(select=0)
+        if self.current is not None:
+            self.update_preview()
+
+    @staticmethod
+    def _is_preset(path) -> bool:
+        import json
+
+        try:
+            return 'channels' in json.loads(Path(path).read_text())
+        except Exception:
+            return False
+
+    # ---- export dialogs --------------------------------------------------------
+
+    def _options_dialog(self, title, widgets, ok_text='저장…') -> bool:
+        """Show option widgets (kept for the next time) in a dialog."""
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        lay = QVBoxLayout(dlg)
+        for w in widgets:
+            lay.addWidget(w)
+            w.show()
+        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                               | QDialogButtonBox.StandardButton.Cancel)
+        box.button(QDialogButtonBox.StandardButton.Ok).setText(ok_text)
+        box.accepted.connect(dlg.accept)
+        box.rejected.connect(dlg.reject)
+        lay.addWidget(box)
+        ok = dlg.exec() == QDialog.DialogCode.Accepted
+        for w in widgets:
+            w.hide()
+            w.setParent(None)
+        dlg.deleteLater()
+        return ok
+
+    def export_images_dialog(self):
+        if not self.items:
+            QMessageBox.information(self, '내보내기', '먼저 이미지를 불러오세요.')
+            return
+        from PySide6.QtWidgets import QButtonGroup, QRadioButton
+
+        scope = QGroupBox('저장할 이미지')
+        sl = QHBoxLayout(scope)
+        cur = QRadioButton('현재 이미지만')
+        every = QRadioButton(f'모든 이미지 ({len(self.items)}개)')
+        every.setChecked(True)
+        grp = QButtonGroup(scope)
+        grp.addButton(cur)
+        grp.addButton(every)
+        sl.addWidget(cur)
+        sl.addWidget(every)
+        per = QCheckBox('이미지별 폴더에 나눠 저장')
+        per.setChecked(self.opt_per_image.isChecked())
+        per.setToolTip(self.opt_per_image.toolTip())
+        if not self._options_dialog('이미지 내보내기', [scope, self.exp_box, per]):
+            return
+        self.opt_per_image.setChecked(per.isChecked())
+        if cur.isChecked():
+            self.export_current()
+        else:
+            self.export_all()
+
+    def stack_export_dialog(self, kind):
+        if self.current is None:
+            QMessageBox.information(self, '스택 투영', '먼저 이미지를 고르세요.')
+            return
+        if kind == 'rotation' and not self.stack_panel.mode_3d.isChecked():
+            QMessageBox.information(self, '3D 회전 시리즈',
+                                    '스택 탭에서 3D projection을 켠 뒤 저장하세요 (Tool → 스택).')
+            self.show_tab('stack_tab')
+            return
+        box = self.stack_panel.save_box
+        if self._options_dialog('스택 투영 저장', [box]):
+            self.save_projection(kind)
+
+    # ---- crop ROI files -----------------------------------------------------
+
+    def save_crops_current(self):
+        it = self.current
+        if it is None or not it.crops:
+            QMessageBox.information(self, 'Crop 영역 ROI', '저장할 Crop 영역이 없습니다.')
+            return
+        default = str(it.path.with_name(f'{item_stem(it)}_crops.zip'))
+        path, _ = QFileDialog.getSaveFileName(self, 'Crop 영역 ROI 저장', default,
+                                              'ImageJ RoiSet (*.zip)')
+        if path:
+            f = save_crop_rois(path, it.crops, it.id_properties())
+            self.statusBar().showMessage(f'Crop 영역 {len(it.crops)}개 저장: {f}')
+
+    def save_crops_all(self):
+        items = [it for it in self.items if it.crops]
+        if not items:
+            QMessageBox.information(self, 'Crop 영역 ROI', '저장할 Crop 영역이 없습니다.')
+            return
+        out = QFileDialog.getExistingDirectory(self, 'Crop 영역 ROI를 저장할 폴더')
+        if not out:
+            return
+        per = self.opt_per_image.isChecked()
+        stems = unique_stems(items)
+        for it in items:
+            folder = Path(out) / item_folder(it) if per else Path(out)
+            stem = item_stem(it) if per else stems[id(it)]
+            save_crop_rois(folder / f'{stem}_crops.zip', it.crops, it.id_properties())
+        self.statusBar().showMessage(f'이미지 {len(items)}개의 Crop 영역 ROI 저장: {out}')
+
+    # ---- project files --------------------------------------------------------
+
+    def _panel_objects(self) -> dict:
+        """What the project keeps the settings of (attribute widgets)."""
+        return {
+            'window': self, 'roi': self.roi_panel, 'roi_measure': self.roi_panel.measure,
+            'particle': self.particle_panel, 'particle_measure': self.particle_panel.measure,
+            'intensity': self.intensity_panel, 'intensity_measure': self.intensity_panel.measure,
+            'coloc': self.coloc_panel, 'profile': self.profile_panel, 'markers': self.markers,
+            'stack': self.stack_panel,
+        }
+
+    _WINDOW_KEYS = ('align_tcf', 'copy_color', 'show_crop_btn', 'exp_full', 'exp_crops',
+                    'exp_composite', 'exp_channels', 'exp_raw', 'exp_all_t', 'exp_format',
+                    'exp_fps', 'opt_per_image', 'opt_with_roi')
+
+    def _panel_state(self) -> dict:
+        from .project import widget_state
+
+        out = {}
+        for key, obj in self._panel_objects().items():
+            if obj is self:
+                st = widget_state(self)
+                out[key] = {k: v for k, v in st.items() if k in self._WINDOW_KEYS}
+            else:
+                out[key] = widget_state(obj, skip=('tool_btns',))
+        return out
+
+    def save_project(self, ask=False) -> bool:
+        from .project import EXT
+
+        path = self.project_path
+        if ask or path is None:
+            default = str(path) if path else str(
+                (self.items[0].path.parent if self.items else Path.home()) / f'project{EXT}')
+            name, _ = QFileDialog.getSaveFileName(self, '프로젝트 저장', default,
+                                                  f'Cytosol Viewer 프로젝트 (*{EXT})')
+            if not name:
+                return False
+            path = Path(name)
+            if path.suffix.lower() != EXT:
+                path = path.with_suffix(EXT)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self.write_project_to(path)
+        except Exception as exc:
+            traceback.print_exc()
+            QMessageBox.warning(self, '프로젝트 저장 실패', str(exc))
+            return False
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.project_path = path
+        view_settings.add_recent(str(path))
+        self.worklog.add(f'프로젝트 저장: {path.name}')
+        self.set_dirty(False)
+        self.statusBar().showMessage(f'프로젝트 저장: {path}', 8000)
+        return True
+
+    def write_project_to(self, path):
+        """Write the whole session into a project file (image paths relative to it)."""
+        from .project import figure_dict, header, image_entry, item_files, temp_dir, \
+            widget_state, write_project
+
+        path = Path(path)
+        base = path.parent.resolve()
+        data = header()
+        files = {}
+        with temp_dir() as tmp:
+            images = []
+            for n, it in enumerate(self.items):
+                e = image_entry(it, base)
+                e['files'] = item_files(it, n, self.particle_panel.cells_for, files, Path(tmp))
+                images.append(e)
+            data['images'] = images
+            data['current'] = self.items.index(self.current) if self.current in self.items else -1
+            data['tabs'] = self.open_tabs()
+            cur = self._tab_name(self.right_tabs.currentWidget())
+            data['tab_current'] = cur or self.right_tabs.currentIndex()
+            data['panels'] = self._panel_state()
+            data['batch_rows'] = {key: box.batch_rows for key, box in
+                                  (('roi', self.roi_panel.measure),
+                                   ('particle', self.particle_panel.measure),
+                                   ('intensity', self.intensity_panel.measure))}
+            if self.figure_win is not None:
+                data['figure'] = figure_dict(self.figure_win.spec, self.items, files)
+                data['figure_widgets'] = widget_state(self.figure_win)
+            data['log'] = self.worklog.entries
+            write_project(path, data, files)
+
+    def new_project(self):
+        if not self._maybe_save():
+            return
+        self._clear_all()
+        self.project_path = None
+        self.worklog.clear()
+        self.set_dirty(False)
+        self.statusBar().showMessage('새 프로젝트', 5000)
+
+    def _clear_all(self):
+        """Close every image and window that shows them."""
+        if self.figure_win is not None:
+            self.figure_win.close()
+            self.figure_win.deleteLater()
+            self.figure_win = None
+        if self.items:
+            self.file_list.selectAll()
+            self.remove_selected(log=False)
+        for box in self._measure_boxes():
+            box.batch_rows = []
+            box.rows = []
+            box._fill_table()
+
+    def open_project(self, path) -> bool:
+        from .project import read_project, resolve_image, restore_widgets, temp_dir
+
+        path = Path(path)
+        try:
+            data, files = read_project(path)
+        except Exception as exc:
+            QMessageBox.warning(self, '프로젝트 열기 실패', f'{path.name}: {exc}')
+            return False
+        if not self._maybe_save():
+            return False
+        self._clear_all()
+        base = path.parent
+        entries = data.get('images', [])
+        found = [resolve_image(e, base) for e in entries]
+        missing = [e for e, f in zip(entries, found) if f is None]
+        if missing:
+            names = '\n'.join(e['name'] for e in missing[:15])
+            more = f'\n… 외 {len(missing) - 15}개' if len(missing) > 15 else ''
+            QMessageBox.information(
+                self, '이미지 찾기',
+                f'이미지 {len(missing)}개를 원래 위치에서 찾지 못했습니다:\n{names}{more}\n\n'
+                '이미지가 있는 폴더를 고르면 그 안(하위 폴더 포함)에서 같은 이름의 파일을 찾습니다.')
+            folder = QFileDialog.getExistingDirectory(self, '이미지가 있는 폴더', str(base))
+            if folder:
+                found = [f if f is not None else resolve_image(e, base, [folder])
+                         for e, f in zip(entries, found)]
+        prog = QProgressDialog('프로젝트 여는 중…', '취소', 0, len(entries), self)
+        prog.setWindowModality(Qt.WindowModality.WindowModal)
+        errors, notes, loaded = [], [], []
+        self.file_list.blockSignals(True)
+        with temp_dir() as tmp:
+            for i, (e, f) in enumerate(zip(entries, found)):
+                prog.setLabelText(f'불러오는 중: {e["name"]}')
+                prog.setValue(i)
+                QApplication.processEvents()
+                if prog.wasCanceled() or f is None:
+                    if f is None:
+                        errors.append(f'{e["name"]}: 파일을 찾지 못함')
+                    loaded.append(None)
+                    continue
+                try:
+                    it = ImageItem.load(f, label=e.get('label'), **(e.get('load') or {}))
+                    self._restore_item(it, e, base, files, Path(tmp), notes)
+                except Exception as exc:
+                    traceback.print_exc()
+                    errors.append(f'{e["name"]}: {exc}')
+                    loaded.append(None)
+                    continue
+                self.items.append(it)
+                loaded.append(it)
+        prog.setValue(len(entries))
+        self.file_list.rebuild(self.items)
+        for row in range(len(self.items)):
+            self._update_tooltip(row)
+        self.file_list.blockSignals(False)
+        # settings of every tab, then the tabs that were open
+        for key, obj in self._panel_objects().items():
+            restore_widgets(obj, (data.get('panels') or {}).get(key, {}))
+        for name in list(self.tab_pages):
+            if name in data.get('tabs', []):
+                self.show_tab(name, focus=False)
+            else:
+                self.hide_tab(name)
+        rows = data.get('batch_rows') or {}
+        for key, box in (('roi', self.roi_panel.measure), ('particle', self.particle_panel.measure),
+                         ('intensity', self.intensity_panel.measure)):
+            box.batch_rows = list(rows.get(key) or [])
+        self.worklog.entries = list(data.get('log') or [])
+        self.project_path = path
+        cur = data.get('current', 0)
+        target = loaded[cur] if 0 <= cur < len(loaded) else None
+        if target is None and self.items:
+            target = self.items[0]
+        if target is not None:
+            self.file_list.setCurrentRow(self.items.index(target))
+        tab = data.get('tab_current')
+        if isinstance(tab, str) and tab in self.tab_pages and self.tab_open(tab):
+            self.right_tabs.setCurrentWidget(self.tab_pages[tab][0])
+        elif isinstance(tab, int) and 0 <= tab < self.right_tabs.count():
+            self.right_tabs.setCurrentIndex(tab)
+        if data.get('figure') and self.items:
+            self._restore_figure(data, loaded, files)
+        for box in self._measure_boxes():
+            box._fill_table()
+        view_settings.add_recent(str(path))
+        self.worklog.add(f'프로젝트 열기: {path.name}')
+        self.set_dirty(bool(errors))
+        msg = f'프로젝트 {path.name}: 이미지 {len(self.items)}개'
+        self.statusBar().showMessage(msg, 8000)
+        if errors or notes:
+            QMessageBox.warning(self, '프로젝트 열기', '\n'.join(errors + notes))
+        return True
+
+    def _restore_item(self, it, e, base, files, tmp, notes):
+        from .lut import ChannelLUT
+        from .project import restore_item_files
+
+        it.id_suffix = e.get('id_suffix', '')
+        if e.get('image_id') and it.image_id != e['image_id']:
+            notes.append(f'{it.label}: 이미지 ID가 저장할 때와 다릅니다 ({e["image_id"]} → '
+                         f'{it.image_id}). 다른 파일일 수 있습니다.')
+        luts = e.get('luts') or []
+        if len(luts) == len(it.channels):
+            it.luts = [ChannelLUT.from_dict(d) for d in luts]
+        it.crops = [c for c in (it.clip_region(*r) for r in e.get('crops', [])) if c]
+        it.group = e.get('group', '')
+        line = e.get('profile_line')
+        it.profile_line = tuple(line) if line else None
+        roles = e.get('roi_roles') or {}
+        it.roi_roles = {k: roles.get(k) for k in ('nuc', 'bg')} if roles else {}
+        s = e.get('particle_settings')
+        if s:
+            from .intensity import ParticleSettings
+
+            it.particle_settings = ParticleSettings(**s)
+        z = e.get('z', 'mip')
+        if z in ('mip', 'mid') or (isinstance(z, int) and 0 <= z < it.nz):
+            it.z = z
+        t = int(e.get('t', 0) or 0)
+        if 0 < t < it.nt:
+            it.set_t(t)
+        it.linked = [p for p in ((base / q) for q in e.get('linked', [])) if p.exists()]
+        restore_item_files(it, e.get('files') or {}, files, tmp, notes)
+
+    def _restore_figure(self, data, loaded, files):
+        from .figure_window import FigureWindow
+        from .project import figure_from, restore_widgets
+
+        try:
+            self.figure_win = FigureWindow(self)
+            restore_widgets(self.figure_win, data.get('figure_widgets') or {})
+            figure_from(self.figure_win.spec, data['figure'], loaded, files.__getitem__)
+            self.figure_win.refresh_sources()
+            self.figure_win.rebuild_table()
+        except Exception:
+            traceback.print_exc()
 
     # ---- files ----------------------------------------------------------
 
@@ -1378,11 +2054,58 @@ class MainWindow(QMainWindow):
             tip.append(f'세포 ROI {len(it.cells)}개')
         self.file_list.item(row).setToolTip(0, '\n'.join(tip))
 
-    def add_files(self, paths, pair=False):
+    def _attach_file(self, f, it, notes, replace=False, asked=None) -> int:
+        """Put a ROI file saved by this app (or ImageJ) onto an image, by what
+        it holds; returns 1 for cell ROIs loaded."""
+        link = lambda: f in it.linked or it.linked.append(f)  # noqa: E731
+        if is_bleach_file(f):  # bleach regions saved with the images
+            it.bleach_rois = load_bleach_rois(f)
+            it._info_summary = None
+            link()
+            return 0
+        if is_crop_file(f):  # crop regions saved with the exports
+            crops = [c for c in (it.clip_region(*r) for r in load_crop_rois(f)) if c]
+            if crops and (replace or not it.crops):
+                it.crops = crops
+            link()
+            return 0
+        if is_region_file(f) or is_contour_file(f):
+            # logic regions / iso-contour outlines follow from the ROIs: keep with the image
+            link()
+            return 0
+        if is_particle_file(f):  # particle ROIs from the 입자 ROI tab
+            self.particle_panel.load_particles_into(it, f)
+            link()
+            return 0
+        line = read_line_roi(f)
+        if line is not None:  # a line saved from the profile tab: restore it
+            it.profile_line = line[0]
+            link()
+            return 0
+        if it.cells is not None and len(it.cells):
+            if not replace:
+                link()
+                notes.append(f'{f.name}: {it.label}에 이미 ROI가 있어 건너뜀')
+                return 0
+            if asked is not None:
+                if 'replace' not in asked:
+                    asked['replace'] = QMessageBox.question(
+                        self, '불러오기', '이미 세포 ROI가 있는 이미지는 불러온 ROI로 바꿀까요?'
+                    ) == QMessageBox.StandardButton.Yes
+                if not asked['replace']:
+                    link()
+                    return 0
+        self.roi_panel.load_into(it, [f])
+        link()
+        return 1
+
+    def add_files(self, paths, pair=False, explicit=False):
         """Open images and attach ROI files to them by image ID.
 
         ROI files go to the image with their ID (older ROIs without one: by
-        file name) when that image has no ROIs yet. With pair (loading a
+        file name) when that image has no ROIs yet; with explicit (files the
+        user picked in 불러오기) they replace its ROIs, and ones without a
+        match go onto the current image. With pair (loading a
         folder), TIFFs this app exported are grouped by the ID of their
         original: with the original among the loaded images they are only
         listed with it, otherwise the best of them (full raw stack first) is
@@ -1398,6 +2121,9 @@ class MainWindow(QMainWindow):
         if not pair:
             plan['open'] = [p for p in paths if p.suffix.lower() in SUPPORTED]
             plan['exports'] = {}
+        if explicit or pair:  # images already in the list are not opened again
+            have = {self._path_key(it.path) for it in self.items}
+            plan['open'] = [p for p in plan['open'] if self._path_key(p) not in have]
         prog = QProgressDialog('불러오는 중…', '취소', 0, len(plan['open']) + len(plan['exports']),
                                self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
@@ -1442,53 +2168,17 @@ class MainWindow(QMainWindow):
         prog.setValue(prog.maximum())
 
         n_roi = 0
+        asked = {}
         for f in plan['rois']:
             it, how = match_roi(f, self.items, item_stem)
+            if it is None and explicit and self.current is not None:
+                it, how = self.current, '현재 이미지'  # chosen by hand: onto the image shown
+                notes.append(f'{f.name}: 짝이 없어 현재 이미지({it.label})에 불러옴')
             if it is None:
                 notes.append(f'{f.name}: {how}')
                 continue
-            if is_bleach_file(f):  # bleach regions saved with the images
-                try:
-                    it.bleach_rois = load_bleach_rois(f)
-                    it._info_summary = None
-                    if f not in it.linked:
-                        it.linked.append(f)
-                except Exception as exc:
-                    errors.append(f'{f.name}: {exc}')
-                    traceback.print_exc()
-                continue
-            if is_region_file(f):  # logic regions saved by the 강도 측정 tab
-                if f not in it.linked:
-                    it.linked.append(f)
-                continue
-            if is_contour_file(f):  # iso-contour outlines (shape only): keep with the image
-                if f not in it.linked:
-                    it.linked.append(f)
-                continue
-            if is_particle_file(f):  # particle ROIs from the 입자 ROI tab
-                try:
-                    self.particle_panel.load_particles_into(it, f)
-                    if f not in it.linked:
-                        it.linked.append(f)
-                except Exception as exc:
-                    errors.append(f'{f.name}: {exc}')
-                    traceback.print_exc()
-                continue
-            line = read_line_roi(f)
-            if line is not None:  # a line saved from the profile tab: restore it
-                it.profile_line = line[0]
-                if f not in it.linked:
-                    it.linked.append(f)
-                continue
-            if it.cells is not None and len(it.cells):
-                if f not in it.linked:
-                    it.linked.append(f)
-                notes.append(f'{f.name}: {it.label}에 이미 ROI가 있어 건너뜀')
-                continue
             try:
-                self.roi_panel.load_into(it, [f])
-                it.linked.append(f)
-                n_roi += 1
+                n_roi += self._attach_file(f, it, notes, replace=explicit, asked=asked)
             except Exception as exc:
                 errors.append(f'{f.name}: {exc}')
                 traceback.print_exc()
@@ -1618,7 +2308,7 @@ class MainWindow(QMainWindow):
             self._groups_changed()
         return n
 
-    def remove_selected(self):
+    def remove_selected(self, log=True):
         """Remove every selected image (or the current one) from the list."""
         rows = self.file_list.selected_rows()[::-1]
         if not rows and self.file_list.currentRow() >= 0:
@@ -1662,22 +2352,15 @@ class MainWindow(QMainWindow):
             self.roi_panel.bind(None)
             self.roi_panel.draw_overlay(hidden=True)
             self.canvas.pix.setPixmap(QPixmap())
-        self.statusBar().showMessage(f'이미지 {len(rows)}개를 목록에서 제거했습니다.')
+        self.statusBar().showMessage(f'이미지 {len(rows)}개를 목록에서 제거했습니다.',
+                                     0 if log else 3000)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
 
     def dropEvent(self, event):
-        paths, pair = [], False
-        for url in event.mimeData().urls():
-            p = Path(url.toLocalFile())
-            if p.is_dir():
-                paths += folder_files(p)
-                pair = True
-            else:
-                paths.append(p)
-        self.add_files(paths, pair=pair)
+        self.import_paths([Path(url.toLocalFile()) for url in event.mimeData().urls()])
 
     # ---- selection ------------------------------------------------------
 
@@ -1728,6 +2411,7 @@ class MainWindow(QMainWindow):
                 panel = ChannelPanel(i)
                 panel.bind(self.current)
                 panel.changed.connect(self.update_preview)
+                panel.changed.connect(self.set_dirty)
                 panel.applyAll.connect(self.apply_channel_to_all)
                 self.channel_box.insertWidget(self.channel_box.count() - 1, panel)
                 self.panels.append(panel)
@@ -1804,11 +2488,11 @@ class MainWindow(QMainWindow):
         vp = self.canvas.viewport()
         t = t0
         if it.nt > 1:
-            step = max(4.0, 0.8 * vp.width() / it.nt)
+            step = max(4.0, 0.8 * vp.width() / it.nt) / view_settings.value('scrub_drag')
             t = int(np.clip(t0 + round(dx / step), 0, it.nt - 1))
         z = it.z
         if it.nz > 1:
-            step = max(4.0, 0.8 * vp.height() / it.nz)
+            step = max(4.0, 0.8 * vp.height() / it.nz) / view_settings.value('scrub_drag')
             dz = -round(dy / step)  # up = higher slice, like the Z slider
             if z0 in ('mip', 'mid') and dz == 0:
                 z = z0  # MIP stays until the drag clearly goes up or down
@@ -1835,6 +2519,15 @@ class MainWindow(QMainWindow):
         it.set_t(t)
         it.show_planes(*found)
         self.update_preview(light=True)
+
+    def _wheel_t(self, steps) -> bool:
+        """The wheel (without Cmd/Ctrl) moves through time on a time series."""
+        it = self.current
+        if it is None or it.nt < 2 or self.t_slider.isSliderDown():
+            return False
+        if steps:
+            self.t_slider.setValue(int(np.clip(self.t_slider.value() + steps, 0, it.nt - 1)))
+        return True
 
     def _scrub_end(self):
         it = self.current
@@ -1939,8 +2632,7 @@ class MainWindow(QMainWindow):
     # ---- stack tab ---------------------------------------------------------
 
     def _stack_on(self) -> bool:
-        return getattr(self, 'right_tabs', None) is not None \
-            and self.right_tabs.currentIndex() == self.stack_tab
+        return self.tab_current('stack_tab')
 
     def _stack_view(self, it) -> StackView:
         view = self.stack_views.get(id(it))
@@ -2168,8 +2860,7 @@ class MainWindow(QMainWindow):
         self.profile_panel.draw_btn.setChecked(on)
         if on:
             self.crop_btn.setChecked(False)
-            if self.right_tabs.currentIndex() != self.profile_tab:
-                self.right_tabs.setCurrentIndex(self.profile_tab)  # also leaves the stack tab
+            self.show_tab('profile_tab')  # also leaves the stack tab
         self.canvas.set_line_mode(on)
 
     def _line_drawn(self, x0, y0, x1, y1):
@@ -2282,13 +2973,12 @@ class MainWindow(QMainWindow):
         if path:
             save_preset(self.current, path)
 
-    def load_preset(self):
-        path, _ = QFileDialog.getOpenFileName(self, 'LUT 프리셋 불러오기', '', 'JSON (*.json)')
-        if path:
-            load_preset(self.items, path)
-            for p in self.panels:
-                p.refresh()
-            self.update_preview()
+    def _load_preset_file(self, path):
+        n = load_preset(self.items, path)
+        for p in self.panels:
+            p.refresh()
+        self.update_preview()
+        self.statusBar().showMessage(f'LUT 프리셋 {Path(path).name}: 채널 {n}개에 적용')
 
     # ---- figure ---------------------------------------------------------
 
@@ -2334,7 +3024,7 @@ class MainWindow(QMainWindow):
         if not out:
             return
         kwargs = self._export_kwargs()
-        per_image = self.exp_per_image.isChecked()
+        per_image = self.opt_per_image.isChecked()
         stems = unique_stems(items)
         prog = QProgressDialog('저장 중…', '취소', 0, len(items), self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
@@ -2356,6 +3046,7 @@ class MainWindow(QMainWindow):
             it.image.release()
         prog.setValue(len(items))
         write_groups(Path(out) / GROUP_FILE, items)
+        self.statusBar().showMessage(f'이미지 내보내기: 이미지 {len(items)}개, 파일 {len(files)}개 → {out}')
         msg = f'파일 {len(files)}개를 저장했습니다.\n{out}'
         if errors:
             msg += '\n\n실패:\n' + '\n'.join(errors)
@@ -2419,6 +3110,12 @@ class MainWindow(QMainWindow):
             write_rows(Path(out) / f'{suffix}.csv', int_rows)
             boxes[suffix].write_summaries(out, int_rows)
         write_groups(Path(out) / GROUP_FILE, items)
+        try:
+            self.write_project_to(Path(out) / 'project.cyproj')
+        except Exception as exc:
+            traceback.print_exc()
+            errors.append(f'project.cyproj: {exc}')
+        self.statusBar().showMessage(f'모든 분석 결과 통합 저장: 이미지 {n_done}개 → {out}')
         msg = f'이미지 {n_done}개를 이미지별 폴더에 저장했습니다 (파일 {n_files}개'
         msg += f', ROI 측정 {len(rows)}행).' if rows else ').'
         msg += f'\n{out}'
