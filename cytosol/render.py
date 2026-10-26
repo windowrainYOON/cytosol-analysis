@@ -299,6 +299,56 @@ def add_time_stamp(rgb: np.ndarray, text: str, style: TimeStampStyle,
     return np.asarray(img, np.float32) / 255.0
 
 
+@dataclass
+class OutlineStyle:
+    """How ROI outlines (the file's bleach regions) are burned into an image."""
+
+    enabled: bool = True
+    color: tuple = (0.0, 1.0, 1.0)
+    thickness_px: int | None = None
+    label: bool = False
+    font_px: int | None = None
+
+    def draw(self, rgb: np.ndarray, rois, origin=(0, 0)) -> np.ndarray:
+        """rois: objects with .polygons ((N, 2) x, y in image pixels) and
+        .name; origin: image pixel shown at rgb[0, 0] (a crop's corner)."""
+        if not self.enabled or not rois:
+            return rgb
+        return add_outlines(rgb, rois, self, origin)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def add_outlines(rgb: np.ndarray, rois, style: OutlineStyle, origin=(0, 0)) -> np.ndarray:
+    """Draw closed polygon outlines (and optionally their names) onto an RGB image."""
+    from PIL import Image as PILImage
+    from PIL import ImageDraw
+
+    h, w = rgb.shape[:2]
+    width = style.thickness_px or max(1, round(min(h, w) * 0.0025))
+    fill = tuple(int(round(c * 255)) for c in parse_color(style.color))
+    img = PILImage.fromarray((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
+    draw = ImageDraw.Draw(img)
+    ox, oy = origin
+    font = None
+    for k, roi in enumerate(rois, 1):
+        for poly in roi.polygons:
+            # pixel centres: ImageJ / ZEN coordinates count from the pixel corner
+            xy = [(float(x) - ox - 0.5, float(y) - oy - 0.5) for x, y in poly]
+            if len(xy) >= 2:
+                draw.line(xy + [xy[0]], fill=fill, width=width, joint='curve')
+        if style.label:
+            if font is None:
+                font_px = style.font_px or max(10, round(h * 0.03))
+                font, _ = _font(font_px)
+            xy = np.concatenate(roi.polygons)
+            x, y = xy[:, 0].min() - ox, xy[:, 1].min() - oy
+            draw.text((x, y - (style.font_px or max(10, round(h * 0.03))) - width), str(roi.name or k),
+                      fill=fill, font=font)
+    return np.asarray(img, np.float32) / 255.0
+
+
 def add_label(rgb: np.ndarray, text: str, color=(1.0, 1.0, 1.0), font_px=None,
               position: str = 'upper left') -> np.ndarray:
     """Write a channel name in a corner."""
