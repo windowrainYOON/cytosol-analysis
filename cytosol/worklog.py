@@ -91,12 +91,10 @@ class LogWindow(QWidget):
         note.setStyleSheet('color: gray; font-size: 11px;')
         lay.addWidget(note)
         log.listeners.append(self.refresh)
-        self.refresh()
 
     def refresh(self):
-        if not self.isVisible() and self.table.rowCount():
-            self._stale = True
-            return
+        if not self.isVisible():
+            return  # filled when shown
         rows = self.log.entries
         self.table.setRowCount(len(rows))
         for i, e in enumerate(rows):
@@ -108,5 +106,4 @@ class LogWindow(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self.table.setRowCount(0)
         self.refresh()

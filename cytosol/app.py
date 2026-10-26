@@ -51,7 +51,6 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QSplitter,
-    QStatusBar,
     QTabBar,
     QTabWidget,
     QVBoxLayout,
