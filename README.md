@@ -2,6 +2,9 @@
 
 Microscopy image-based cytosol ROI determination and analysis.
 
+**User manual** (one page per feature): [English](docs/en/README.md) ·
+[한국어](docs/ko/README.md)
+
 ## Methods statement
 
 For a paper's Methods section (update this sentence whenever an analysis
