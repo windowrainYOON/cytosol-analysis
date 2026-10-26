@@ -87,19 +87,9 @@ class ProfilePanel(QWidget):
         self.info.setWordWrap(True)
         self.info.setStyleSheet('color: gray; font-size: 11px;')
         pl.addWidget(self.info)
-        row = QHBoxLayout()
-        csv_btn = QPushButton('CSV 저장…')
-        csv_btn.clicked.connect(self.save_csv)
-        png_btn = QPushButton('그래프 저장…')
-        png_btn.clicked.connect(self.save_plot)
-        row.addWidget(csv_btn)
-        row.addWidget(png_btn)
-        pl.addLayout(row)
-        self.with_roi = QCheckBox('저장할 때 선 ROI(.roi)와 선이 그려진 이미지(.png)도 함께 저장')
-        self.with_roi.setChecked(True)
-        self.with_roi.setToolTip('같은 폴더에 <이름>_line.roi (ImageJ 직선 ROI, 선 두께 포함)와 '
-                                 '<이름>_image.png (현재 LUT로 표시한 이미지 위에 선)을 저장합니다.')
-        pl.addWidget(self.with_roi)
+        # 파일 → 내보내기 → 라인 프로파일 saves; with_roi (set by the window):
+        # also <name>_line.roi and <name>_image.png next to the file
+        self.with_roi = None
         lay.addWidget(plot_box, 1)
 
         self._timer = QTimer(self)
@@ -220,7 +210,7 @@ class ProfilePanel(QWidget):
 
     def _save_companions(self, path) -> list[str]:
         """<stem>_line.roi and <stem>_image.png next to a saved CSV / plot."""
-        if not self.with_roi.isChecked() or self.profile is None:
+        if (self.with_roi is not None and not self.with_roi.isChecked()) or self.profile is None:
             return []
         return save_profile_companions(path, self.item, self.profile)
 

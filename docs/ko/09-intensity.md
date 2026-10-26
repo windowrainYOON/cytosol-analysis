@@ -2,6 +2,8 @@
 
 [← 설명서 목차](README.md) · [English](../en/09-intensity.md)
 
+**Tool › 강도 측정**를 켜면 오른쪽에 이 탭이 열리고, 끄면 닫힙니다. 결과는 **파일 › 내보내기**에서 저장합니다.
+
 ## 강도 측정 탭
 
 세포 ROI([세포질 ROI 탭](03-cytosol-roi.md))와 입자 ROI([입자 ROI 탭](04-particle-roi.md))를
@@ -72,11 +74,15 @@ cyto - particle;  cell & particle;  (cell - nuc) | particle
 
 ### 저장
 
-- **CSV 저장 (현재 이미지)…**.
+측정 표를 가진 세 탭 모두 **파일 › 내보내기**의 그 탭 메뉴(**세포질 ROI**,
+**입자 ROI**, **강도 측정 (논리 영역)**)에서 저장합니다.
+
+- **측정 CSV 저장 (현재 이미지)…**.
 - **모든 이미지 측정 + 저장 (폴더)…**: 모든 이미지를 다시 잰 뒤 전체 CSV
   (`<suffix>.csv`)와, 이미지마다 `<이름>_<ID>` 폴더에 `<이름>_<suffix>.csv`를
   저장합니다(입자 ROI 탭은 요약도, 그리고 `image_groups.csv`).
-- **ROI(.zip)와 ROI가 그려진 이미지(.png)도 함께 저장**(기본 켜짐):
+- **파일 › 내보내기 › 측정·프로파일 저장 시 ROI와 ROI가 그려진 이미지(.png)도
+  함께**(기본 켜짐, 모든 탭 공통):
   `<이름>_RoiSet.zip`(세포·핵·세포질), 입자를 쓰면 `<이름>_particles.zip`, 논리
   영역 ROI, `<이름>_image.png`(현재 LUT 이미지 위에 ROI 경계)도 함께 저장합니다.
 

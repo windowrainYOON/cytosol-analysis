@@ -2,6 +2,8 @@
 
 [← Manual index](README.md) · [한국어](../ko/05-markers.md)
 
+Open this tab with **Tool › 마커** (it appears on the right; turn the item off to close it). Its results are saved from **파일 › 내보내기** (File › Export).
+
 The markers set here are drawn on the preview and burned into every RGB
 export (TIFF and MP4) and 스택 tab save. Raw-value stacks never get
 markers. Number fields showing **자동** (Auto) use a value fitted to the

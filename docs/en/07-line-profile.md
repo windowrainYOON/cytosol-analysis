@@ -2,13 +2,14 @@
 
 [← Manual index](README.md) · [한국어](../ko/07-line-profile.md)
 
+Open this tab with **Tool › 라인 프로파일** (it appears on the right; turn the item off to close it). Its results are saved from **파일 › 내보내기** (File › Export).
+
 Plots each channel's raw intensity along a line, like ImageJ's RGB Profiler
 (Plot Profile per channel), in the channel colors, against distance in µm.
 
 ## Drawing the line
 
-1. Press **라인 프로파일 (선 그리기)** (Line profile, draw a line) above the
-   image, or **선 그리기 (드래그)** in the tab.
+1. Press **선 그리기 (드래그)** (Draw line) in the tab.
 2. Drag a line on the image. Hold `Shift` for a horizontal, vertical or 45°
    line.
 3. **선 지우기** (Clear line) removes it.
@@ -27,12 +28,14 @@ end points in pixels.
 
 ## Saving
 
-- **CSV 저장…** (Save CSV): distance plus one column per channel.
-- **그래프 저장…** (Save graph): PNG/TIFF at 300 dpi, PDF or SVG.
-- **저장할 때 선 ROI(.roi)와 선이 그려진 이미지(.png)도 함께 저장** (Also save the
-  line ROI and an image with the line): `<name>_line.roi` (ImageJ straight-line
+From **파일 › 내보내기 › 라인 프로파일** (File › Export › Line profile):
+
+- **CSV…**: distance plus one column per channel.
+- **그래프 (PNG / PDF / SVG / TIFF)…** (Graph): PNG/TIFF at 300 dpi, PDF or SVG.
+- With **파일 › 내보내기 › 측정·프로파일 저장 시 ROI와 ROI가 그려진 이미지(.png)도
+  함께** (on by default) the save also writes `<name>_line.roi` (ImageJ straight-line
   ROI, with its width) and `<name>_image.png` (the image with the current LUTs
-  and the line) in the same folder.
+  and the line) in the same folder. Choosing a `_line.roi` in **파일 › 불러오기 (파일)…** draws the line again.
 
 ## Agreement with ImageJ
 

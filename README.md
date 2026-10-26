@@ -91,7 +91,21 @@ render(read_image('cells.czi'), 'figures/', prefix='cells', scale_um=10,
 
 A GUI for working on a whole set of images at once:
 
-- Add TCF / CZI / OIR / TIFF files with **파일 추가…** or by dragging files or folders
+- **Menus**: **파일** (File) holds every load and save: new / open / save a
+  project (`.cyproj`: image paths relative to the project plus all ROIs,
+  crops, groups, LUTs, tab and measurement settings, the figure layout and
+  the work log, so a project continues where it was left), **불러오기**
+  (load files or a folder; projects, images, cell / particle / crop / line
+  ROIs, LUT presets and `image_groups.csv` are recognised automatically and
+  attached to the matching open image), the **내보내기** (Export) submenu with
+  one entry per analysis, and **모든 분석 결과 통합 저장** (save all results).
+  **Tool** opens the analysis tabs (Crop, 세포질 ROI, 입자 ROI, 강도 측정,
+  Coloc 2, 라인 프로파일, 스택, 마커) next to the always-present **LUT** and
+  **이미지 정보** tabs, plus the Figure window, the work log (every lasting
+  status message with time and image) and the settings (mouse sensitivity).
+- Zoom with `Cmd`/`Ctrl` + drag up/down or `]` / `[`; the mouse wheel moves
+  through time on time series and scrolls otherwise.
+- Add TCF / CZI / OIR / TIFF files with **파일 › 불러오기** or by dragging files or folders
   onto the window. **그룹 지정…** puts the selected images in a group you name
   (the name offered is what their file names share without the trailing
   number: abc, abc_0001, abc_0002 → abc); **자동 그룹** groups every image
@@ -280,7 +294,7 @@ A GUI for working on a whole set of images at once:
   circles, sub-pixel polygons otherwise), which folder loading attaches back to
   the image.
 - **이미지 정보 tab**: the acquisition metadata as two tables, copyable and
-  savable as CSV (also written as `<name>_info.csv` by 모든 데이터 일괄 저장),
+  savable as CSV (also written as `<name>_info.csv` by 모든 분석 결과 통합 저장),
   plus the raw metadata (CZI/OIR XML, TCF attributes). Per channel:
   fluorophore and its Ex/Em, laser wavelength, laser intensity (the stored
   setting, %), the laser line's rated maximum and the nominal power (maximum ×
@@ -337,11 +351,12 @@ A GUI for working on a whole set of images at once:
   - optional per-channel RGB,
   - an ImageJ hyperstack of the original values for all Z, carrying the channel
     LUTs, display ranges and µm calibration, ready for measurement in Fiji.
-- **이미지별 폴더에 나눠 저장** (on by default, shared with the ROI tab): each image's
-  files go into their own subfolder `<chosen folder>/<name>/`.
-- **모든 데이터 일괄 저장** (File menu, Ctrl+Shift+E): for every image, one folder
-  `<name>/` holding its TIFFs, `<name>_RoiSet.zip` and `<name>_cell_rois.csv`, plus
-  a combined `cell_rois.csv` at the top.
+- **이미지별 폴더에 나눠 저장** (on by default, an option in 파일 › 내보내기 shared by
+  every folder save): each image's files go into their own subfolder
+  `<chosen folder>/<name>_<image ID>/`.
+- **모든 분석 결과 통합 저장** (File menu, Ctrl+Shift+E): for every image, one folder
+  holding its TIFFs, crop / cell / particle / region ROIs and measurement
+  CSVs, plus the combined tables and `project.cyproj` at the top.
 
 ### Image ID and folder loading
 
@@ -355,13 +370,13 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
   (`CytosolImageID`, plus the original file name as `CytosolSource`; Fiji:
   Image › Show Info), every ROI in a RoiSet in its properties, and the
   measurement CSVs in an `image_id` column.
-- **폴더 불러오기…** (File menu, Ctrl+Shift+O; dropping a folder does the same)
+- **불러오기 (폴더)…** (File menu, Ctrl+Shift+O; dropping a folder does the same)
   scans the folder and its subfolders and pairs files by ID: exported TIFFs are
   listed with their original image; when the original is not there, the best
   export opens in its place (full raw stack first) and keeps the original's ID;
   RoiSets are loaded into the image with their ID. ROIs saved before IDs existed
   are matched by file name (`<name>_RoiSet.zip`).
-- `ROI 불러오기…` asks before loading ROIs whose ID belongs to another image.
+- Loading cell ROIs into an image that already has cells asks before replacing them.
 
 ### 세포질 ROI tab (cell / cytosol ROIs)
 
@@ -396,10 +411,10 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
    middle-button drag pans in any tool (right-button too on images without T
    or Z). A cell is always one filled piece
    (ImageJ polygon ROIs cannot have holes), so cut from its border.
-4. **ImageJ ROI 파일**: `ROI 저장…` writes a RoiSet `.zip` (ROI Manager › Open)
+4. **ImageJ ROI 파일** (파일 › 내보내기 › 세포질 ROI): `ROI 저장 (현재 이미지)…` writes a RoiSet `.zip` (ROI Manager › Open)
    or, when saved as `.roi`, one `.roi` file per ROI. Per cell: `cellNNN`
    (whole cell polygon), `nucNNN` (nucleus polygon) and `cytoNNN` (cell minus
-   nucleus, a composite ROI). `ROI 불러오기…` reads `.zip` / `.roi` files back
+   nucleus, a composite ROI). 파일 › 불러오기 reads `.zip` / `.roi` files back
    for editing. `모든 이미지 ROI 저장` writes one RoiSet per image plus
    `cell_rois.csv` with cell, nucleus and cytosol areas (with
    `이미지별 폴더에 나눠 저장`, each RoiSet and its own CSV go in `<name>/`).
@@ -414,7 +429,7 @@ rois.save('cells_RoiSet.zip')
 
 ### Figure 만들기 (figure table)
 
-`Figure 만들기…` (left panel, or `Figure` menu, `Ctrl+Shift+F`) opens a window
+`Tool › Figure…` (`Ctrl+Shift+F`) opens a window
 that lays images out as a table with row and column labels:
 
 - **Table**: add, delete and reorder rows and columns; double-click a row or

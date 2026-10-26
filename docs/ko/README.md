@@ -2,7 +2,7 @@
 
 [English manual](../en/README.md)
 
-Cytosol Viewer(v0.23)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
+Cytosol Viewer(v0.24)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
 이미지를 열어 세포·핵·세포질 ROI를 찾고, ImageJ/Fiji와 같은 방식으로 측정한
 뒤 이미지, ROI, 표, figure로 내보내는 프로그램입니다.
 
@@ -10,17 +10,20 @@ Cytosol Viewer(v0.23)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
 
 ## 창 구성
 
-- **왼쪽 패널**: 이미지 목록, Crop 목록, **Figure 만들기…**
+- **왼쪽 패널**: 이미지 목록과 그룹
 - **가운데**: 이미지. 왼쪽에 Z 슬라이더, 아래에 T 슬라이더, 위에 보기 버튼
-- **오른쪽 패널**: 아래 탭들
-- **메뉴**: **파일**, **Figure**
+- **오른쪽 패널**: 처음에는 **LUT**와 **이미지 정보** 탭만 있고, 나머지 기능 탭은
+  **Tool** 메뉴에서 꺼냅니다
+- **메뉴**: **파일**(프로젝트, 불러오기, 모든 저장·내보내기), **Tool**(기능 탭,
+  Figure, 작업 기록, 설정). [메뉴, 프로젝트 파일, 작업 기록](13-project-menus.md)
 
 ## 기능별 설명서
 
 | 설명서 | 내용 |
 |---|---|
 | [시작하기: 이미지 열기·보기·그룹](01-getting-started.md) | 파일·폴더 추가, 이미지 목록, 그룹, TCF HT/FL 정렬, Z/T 이동, 확대, Crop, 이미지 ID |
-| [LUT · 내보내기 탭](02-lut-export.md) | 채널 표시(LUT), 일괄 LUT 적용, 프리셋, TIFF/MP4 저장, 모든 데이터 일괄 저장 |
+| [메뉴, 프로젝트 파일, 작업 기록](13-project-menus.md) | 파일·Tool 메뉴, 자동 인식 불러오기, 프로젝트 저장·열기, 작업 기록, 마우스 민감도 |
+| [LUT 탭과 이미지 내보내기](02-lut-export.md) | 채널 표시(LUT), 일괄 LUT 적용, 프리셋, TIFF/MP4 내보내기, 모든 분석 결과 통합 저장 |
 | [세포질 ROI 탭](03-cytosol-roi.md) | 세포·핵·세포질 ROI 자동 검출과 수정, ImageJ ROI 파일, 세포 강도 측정 |
 | [입자 ROI 탭](04-particle-roi.md) | 입자(점·응축체) 검출, 세포별·입자별 측정, 형태, 요약 |
 | [마커 탭](05-markers.md) | Scale bar, 타임 스탬프, CZI bleach ROI |
@@ -32,16 +35,22 @@ Cytosol Viewer(v0.23)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
 | [Figure 창](11-figure.md) | 행·열 이름, 확대 inset, scale bar가 있는 figure 표; PNG/TIFF/PDF/SVG |
 | [저장되는 파일](12-output-files.md) | 프로그램이 쓰는 모든 파일과 폴더 불러오기 |
 
+세포질 ROI부터 마커까지의 탭은 **Tool** 메뉴에서 열고, 각 탭의 결과는 **파일 ›
+내보내기**에서 저장합니다.
+
 ## 단축키와 마우스
 
 | 동작 | 방법 |
 |---|---|
-| 파일 열기 | `Ctrl+O` (macOS `⌘O`), 또는 파일·폴더를 창에 끌어다 놓기 |
+| 불러오기 (프로젝트·이미지·ROI·프리셋 자동 인식) | `Ctrl+O` (macOS `⌘O`), 또는 파일·폴더를 창에 끌어다 놓기 |
 | 폴더 불러오기 (이미지·TIFF·ROI를 ID로 짝짓기) | `Ctrl+Shift+O` |
-| TIFF로 일괄 저장 | `Ctrl+E` |
-| 모든 데이터 일괄 저장 (이미지별 폴더) | `Ctrl+Shift+E` |
+| 새 프로젝트 / 프로젝트 저장 / 다른 이름으로 저장 | `Ctrl+N` / `Ctrl+S` / `Ctrl+Shift+S` |
+| 이미지 내보내기 (TIFF / MP4) | `Ctrl+E` |
+| 모든 분석 결과 통합 저장 (이미지별 폴더) | `Ctrl+Shift+E` |
 | Figure 창 | `Ctrl+Shift+F`, 창 안에서 저장은 `Ctrl+S` |
-| 확대·축소 | 마우스 휠, **영역 확대** 또는 `Shift`+드래그로 사각형, 원래대로는 **화면 맞춤** |
+| 작업 기록 | `Ctrl+Shift+L` |
+| 확대·축소 | `Cmd`(Windows `Ctrl`) + 위/아래 드래그, `]` 확대 / `[` 축소, **영역 확대** 또는 `Shift`+드래그로 사각형, 원래대로는 **화면 맞춤**. 민감도는 **Tool › 설정…** |
+| 마우스 휠 | 타임시리즈: 시점 이동(한 칸에 한 시점). 그 밖에는 화면 이동(스크롤) |
 | 화면 이동 | 가운데 버튼 드래그 (Z·T가 없는 이미지는 오른쪽 버튼 드래그도) |
 | T와 Z 이동 | 이미지 위에서 오른쪽 버튼 드래그: 좌우 = T, 위아래 = Z |
 | Z 슬라이스 | Z 슬라이더, 슬라이더 위에서 휠, `↑` `↓` / `PageUp` `PageDown` |

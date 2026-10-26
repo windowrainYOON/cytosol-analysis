@@ -70,7 +70,6 @@ class IntensityPanel(QWidget):
         self.measure = MeasureBox(win, 'intensity_tab', self.regions_for, 'intensity',
                                   '논리 영역 강도 측정', extra_files=self._region_file,
                                   overlay_regions=self.regions_for)
-        self.measure.with_roi.setText('ROI(.zip, 논리 영역 포함)와 ROI가 그려진 이미지(.png)도 함께 저장')
         lay.addWidget(self.measure, 1)
 
     # ---- helpers ----------------------------------------------------------
@@ -80,8 +79,7 @@ class IntensityPanel(QWidget):
         self.measure.schedule()
 
     def visible_tab(self) -> bool:
-        tabs = getattr(self.win, 'right_tabs', None)
-        return tabs is not None and tabs.currentIndex() == getattr(self.win, 'intensity_tab', -1)
+        return self.measure.visible_tab()
 
     def overlay_changed(self, hidden=False):
         """Called whenever the ROI overlay is redrawn (edits, plane changes)."""

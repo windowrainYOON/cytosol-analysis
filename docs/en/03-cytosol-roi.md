@@ -2,6 +2,8 @@
 
 [← Manual index](README.md) · [한국어](../ko/03-cytosol-roi.md)
 
+Open this tab with **Tool › 세포질 ROI** (it appears on the right; turn the item off to close it). Its results are saved from **파일 › 내보내기** (File › Export).
+
 This tab finds one ROI per cell, with its nucleus, and gives three regions
 per cell: `cell` (whole cell), `nuc` (nucleus) and `cyto` (cell minus
 nucleus). The ROIs are used by every other analysis tab and saved as ImageJ
@@ -63,16 +65,22 @@ The cell list shows each cell's area and whether it was cut at the frame
 
 ## 4. ImageJ ROI 파일 (ImageJ ROI files)
 
-- Choose which ROIs to save: **세포 전체** (`cellNNN`, cell polygon), **핵**
-  (`nucNNN`), **세포질 (핵 제외)** (`cytoNNN`, cell minus nucleus as a
-  composite ROI).
-- **ROI 저장…** (Save ROIs): `.zip` = one ImageJ RoiSet (ROI Manager › Open);
-  `.roi` = one `.roi` file per ROI.
-- **ROI 불러오기…** (Load ROIs): reads `.zip` / `.roi` back for editing. If the
-  file was saved from another image (different image ID) you are asked first.
+Saving is in the **파일 › 내보내기 › 세포질 ROI** menu (File › Export ›
+Cytosol ROI).
+
+- Choose which ROIs to save (check items in that menu): **저장할 ROI: 세포 전체**
+  (`cellNNN`, cell polygon), **핵** (`nucNNN`), **세포질 (핵 제외)** (`cytoNNN`,
+  cell minus nucleus as a composite ROI).
+- **ROI 저장 (현재 이미지)…** (Save ROIs, current image): `.zip` = one ImageJ
+  RoiSet (ROI Manager › Open); `.roi` = one `.roi` file per ROI.
 - **모든 이미지 ROI 저장 (폴더)…** (Save all images' ROIs): one RoiSet per image
   plus `cell_rois.csv` with cell, nucleus and cytosol areas; with
-  **이미지별 폴더에 나눠 저장** each image's files go in its own folder.
+  **파일 › 내보내기 › 이미지별 폴더에 나눠 저장** each image's files go in its
+  own folder.
+- Loading: choose a `.zip` / `.roi` in **파일 › 불러오기 (파일)…** (File › Load).
+  It is recognised as cell ROIs and loaded into the current image (or the open
+  image with the matching image ID). If the image already has cells you are
+  asked before they are replaced.
 
 ## 5. 세포 강도 측정 (Cell intensity)
 

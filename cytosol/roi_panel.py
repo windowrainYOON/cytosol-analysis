@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -245,41 +245,18 @@ class RoiPanel(QWidget):
         el.addLayout(row)
         el.addWidget(self.cell_list, 1)
         hint = QLabel('세포를 클릭해 선택한 뒤 더하기/빼기로 영역을 그리세요. '
-                      '오른쪽 버튼 드래그나 휠로 화면을 움직일 수 있습니다.')
+                      '가운데 버튼 드래그로 화면을 움직이고, Cmd(Ctrl)+드래그로 확대·축소합니다.')
         hint.setWordWrap(True)
         hint.setStyleSheet('color: gray;')
         el.addWidget(hint)
 
-        # save / load
-        self.save_cell = QCheckBox('세포 전체')
-        self.save_cell.setChecked(True)
-        self.save_nuc = QCheckBox('핵')
-        self.save_nuc.setChecked(True)
-        self.save_cyto = QCheckBox('세포질 (핵 제외)')
-        self.save_cyto.setChecked(True)
-        save_btn = QPushButton('ROI 저장…')
-        save_btn.setToolTip('.zip: ImageJ RoiSet 하나로, .roi: ROI마다 .roi 파일 하나씩')
-        save_btn.clicked.connect(self.save_current)
-        load_btn = QPushButton('ROI 불러오기…')
-        load_btn.clicked.connect(self.load_current)
-        save_all = QPushButton('모든 이미지 ROI 저장 (폴더)…')
-        save_all.clicked.connect(self.save_all)
-        self.per_image = QCheckBox('이미지별 폴더에 나눠 저장')
-        self.per_image.setChecked(True)
-        self.per_image.setToolTip('폴더 안에 이미지마다 하위 폴더를 만들어 그 이미지의 파일을 넣습니다.')
-        io = QGroupBox('ImageJ ROI 파일')
-        il = QVBoxLayout(io)
-        row = QHBoxLayout()
-        row.addWidget(self.save_cell)
-        row.addWidget(self.save_nuc)
-        row.addWidget(self.save_cyto)
-        il.addLayout(row)
-        row = QHBoxLayout()
-        row.addWidget(save_btn)
-        row.addWidget(load_btn)
-        il.addLayout(row)
-        il.addWidget(self.per_image)
-        il.addWidget(save_all)
+        # which ROIs 파일 → 내보내기 → 세포질 ROI writes (menu check items)
+        self.save_cell = QAction('저장할 ROI: 세포 전체', self, checkable=True)
+        self.save_nuc = QAction('저장할 ROI: 핵', self, checkable=True)
+        self.save_cyto = QAction('저장할 ROI: 세포질 (핵 제외)', self, checkable=True)
+        for a in (self.save_cell, self.save_nuc, self.save_cyto):
+            a.setChecked(True)
+        self.per_image = win.opt_per_image
 
         meas = QGroupBox('측정할 영역')
         row = QHBoxLayout(meas)
@@ -298,7 +275,6 @@ class RoiPanel(QWidget):
         lay.addWidget(roles)
         lay.addWidget(det)
         lay.addWidget(ed, 1)
-        lay.addWidget(io)
         lay.addWidget(meas)
         lay.addWidget(self.measure, 1)
 

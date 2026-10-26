@@ -308,8 +308,14 @@ def run(out_dir) -> int:
     def image_id_pairing():
         from .app import load_items
         from .imageid import plan_pairing, roi_id, tiff_id
-        files = [Path(f) for f in export_item_files]
-        ids = {tiff_id(f)[0] for f in files} | {roi_id(out / 'selftest_RoiSet.zip')}
+        from .crops import is_crop_file, load_crop_rois
+        crop_zips = [Path(f) for f in export_item_files if f.endswith('_crops.zip')]
+        if len(crop_zips) != 1 or not is_crop_file(crop_zips[0]) \
+                or load_crop_rois(crop_zips[0]) != item.crops:
+            raise AssertionError(f'crop ROI file: {crop_zips}')
+        files = [Path(f) for f in export_item_files if f.endswith('.tif')]
+        ids = {tiff_id(f)[0] for f in files} | {roi_id(out / 'selftest_RoiSet.zip')} \
+            | {roi_id(crop_zips[0])}
         if ids != {item.image_id}:
             raise AssertionError(f'IDs in exports: {ids}')
         plan = plan_pairing(files + [out / 'selftest_RoiSet.zip'])
@@ -496,7 +502,13 @@ def run(out_dir) -> int:
         win = MainWindow()
         win.show()
         app.processEvents()
+        tabs = [win.right_tabs.tabText(i) for i in range(win.right_tabs.count())]
+        if tabs != ['LUT', '이미지 정보']:
+            raise AssertionError(f'tabs at start: {tabs}')
         win.add_files([out / 'selftest.TCF'])
+        win.add_files([out / 'selftest.TCF'], explicit=True)
+        if len(win.items) != 1:
+            raise AssertionError('불러오기 opened an image that is already in the list')
         if win.info_panel.summary is None or win.info_panel.gen.rowCount() == 0:
             raise AssertionError('image info tab empty')
         # dragging T draws read-ahead timepoints; releasing settles on the last one
@@ -535,7 +547,7 @@ def run(out_dir) -> int:
             raise AssertionError('right-drag left a wrong plane')
         win.z_slider.setValue(4)
         win._z_changed()
-        win.right_tabs.setCurrentIndex(win.stack_tab)
+        win.show_tab('stack_tab')
         app.processEvents()
         win.stack_panel.mode_3d.setChecked(True)
         win.stack_panel.angle_spin.setValue(45)
@@ -587,7 +599,7 @@ def run(out_dir) -> int:
         win.canvas.fit()
         win.line_btn.setChecked(True)
         app.processEvents()
-        if win.right_tabs.currentIndex() != win.profile_tab or not win.canvas.line_mode:
+        if not win.tab_current('profile_tab') or not win.canvas.line_mode:
             raise AssertionError('line profile mode did not open its tab')
         win.canvas.lineDrawn.emit(5.0, 5.0, 50.0, 40.0)
         win.profile_panel.width.setValue(3)
@@ -604,6 +616,117 @@ def run(out_dir) -> int:
         if not win.current.coloc or win.coloc_panel.table.rowCount() != len(win.current.coloc):
             raise AssertionError('Coloc 2 tab produced no results')
         win.coloc_panel._draw()
+        # zoom: Cmd/Ctrl + drag up zooms in around the press point, [ ] step
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QWheelEvent
+        win.canvas.fit()
+        s0 = win.canvas.transform().m11()
+        QTest.mousePress(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ControlModifier, c)
+        QTest.mouseMove(vp, c - QPoint(0, 120))
+        QTest.mouseRelease(vp, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.ControlModifier,
+                           c - QPoint(0, 120))
+        s1 = win.canvas.transform().m11()
+        if not s1 > s0 * 1.2:
+            raise AssertionError(f'Cmd+drag zoom: {s0:.3f} -> {s1:.3f}')
+        win.canvas.zoom_by(1 / 1.25)
+        if abs(win.canvas.transform().m11() - s1 / 1.25) > 1e-6:
+            raise AssertionError('[ zoom out')
+        # the plain wheel moves through time (one step per notch), not the zoom
+        t_before, s2 = win.current.t, win.canvas.transform().m11()
+
+        def wheel(dy):
+            ev = QWheelEvent(QPointF(c), QPointF(vp.mapToGlobal(c)), QPoint(0, 0), QPoint(0, dy),
+                             Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                             Qt.ScrollPhase.NoScrollPhase, False)
+            QApplication.sendEvent(vp, ev)
+            app.processEvents()
+
+        wheel(-120)
+        if win.current.t != min(t_before + 1, win.current.nt - 1) \
+                or win.canvas.transform().m11() != s2:
+            raise AssertionError(f'wheel: t {t_before} -> {win.current.t}')
+        wheel(120)
+        if win.current.t != t_before:
+            raise AssertionError('wheel back')
+        # Tool menu tabs: open next to LUT / 이미지 정보 in menu order, close again
+        win.hide_tab('profile_tab')
+        win.tool_actions['crop_tab'].setChecked(True)
+        win.tool_actions['coloc_tab'].setChecked(True)
+        tabs = [win.right_tabs.tabText(i) for i in range(win.right_tabs.count())]
+        if tabs[:3] != ['LUT', '이미지 정보', 'Crop'] or 'Coloc 2' not in tabs \
+                or '라인 프로파일' in tabs or not win.tab_current('coloc_tab'):
+            raise AssertionError(f'Tool menu tabs: {tabs}')
+        win.tool_actions['coloc_tab'].setChecked(False)
+        if win.tab_open('coloc_tab'):
+            raise AssertionError('Tool menu did not close the tab')
+        # project file: everything back after closing the work
+        from .cellroi import CellRois
+        from .intensity import ParticleSettings
+        it = win.current
+        h, w = it.image.shape[-2:]
+        lab = np.zeros((h, w), np.int32)
+        lab[5:30, 5:30], lab[30:55, 30:60] = 1, 2
+        it.cells = CellRois(lab, None, it.pixel_um, {1: 'ok', 2: 'edge'}, saturation=1.39)
+        it.crops = [(2, 3, 20, 25)]
+        it.group = 'grp'
+        it.luts[1].vmax = 1234.5
+        it.particle_settings = ParticleSettings(channel=it.channels[1], k=2.5)
+        win.intensity_panel.expr.setText('cyto - particle')
+        win.particle_panel.measure.batch_rows = [{'image': it.label, 'value': 1.5}]
+        win.statusBar().showMessage('selftest step')
+        n_coloc = len(it.coloc)
+        win.open_figure()
+        win.figure_win.spec.cells[0][0].item = it
+        win.figure_win.spec.cells[0][0].region = (2, 3, 20, 25)
+        win.figure_win.close()
+        proj = out / 'selftest.cyproj'
+        win.write_project_to(proj)
+        n_log = len(win.worklog.entries)
+        win.dirty = False
+        win.new_project()
+        if win.items or win.tab_open('coloc_tab') is None:
+            raise AssertionError('new project left images')
+        if not win.open_project(proj):
+            raise AssertionError('project did not open')
+        it = win.current
+        if len(win.items) != 1 or it is None or it.image_id != win.items[0].image_id:
+            raise AssertionError('project images')
+        if not np.array_equal(it.cells.labels, lab) or it.cells.status != {1: 'ok', 2: 'edge'} \
+                or it.cells.saturation != 1.39:
+            raise AssertionError('project cell ROIs')
+        if it.crops != [(2, 3, 20, 25)] or it.group != 'grp' or it.luts[1].vmax != 1234.5:
+            raise AssertionError(f'project image settings {it.crops} {it.group} {it.luts[1].vmax}')
+        if it.particle_settings is None or it.particle_settings.k != 2.5:
+            raise AssertionError('project particle settings')
+        if len(it.coloc) != n_coloc or win.intensity_panel.expr.text() != 'cyto - particle':
+            raise AssertionError('project Coloc 2 results / tab settings')
+        if win.particle_panel.measure.batch_rows != [{'image': it.label, 'value': 1.5}]:
+            raise AssertionError('project measurement table')
+        if not win.tab_open('crop_tab') or win.tab_open('coloc_tab'):
+            raise AssertionError(f'project tabs {win.open_tabs()}')
+        if len(win.worklog.entries) < n_log or not any(
+                e['action'] == 'selftest step' for e in win.worklog.entries):
+            raise AssertionError('project work log')
+        fig = win.figure_win.spec.cells[0][0] if win.figure_win is not None else None
+        if fig is None or fig.item is not it or fig.region != (2, 3, 20, 25):
+            raise AssertionError('project figure')
+        win.figure_win.deleteLater()
+        win.figure_win = None
+        # 불러오기: saved ROI / crop files recognised and put back on the image
+        from .crops import save_crop_rois
+        rz = out / 'import' / 'roundtrip_RoiSet.zip'
+        it.cells.save(rz, properties=it.id_properties())
+        cz = save_crop_rois(out / 'import' / 'roundtrip_crops.zip', it.crops, it.id_properties())
+        it.cells, it.crops = None, []
+        win.import_paths([rz, Path(cz)])
+        if it.cells is None or len(it.cells) != 2 or it.crops != [(2, 3, 20, 25)]:
+            raise AssertionError('불러오기 did not restore ROIs / crops')
+        it.cells, it.crops, it.particle_settings, it.group = None, [], None, ''
+        win.particle_panel.spot_k.setValue(3.0)
+        win.intensity_panel.expr.setText('')
+        win._groups_changed()
+        win.particle_panel.bind(it)
+        win.roi_panel.bind(it)
         # channel 표시 checkboxes gathered in one row; all off / all on
         row = win.visibility
         if [p.visible.text() for p in row.panels] != list(win.current.channels):
@@ -671,13 +794,13 @@ def run(out_dir) -> int:
         own.cells.renumber()
         win._add_item(own)
         win.file_list.setCurrentRow(len(win.items) - 1)
-        win.right_tabs.setCurrentIndex(win.roi_tab)
+        win.show_tab('roi_tab')
         app.processEvents()
         cm = win.roi_panel.measure
         cm.refresh(force=True)
         if len(cm.rows) != 3 * len(own.cells):
             raise AssertionError(f'cell intensity rows {len(cm.rows)} for {len(own.cells)} cells')
-        win.right_tabs.setCurrentIndex(win.particle_tab)
+        win.show_tab('particle_tab')
         pp = win.particle_panel
         pp.part_channel.setCurrentIndex(1)
         pp.part_on.setChecked(True)
@@ -701,7 +824,7 @@ def run(out_dir) -> int:
         if len(pp.measure.rows) != 2 * len(own.cells) \
                 or 'n_particles' not in pp.measure.rows[0]:
             raise AssertionError(f'particle rows: {len(pp.measure.rows)}')
-        win.right_tabs.setCurrentIndex(win.intensity_tab)
+        win.show_tab('intensity_tab')
         ip = win.intensity_panel
         ip.expr.setText('cyto - particle; cell & particle')
         ip.measure.refresh(force=True)
@@ -767,7 +890,7 @@ def run(out_dir) -> int:
         bare = _synthetic_item()
         win._add_item(bare)
         win.file_list.setCurrentRow(len(win.items) - 1)
-        win.right_tabs.setCurrentIndex(win.particle_tab)
+        win.show_tab('particle_tab')
         app.processEvents()
         if pp.within.currentData() != 'image':
             raise AssertionError('whole image not preselected without cell ROIs')
