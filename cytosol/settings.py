@@ -1,5 +1,6 @@
 """View preferences kept between sessions (QSettings): how strongly mouse
-drags and the wheel act on the image view, and the recent project list."""
+drags and the wheel act on the image view, the widths of the side panes and
+the recent project list."""
 
 from __future__ import annotations
 
@@ -55,6 +56,20 @@ class ViewSettings:
     def set_value(self, key: str, v: float):
         self._cache[key] = float(v)
         self._store().setValue(f'view/{key}', float(v))
+
+    def pane_widths(self, left: int, right: int) -> tuple[int, int]:
+        """Remembered widths of the image list and the tools pane."""
+        out = []
+        for key, default in (('left', left), ('right', right)):
+            try:
+                out.append(int(self._store().value(f'layout/{key}_width', default)))
+            except (TypeError, ValueError):
+                out.append(default)
+        return out[0], out[1]
+
+    def set_pane_widths(self, left: int, right: int):
+        self._store().setValue('layout/left_width', int(left))
+        self._store().setValue('layout/right_width', int(right))
 
     def recent(self) -> list[str]:
         v = self._store().value('recent_projects', [])

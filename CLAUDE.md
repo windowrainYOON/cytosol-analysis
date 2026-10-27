@@ -23,8 +23,15 @@ owner writes in Korean, so reply in Korean.
 
 ## Window structure (v0.26.0)
 
-- **Left**: image list with group folders (`image_tree.py`, `groups.py`),
-  buttons 파일 추가… / 폴더 불러오기… / groups.
+- **Panes** (`MainWindow.main_split`): left and right keep their width
+  (stretch 0, defaults `LEFT_W` / `RIGHT_W`, widths remembered in
+  `QSettings` `layout/*_width`), only the centre grows with the window.
+  Pane contents follow the pane width: `flow.reflow` turns rows of 3+
+  buttons / check boxes of every right tab into `FlowLayout`s and lets form
+  rows wrap; use `FlowLayout` (or word-wrapping labels, `wrapped_check` for a
+  long check box) in new panels instead of wide fixed rows.
+- **Left**: image list with group folders (`image_tree.py`, `groups.py`;
+  long names wrap, `WrapDelegate`), buttons 파일 추가… / 폴더 불러오기… / groups.
 - **Centre**: `Canvas` (QGraphicsView in `app.py`) with the Z slider (left),
   T slider (below), toolbar (영역 확대, 화면 맞춤).
   - Zoom: `Cmd`/`Ctrl` + left-drag up/down (`ZOOM_DRAG_RATE` × sensitivity),
@@ -111,6 +118,7 @@ owner writes in Korean, so reply in Korean.
 | `marker_panel.py` | Scale bar, time stamp, bleach ROI display |
 | `figure.py`, `figure_window.py` | Figure window (image table, insets, scale bars, PNG/TIFF/PDF/SVG) |
 | `groups.py`, `image_tree.py` | Image groups and the grouped image list |
+| `flow.py` | `FlowLayout` and `reflow` (panel rows that follow the pane width) |
 | `project.py` | `.cyproj` project files (see below) |
 | `settings.py` | `QSettings` preferences: mouse sensitivities, recent projects; `SettingsDialog` |
 | `worklog.py` | `WorkLog`, `LoggingStatusBar`, `LogWindow` |
@@ -220,4 +228,5 @@ not affected.
 | #44 | 0.29.1 | Neck cut on by default, neck ≤ 6 µm, part beyond ≥ 2 × wider (FV3000 tip-joined cell cut; PRD 24h cell IoU 0.733 → 0.738) |
 | #45 | 0.30 | Nucleus split kept only when the shape says two nuclei (`_split_ok`: notches at both ends, convex pieces / non-convex pair, short cut, centres apart); bean nuclei stay whole (FV3000: 19 split blobs → 7) |
 | #46 | 0.31 | Wedge-shaped cell ROIs around dim nuclei fixed: nucleus patches < 2 µm apart are joined before splitting (`nucleus_gap_um`), auto size range gets 10 % slack; 자동 checkbox per value (cell / nucleus size separately, smoothing, neck, margin), all on and filled when an image is picked; Shift+click multi-select, 합치기 (M), Option+drag cut |
-| this PR | 0.32 | Nucleus outline per seed: own LUT stretch + own Otsu threshold (`_local_nuclei`), dim nuclei kept when compact with a sharp edge; FV3000 dim nuclei found, PRD 24h cell IoU 0.733 |
+| #48 | 0.32 | Nucleus outline per seed: own LUT stretch + own Otsu threshold (`_local_nuclei`), dim nuclei kept when compact with a sharp edge; FV3000 dim nuclei found, PRD 24h cell IoU 0.733 |
+| this PR | 0.33 | Side panes keep their width (only the preview grows, dragged widths remembered), pane contents reflow to the width (`flow.py`), long image names wrap in the list |

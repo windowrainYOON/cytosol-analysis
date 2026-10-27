@@ -105,6 +105,10 @@ A GUI for working on a whole set of images at once:
   이미지 정보, Figure) that opens its tab on the right and holds its own saves
   and loads. The **LUT** and **이미지 정보** tabs are always there; the marker
   settings are fixed at the bottom of the LUT tab.
+- **Layout**: the image list (left) and the tools (right) keep their width
+  and only the preview grows with the window; pane borders can be dragged and
+  the widths are remembered. Rows of buttons and check boxes reflow to the
+  pane width, and long image names wrap in the list.
 - Zoom with `Cmd`/`Ctrl` + drag up/down or `]` / `[`; the mouse wheel moves
   through time on time series and scrolls otherwise.
 - Add TCF / CZI / OIR / TIFF files with **파일 › 불러오기** or by dragging files or folders

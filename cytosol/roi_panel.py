@@ -255,11 +255,8 @@ class RoiPanel(QWidget):
         dl.addRow(self.thr_view)
         dl.addRow('스무딩', self._with_auto(self.smooth))
         dl.addRow(self.fit_size)
-        row = QHBoxLayout()
-        row.addWidget(self.neck_cut)
-        row.addWidget(QLabel('목 폭 ≤'))
-        row.addLayout(self._with_auto(self.neck_max), 1)
-        dl.addRow(row)
+        dl.addRow(self.neck_cut)  # its width on a row of its own: the pane stays narrow
+        dl.addRow('목 폭 ≤', self._with_auto(self.neck_max))
 
         # 수동 sub-tab: threshold only (at or above = ROI, below = discarded)
         manual = QWidget()

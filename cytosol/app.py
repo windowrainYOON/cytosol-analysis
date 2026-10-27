@@ -70,6 +70,7 @@ from .lut import (
 from .coloc_panel import ColocPanel, write_coloc_csv
 from .intensity import is_contour_file, is_particle_file, is_region_file, write_rows
 from .groups import GROUP_FILE, apply_groups, auto_groups, read_groups, suggest_name, write_groups
+from .flow import reflow
 from .image_tree import ImageTree
 from .intensity_panel import IntensityPanel
 from .imageid import ROI_EXT, match_roi, plan_pairing
@@ -94,6 +95,10 @@ SLIDER_STEPS = 1000
 # Cmd/Ctrl + drag zoom: e^(rate × pixels) at sensitivity 1 (×2 per ~170 px)
 ZOOM_DRAG_RATE = 0.004
 ZOOM_KEY_STEP = 1.25  # '[' / ']'
+# default widths of the side panes (the preview takes the rest) and the
+# narrowest tools pane; the image list stops at its buttons' width
+LEFT_W = 250
+RIGHT_W, RIGHT_MIN_W = 430, 320
 MARKER_FORMAT = 'cytosol-viewer-markers'
 # what each feature menu's 불러오기 offers: (name, file dialog filter)
 IMPORT_KINDS = {
@@ -149,6 +154,19 @@ CELL_COLORS = [QColor(c) for c in (
 LASSO_COLORS = {'add': QColor(80, 255, 120), 'sub': QColor(255, 80, 80), 'new': QColor(80, 220, 255),
                 'cut': QColor(255, 220, 60)}
 OPEN_LASSO = {'cut'}  # tools drawn as an open line, not an area
+
+
+def wrapped_check(box: QCheckBox, text: str, tip: str = '') -> QHBoxLayout:
+    """`box` with its text in a word-wrapping label beside it (a QCheckBox
+    never wraps, so a long one would hold the panel wide)."""
+    label = QLabel(text)
+    label.setWordWrap(True)
+    label.setToolTip(tip)
+    label.mousePressEvent = lambda _e: box.toggle()
+    row = QHBoxLayout()
+    row.addWidget(box, 0, Qt.AlignmentFlag.AlignTop)
+    row.addWidget(label, 1)
+    return row
 
 
 def write_csv_rows(path: Path, rows):
@@ -1180,19 +1198,20 @@ class MainWindow(QMainWindow):
         ungroup_btn.clicked.connect(lambda: self.set_group(self._selected_items(), ''))
         left = QWidget()
         ll = QVBoxLayout(left)
-        ll.addWidget(QLabel('이미지 (TCF / CZI / OIR / TIF, 끌어다 놓기 가능)'))
+        title = QLabel('이미지 (TCF / CZI / OIR / TIF, 끌어다 놓기 가능)')
+        title.setWordWrap(True)
+        ll.addWidget(title)
         ll.addWidget(self.file_list)
-        row = QHBoxLayout()
-        for b in (group_btn, auto_btn, rename_btn, ungroup_btn):
-            row.addWidget(b)
-        ll.addLayout(row)
-        self.align_tcf = QCheckBox('TCF: HT와 FL을 정렬해 한 이미지로')
+        grid = QGridLayout()  # two per row so the list can stay narrow
+        for i, b in enumerate((group_btn, auto_btn, rename_btn, ungroup_btn)):
+            grid.addWidget(b, i // 2, i % 2)
+        ll.addLayout(grid)
+        self.align_tcf = QCheckBox()
         self.align_tcf.setChecked(True)
-        self.align_tcf.setToolTip(
-            'FL을 HT 픽셀 격자에 맞춰 리샘플링합니다 (XY: 픽셀 크기와 자동 미세 보정, '
-            'Z: 3DFL OffsetZ). 끄면 HT와 FL이 따로 열립니다. 새로 추가하는 파일부터 적용됩니다.'
-        )
-        ll.addWidget(self.align_tcf)
+        tip = ('FL을 HT 픽셀 격자에 맞춰 리샘플링합니다 (XY: 픽셀 크기와 자동 미세 보정, '
+               'Z: 3DFL OffsetZ). 끄면 HT와 FL이 따로 열립니다. 새로 추가하는 파일부터 적용됩니다.')
+        self.align_tcf.setToolTip(tip)
+        ll.addLayout(wrapped_check(self.align_tcf, 'TCF: HT와 FL을 정렬해 한 이미지로', tip))
         ll.addWidget(add_btn)
         ll.addWidget(folder_btn)
         ll.addWidget(rm_btn)
@@ -1342,6 +1361,7 @@ class MainWindow(QMainWindow):
         bl.addWidget(all_luts)
         bl.addWidget(self.copy_color)
         note = QLabel('LUT 프리셋 저장·불러오기와 이미지 내보내기: 메뉴 막대의 LUT')
+        note.setWordWrap(True)
         note.setStyleSheet('color: gray; font-size: 11px;')
         bl.addWidget(note)
 
@@ -1458,14 +1478,25 @@ class MainWindow(QMainWindow):
         self.crop_btn.toggled.connect(lambda on: on and self.line_btn.setChecked(False))
         right.currentChanged.connect(self._tab_changed)
         self._last_shape = None
-        right.setMinimumWidth(380)
+        for page, _title in self.tab_pages.values():
+            reflow(page)
+        reflow(lut_tab)
+        right.setMinimumWidth(RIGHT_MIN_W)
 
+        # the file list and the tools keep their widths; only the preview
+        # grows or shrinks with the window.  Dragged widths are remembered.
         split = QSplitter()
+        self.main_split = split
         split.addWidget(left)
         split.addWidget(center)
         split.addWidget(right)
-        split.setSizes([260, 800, 420])
+        split.setChildrenCollapsible(False)
+        for i, f in enumerate((0, 1, 0)):
+            split.setStretchFactor(i, f)
+        split.setSizes([LEFT_W, 800, RIGHT_W])
+        split.splitterMoved.connect(lambda *_: self._remember_panes())
         self.setCentralWidget(split)
+        self._restore_panes()
 
         self.figure_win = None
         self.log_win = None
@@ -1724,6 +1755,17 @@ class MainWindow(QMainWindow):
         if r == QMessageBox.StandardButton.Save:
             return self.save_project()
         return True
+
+    def _remember_panes(self):
+        sizes = self.main_split.sizes()
+        view_settings.set_pane_widths(sizes[0], sizes[2])
+
+    def _restore_panes(self):
+        """Side panes at their remembered (or default) widths, the preview
+        taking the rest."""
+        lw, rw = view_settings.pane_widths(LEFT_W, RIGHT_W)
+        total = max(sum(self.main_split.sizes()), lw + rw + 400)
+        self.main_split.setSizes([lw, total - lw - rw, rw])
 
     def closeEvent(self, event):
         if not self._maybe_save():
