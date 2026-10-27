@@ -135,7 +135,10 @@ owner writes in Korean, so reply in Korean.
   `RoiParams` default). Editing: Shift+click (`Canvas.cellShiftClicked`)
   builds a multi-selection (`RoiPanel.selection()`), 합치기 (M) joins it
   (`CellRois.merge`, bridges gaps ≤ 3 µm), Option/Alt+drag with 선택 draws a
-  cut line (`Canvas.roi_edit_active`, `_lasso_tool`).
+  cut line (`Canvas.roi_edit_active`, `_lasso_tool`). The **핵 다시 찾기**
+  box under 확인 · 수정 re-draws nuclei inside the existing cell ROIs (never
+  changing them), one per cell, with a per-cell threshold (`cn_auto`,
+  `cn_spin` / `cn_slider` follow the selected cell, `CellRois.nuc_thr`).
   - Rule from the owner (2026-10-27, v0.26): the plain manual threshold mode
     (at or above the threshold = ROI, below = discarded, nothing else) must
     always stay, whatever detection algorithms are added later; automatic
@@ -373,4 +376,5 @@ not affected.
 | #68 | 0.50.0 | Owner request: macOS tahoe style of the updated design system (capsule buttons and chips, borderless filled fields, inset groups, accent-pill selection, floating sidebar panel, no dividers); left pane only 자동 그룹 + list (trash glyph per row, context menu with group actions for multi-selection, drop-target empty state); LUT tab one scroll with 일괄 적용 on top; 마커 its own tab; capsule chip tab switcher; zoom / fit icon buttons; one layout grid for every right tab (`theme.unify`); switches only for 자동 / 수동, check boxes / multi-select chips / radio otherwise |
 | #69 | 0.50.1 | Polish after the Mac check: number fields at least as wide as their text (suffix / 제한 없음, up to 118 px), [value][자동] order in every row, preview letterbox = window background (light / dark), no Z / T controls without an image, checkable group titles in label colour, visible edge on colour swatches, more compact tab chips |
 | #70 | 0.51.0 | Owner request: Sidebar, Canvas and Inspector clearly separate regions (own surfaces: side panes `background` / dark `background-tertiary`, canvas `background-secondary`; 1 px dividers, `PaneSplitter`), each with its own inner padding (sidebar 16, canvas 16 / 12, inspector 20 / 16 with a chip header and a divider under it); the floating sidebar panel is gone; status bar with a top divider |
-| this PR | 0.52.0 | Owner request + updated design system (`components/RegionLayout`): regions separated by tone and the sidebar's shade instead of lines (raised sidebar / inspector, recessed canvas, glass variant on macOS), padding 20 per region; fixes the box an info / LUT page painted over the inspector (scroll-area autofill) and the tab chip tool tip with square corners covering the page |
+| #71 | 0.52.0 | Owner request + updated design system (`components/RegionLayout`): regions separated by tone and the sidebar's shade instead of lines (raised sidebar / inspector, recessed canvas, glass variant on macOS), padding 20 per region; fixes the box an info / LUT page painted over the inspector (scroll-area autofill) and the tab chip tool tip with square corners covering the page |
+| this PR | 0.53.0 | 핵 다시 찾기: nuclei re-detected inside the (edited) cell ROIs, cells untouched, one nucleus per cell, each cell its own threshold (자동 = own LUT stretch + Otsu over the cell and a 2 µm ring, or a manual value per cell, live), noise in nucleus-free cells dropped (`cellroi.cell_nucleus`, `CellRois.redetect_nucleus`, `nuc_thr` saved in projects); PRD 24h ref-cell nucleus IoU 0.969 |
