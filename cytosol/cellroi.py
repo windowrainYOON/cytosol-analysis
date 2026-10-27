@@ -61,6 +61,9 @@ class RoiParams:
     min_nucleus_um2: float = 15.0
     max_nucleus_um2: float = 0.0     # 0 = no upper limit
     fit_size: bool = False           # merge / split touching regions to fit the size range
+    neck_cut: bool = False           # cut cells joined to a neighbour by a thin neck
+    neck_max_um: float = 4.0         # widest gap still counted as a neck
+    neck_ratio: float = 2.5          # the part beyond must be this many times wider than the neck
     nucleus_split_um: float = 6.0    # min distance between nucleus centers when splitting
     nucleus_neck_um: float = 1.0     # how much narrower the neck between two touching nuclei must be
     edge_mode: str = 'trim'
@@ -340,6 +343,193 @@ def _join_nuclei(nuclei, lab, radius):
     return out
 
 
+# ---------------------------------------------------------------------------
+# cells joined by a thin neck: cut them apart
+# ---------------------------------------------------------------------------
+
+
+def _geodesic(m, seed):
+    """Distance inside mask m from the seed pixels (inf outside / unreachable)."""
+    from skimage.graph import MCP_Geometric
+    cost = np.where(m, 1.0, np.inf)
+    d, _ = MCP_Geometric(cost).find_costs(np.argwhere(seed & m))
+    d[~m] = np.inf
+    return d
+
+
+def _neck_piece(m, seed, max_neck, ratio, min_piece, step):
+    """The part of m (bool crop) beyond the thinnest neck seen from `seed`:
+    rings of equal distance inside the cell are grown out from the seed (the
+    nucleus); a ring front that has to squeeze through a gap of at most
+    `max_neck` px into a part at least `ratio` times wider than the gap and
+    of at least `min_piece` px is a neck. Returns (piece, distance map, d)
+    of the best neck, or None."""
+    D = _geodesic(m, seed)
+    fin = np.isfinite(D)
+    if not fin.any():
+        return None
+    best = None
+    se = np.ones((3, 3), bool)
+    for d in np.arange(step, D[fin].max() - step, step):
+        inner = fin & (D <= d)
+        beyond = measure.label(fin & (D > d))
+        for r in measure.regionprops(beyond):
+            if r.area < min_piece:
+                continue
+            c = beyond[r.slice] == r.label
+            sl = tuple(slice(max(a.start - 1, 0), a.stop + 1) for a in r.slice)
+            cpad = np.zeros(inner[sl].shape, bool)
+            cpad[tuple(slice(a.start - b.start, a.stop - b.start) for a, b in zip(r.slice, sl))] = c
+            neck = int((cpad & ndi.binary_dilation(inner[sl], se)).sum())
+            if neck > max_neck or neck == 0:
+                continue
+            width = 2 * float(ndi.distance_transform_edt(c).max())
+            if width < ratio * neck:
+                continue
+            score = neck / width
+            if best is None or score < best[0]:
+                piece = np.zeros_like(m)
+                piece[r.slice] = c
+                best = (score, piece, d)
+    if best is None:
+        return None
+    return best[1], D, best[2]
+
+
+def _cut_at_neck(m, piece, D, d, img, band):
+    """Split m into the part with the seed (1) and `piece` (2) along the
+    darkest path in `img` across the neck (within `band` px of ring d)."""
+    markers = np.zeros(m.shape, np.int32)
+    markers[m & ~piece & (D <= d - band)] = 1
+    markers[piece & (D > d + band)] = 2
+    if not (markers == 1).any() or not (markers == 2).any():
+        out = np.where(piece, 2, 1) * m
+        return out.astype(np.int32)
+    v = img[m]
+    lo, hi = np.percentile(v, [2, 98]) if v.size else (0, 1)
+    elev = 1 - np.clip((img - lo) / max(hi - lo, 1e-9), 0, 1)
+    return segmentation.watershed(elev, markers, mask=m)
+
+
+def _concave_cut(m, nucleus, max_neck, ratio, min_piece):
+    """Cut m (bool crop) by the shortest chord between two deep concave
+    points of its outline, when the chord is at most `max_neck` px, both
+    sides are at least `min_piece` px and `ratio` times wider than the chord,
+    and the chord misses the nucleus. Returns the mask of the side without
+    the nucleus (the smaller side when there is none), or None."""
+    pad = np.pad(m, 2)
+    hull = morphology.convex_hull_image(pad)
+    depth = ndi.distance_transform_edt(hull)  # distance to the hull border
+    cont = measure.find_contours(pad.astype(float), 0.5)
+    if not cont:
+        return None
+    c = max(cont, key=len)
+    ci = np.clip(np.round(c).astype(int), 0, np.array(pad.shape) - 1)
+    dep = depth[ci[:, 0], ci[:, 1]]
+    n = len(c)
+    win = max(3, n // 60)
+    cand = [i for i in range(n) if dep[i] >= max(2.0, 0.5 * max_neck / ratio)
+            and dep[i] == dep[max(0, i - win):i + win + 1].max()]
+    if len(cand) < 2:
+        return None
+    nuc = None if nucleus is None else np.pad(nucleus, 2)
+    best = None
+    for a in range(len(cand)):
+        for b in range(a + 1, len(cand)):
+            i, j = cand[a], cand[b]
+            along = min(abs(i - j), n - abs(i - j))
+            chord = float(np.hypot(*(c[i] - c[j])))
+            if chord > max_neck or chord < 1 or along < 3 * chord:
+                continue
+            rr, cc = draw.line(*ci[i], *ci[j])
+            if not pad[rr, cc].mean() > 0.8:
+                continue  # the chord leaves the cell
+            if nuc is not None and nuc[rr, cc].any():
+                continue
+            if best is None or chord < best[0]:
+                best = (chord, rr, cc)
+    if best is None:
+        return None
+    cut = pad.copy()
+    cut[ndi.binary_dilation(_line_mask(pad.shape, best[1], best[2]))] = False
+    cc_ = measure.label(cut, connectivity=1)
+    parts = [r for r in measure.regionprops(cc_) if r.area >= min_piece]
+    if len(parts) < 2:
+        return None
+    parts.sort(key=lambda r: -r.area)
+    a_, b_ = parts[0], parts[1]
+    for r in (a_, b_):
+        if 2 * float(ndi.distance_transform_edt(cc_ == r.label).max()) < ratio * best[0]:
+            return None
+    side = b_
+    if nuc is not None and nuc.any():
+        votes = [int((nuc & (cc_ == r.label)).sum()) for r in (a_, b_)]
+        side = b_ if votes[0] >= votes[1] else a_
+    out = (cc_ == side.label)
+    # give the cut line back to the side it touches
+    out = ndi.binary_dilation(out, np.ones((3, 3), bool), iterations=2) & pad & ~(
+        (cc_ > 0) & (cc_ != side.label))
+    return out[2:-2, 2:-2] & m
+
+
+def _line_mask(shape, rr, cc):
+    out = np.zeros(shape, bool)
+    out[rr, cc] = True
+    return out
+
+
+def cut_necks(lab, nuclei, img, px, p: 'RoiParams', max_rounds=3):
+    """Cut cells joined to a neighbour (whose nucleus was missed) by a thin
+    neck, at work resolution: first the narrowest ring front grown out from
+    the nucleus (cut along the darkest path of `img` there), then the
+    shortest chord between deep concave points of the outline. The cut-off
+    piece becomes a cell of its own (no nucleus). Returns lab (nuclei kept
+    in step)."""
+    lab = lab.copy()
+    max_neck = p.neck_max_um / px
+    min_piece = max(p.min_cell_um2, 20.0) / px ** 2
+    step = max(1.0, 0.5 / px)
+    band = max(1, round(1.0 / px))
+    nxt = int(lab.max()) + 1
+    queue = [int(l) for l in np.unique(lab) if l]
+    rounds = {l: 0 for l in queue}
+    while queue:
+        l = queue.pop()
+        if rounds.get(l, 0) >= max_rounds:
+            continue
+        rounds[l] = rounds.get(l, 0) + 1
+        ys, xs = np.nonzero(lab == l)
+        if len(ys) < 2 * min_piece:
+            continue
+        sl = (slice(max(ys.min() - 2, 0), ys.max() + 3), slice(max(xs.min() - 2, 0), xs.max() + 3))
+        m = lab[sl] == l
+        nm = None if nuclei is None else (nuclei[sl] == l) & m
+        if nm is not None and nm.any():
+            seed = nm
+        else:  # no nucleus: grow from the widest point
+            dist = ndi.distance_transform_edt(m)
+            seed = dist == dist.max()
+        far = None
+        hit = _neck_piece(m, seed, max_neck, p.neck_ratio, min_piece, step)
+        if hit is not None:
+            piece, D, d = hit
+            parts = _cut_at_neck(m, piece, D, d, img[sl], band)
+            far = (parts == 2) & m
+        else:
+            far = _concave_cut(m, nm, max_neck, p.neck_ratio, min_piece)
+        if far is None or far.sum() < min_piece or (m & ~far).sum() < min_piece:
+            continue
+        if nm is not None and (far & nm).any():
+            continue
+        view = lab[sl]
+        view[far] = nxt
+        rounds[nxt] = 0
+        queue += [l, nxt]
+        nxt += 1
+    return lab
+
+
+
 def _largest(mask):
     cc = measure.label(mask)
     if cc.max() <= 1:
@@ -508,6 +698,8 @@ def segment_cells(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
                         min_border=max(3, int(1.5 / wpx)), nuclei=nuclei)
         if nuclei is not None:  # merged cells: one nucleus from the joined pieces
             nuclei = _join_nuclei(nuclei, lab, max(1, round(1.0 / wpx)))
+    if p.neck_cut:
+        lab = cut_necks(lab, nuclei, dens, wpx, p)
     # drop cells outside the size range (and their nuclei)
     for r in measure.regionprops(lab):
         if r.area < min_cell or (max_cell and r.area > max_cell):
@@ -766,6 +958,60 @@ class CellRois:
         for t in targets:
             self.labels[mask & (self.labels == t)] = 0
             self._tidy(t)
+
+    def cut(self, xy, l: int | None = None) -> list[int]:
+        """Split cells along a drawn line ((N, 2) x, y image coordinates):
+        cell l, or every cell the line crosses. The piece with the nucleus
+        (else the largest) keeps the label; the others become new cells, the
+        line itself goes to the nearest piece. Returns the new labels."""
+        xy = np.asarray(xy, float)
+        line = np.zeros(self.shape, bool)
+        h, w = self.shape
+        for (x0, y0), (x1, y1) in zip(xy[:-1], xy[1:]):
+            rr, cc = draw.line(int(np.floor(y0)), int(np.floor(x0)), int(np.floor(y1)), int(np.floor(x1)))
+            ok = (rr >= 0) & (rr < h) & (cc >= 0) & (cc < w)
+            line[rr[ok], cc[ok]] = True
+        line = ndi.binary_dilation(line, np.ones((3, 3), bool))
+        targets = [l] if l else [int(i) for i in np.unique(self.labels[line]) if i > 0]
+        cuts = []
+        for t in targets:
+            m = self.labels == t
+            cc = measure.label(m & ~line, connectivity=1)
+            sizes = np.bincount(cc.ravel())[1:]
+            big = [i + 1 for i, a in enumerate(sizes) if a >= max(10, 0.02 * m.sum())]
+            if len(big) >= 2:
+                cuts.append((t, m, cc, big))
+        if not cuts:
+            return []
+        self._push()
+        new = []
+        nxt = int(self.labels.max()) + 1
+        for t, m, cc, big in cuts:
+            keep = max(big, key=lambda i: (cc == i).sum())
+            if self.nuclei is not None and (self.nuclei == t).any():
+                votes = [int(((cc == i) & (self.nuclei == t)).sum()) for i in big]
+                if max(votes):
+                    keep = big[int(np.argmax(votes))]
+            part = np.zeros(self.shape, np.int32)
+            for i in big:
+                part[cc == i] = i
+            # the line and small crumbs go to the nearest piece
+            _, (iy, ix) = ndi.distance_transform_edt(part == 0, return_indices=True)
+            part = np.where(m, part[iy, ix], 0)
+            for i in big:
+                if i == keep:
+                    continue
+                piece = part == i
+                self.labels[piece] = nxt
+                self.status[nxt] = 'ok'
+                if self.nuclei is not None:
+                    self.nuclei[piece & (self.nuclei == t)] = nxt
+                new.append(nxt)
+                nxt += 1
+            for i in [t] + new:
+                if (self.labels == i).any():
+                    self._tidy(i)
+        return new
 
     def new_cell(self, mask: np.ndarray) -> int:
         """Drawn area becomes a new cell (only where no other cell is)."""

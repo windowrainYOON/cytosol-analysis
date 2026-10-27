@@ -44,6 +44,7 @@ between them. Thresholds you set by hand go into this pipeline as they are.
 | **threshold 영역 미리보기 (노랑: 세포, 파랑: 핵)** | Paint what passes each threshold (yellow: cell, blue: nucleus) on the image; follows the sliders live. |
 | **스무딩** (Smoothing) | Gaussian smoothing of the merged image (default 0.8 µm). |
 | **붙은 세포를 크기 범위에 맞게 나누기 · 합치기** (Fit touching cells to the size range) | Regions larger than the **세포 크기** maximum are cut along the dark valleys between cells into the fewest pieces that fit the range (seeds: distance-map maxima, k-means centres where there are too few; a cell's nucleus stays whole in one piece). Pieces smaller than the minimum are merged with the neighbour across the weakest border, when the merged size fits better (their nuclei are joined). The nucleus size range is fitted the same way. Off by default. |
+| **가는 목으로 붙은 세포 자르기**, **목 폭 ≤** (Cut cells joined by a thin neck, neck width) | For cells joined only at their tips into one ROI (usually because one cell's nucleus was missed). Rings of equal distance inside the cell are grown out from the nucleus; where the ring squeezes through a gap of at most the **neck width** into a part at least 2.5 × wider and at least the minimum cell size, the gap is a neck and the part is cut off along the darkest path of the signal across it. Without such a neck, the shortest line between two deep concave points of the outline is cut under the same conditions. Cut-off parts become new cells without a nucleus. Off by default, neck width 4 µm. |
 
 ### 수동 (threshold) (Manual)
 
@@ -91,6 +92,7 @@ is usually faster).
 | **더하기 (A)** (Add) | Drag a freehand area to add it to the selected cell |
 | **빼기 (S)** (Subtract) | Drag an area to remove it from the selected cell (from all cells when none is selected) |
 | **새 세포 (N)** (New cell) | The drawn area becomes a new cell; with a nucleus channel its nucleus is found inside it |
+| **자르기 (C)** (Cut) | Draw a line to split cells: the selected cell, or every cell the line crosses when none is selected. The piece with the nucleus (else the largest) keeps the number, the others become new cells. The line has to cross the cell completely |
 | **선택 세포 삭제** / `Delete` | Delete the selected cell |
 | **되돌리기** / **다시 실행** | Undo (`Ctrl+Z`) / redo (`Ctrl+Shift+Z`) |
 | **번호 다시 매기기** | Renumber the cells |
@@ -144,7 +146,7 @@ images. How the table, batch measurement and saving work is described in
   fitting (check it with **실시간 미리보기**). Then check
   with **검출용 합성 이미지 보기** that every cell is one solid blob, and
   lower **배경 포화값** (or set the cell threshold by hand) if it is not.
-- Fix the remaining cells by hand with **더하기**, **빼기** and **새 세포**.
+- Fix the remaining cells by hand with **더하기**, **빼기**, **새 세포** and **자르기**. Cells joined at their tips: turn on **가는 목으로 붙은 세포 자르기** or draw a line with **자르기**.
 - If no nucleus is found, the status bar says so and cells are split
   without nuclei.
 - When nothing else works, the **수동 (threshold)** tab takes exactly what is

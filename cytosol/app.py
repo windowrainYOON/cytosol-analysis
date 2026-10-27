@@ -146,7 +146,9 @@ CELL_COLORS = [QColor(c) for c in (
     '#ff5050', '#50c8ff', '#ffb428', '#78ff78', '#ff78ff', '#ffff50', '#50ffd2', '#c896ff',
     '#ff9678', '#96b4ff',
 )]
-LASSO_COLORS = {'add': QColor(80, 255, 120), 'sub': QColor(255, 80, 80), 'new': QColor(80, 220, 255)}
+LASSO_COLORS = {'add': QColor(80, 255, 120), 'sub': QColor(255, 80, 80), 'new': QColor(80, 220, 255),
+                'cut': QColor(255, 220, 60)}
+OPEN_LASSO = {'cut'}  # tools drawn as an open line, not an area
 
 
 def write_csv_rows(path: Path, rows):
@@ -613,7 +615,7 @@ class Canvas(QGraphicsView):
             pen.setCosmetic(True)
             pen.setWidthF(2)
             fill = QColor(col)
-            fill.setAlpha(60)
+            fill.setAlpha(0 if self.roi_tool in OPEN_LASSO else 60)
             self._lasso_item.setPen(pen)
             self._lasso_item.setBrush(fill)
             self._lasso_item.setPath(QPainterPath())
@@ -736,7 +738,13 @@ class Canvas(QGraphicsView):
         if self._lasso is not None:
             p = self.mapToScene(event.position().toPoint())
             self._lasso.append((p.x(), p.y()))
-            self._lasso_item.setPath(polygon_path(np.asarray(self._lasso)))
+            if self.roi_tool in OPEN_LASSO:
+                path = QPainterPath(QPointF(*self._lasso[0]))
+                for x, y in self._lasso[1:]:
+                    path.lineTo(QPointF(x, y))
+            else:
+                path = polygon_path(np.asarray(self._lasso))
+            self._lasso_item.setPath(path)
             return
         super().mouseMoveEvent(event)
 

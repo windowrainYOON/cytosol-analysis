@@ -413,7 +413,17 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
    distance-map maxima or k-means centres, compact watershed; a cell's nucleus
    stays whole in one piece) and regions below the minimum are merged with the
    neighbour across the weakest border when the merged size fits better
-   (`cellroi.fit_sizes`); nuclei are fitted the same way. `자동 (이미지마다
+   (`cellroi.fit_sizes`); nuclei are fitted the same way. With
+   `가는 목으로 붙은 세포 자르기` (`cellroi.cut_necks`), rings of equal geodesic
+   distance are grown out from each cell's nucleus (from the widest point
+   without one); where the front squeezes through a gap of at most `목 폭`
+   into a part ≥ 2.5 × wider and at least the minimum cell size, the part is
+   cut off along the darkest path of the signal across the neck (marker
+   watershed in a band around it); without such a neck, the shortest chord
+   between two deep concave points of the outline (depth from the convex
+   hull) is cut under the same conditions. Cut-off parts become cells
+   without nucleus. The editing tool `자르기 (C)` splits cells along a drawn
+   line (`CellRois.cut`). `자동 (이미지마다
    추정)` gives each image its own range from one detection without limits on
    it: median area ÷ 4 to × 3 for cells (÷ 20 to × 3 for nuclei, which seed the
    cells), widened to the smallest – largest area left by Tukey fences on log
