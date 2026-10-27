@@ -576,6 +576,34 @@ def run(out_dir) -> int:
         tabs = [win.right_tabs.tabText(i) for i in range(win.right_tabs.count())]
         if tabs != ['LUT', '이미지 정보']:
             raise AssertionError(f'tabs at start: {tabs}')
+        # side panes keep their widths: a wider window only widens the preview
+        win.resize(1200, 800)
+        app.processEvents()
+        before = win.main_split.sizes()
+        win.resize(1500, 800)
+        app.processEvents()
+        after = win.main_split.sizes()
+        if after[0] != before[0] or after[2] != before[2] or after[1] <= before[1]:
+            raise AssertionError(f'pane widths on resize: {before} -> {after}')
+        # long image names wrap in the list instead of being cut
+        import types
+
+        from .image_tree import ImageTree
+        tree = ImageTree()
+        tree.resize(200, 300)
+        tree.rebuild([types.SimpleNamespace(label='short', group=''),
+                      types.SimpleNamespace(label='260911.082423.260911.001.PRD+antiRTN4.A1.TP01_very_long',
+                                            group='')])
+        tree.show()
+        app.processEvents()
+        h1, h2 = (tree.visualItemRect(tree.item(r)).height() for r in (0, 1))
+        tree.close()
+        if h2 < 2 * h1 - 8:
+            raise AssertionError(f'long name not wrapped: row heights {h1}, {h2}')
+        # Coloc 2 options flow onto more lines in a narrow pane
+        from .flow import FlowLayout
+        if not win.coloc_panel.findChildren(FlowLayout):
+            raise AssertionError('Coloc 2 options not in a flow layout')
         win.add_files([out / 'selftest.TCF'])
         win.add_files([out / 'selftest.TCF'], explicit=True)
         if len(win.items) != 1:

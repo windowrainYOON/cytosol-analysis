@@ -39,8 +39,23 @@ shared image centre plus an automatic fine registration of at most 2 µm) and
 placed in Z from `3DFL/OffsetZ`. Turn it off to get HT and FL as two separate
 entries. The setting applies to files added afterwards.
 
+## Window layout
+
+The window has three panes: the image list (left), the preview (centre) and
+the tools (right: LUT, 이미지 정보 and the feature tabs).
+
+- The image list and the tools pane keep their width; making the window
+  larger or smaller only changes the preview.
+- Drag the border between two panes to change a pane's width. The widths are
+  remembered for the next start.
+- The contents of a pane follow its width: rows of buttons and check boxes
+  continue on the next line, and a field moves under its label when the
+  row does not fit.
+
 ## Image list
 
+- Long image names wrap onto more lines, so the whole name is always
+  visible.
 - Select several images with `Shift`/`Ctrl` (`⌘`) + click.
 - **목록에서 제거** (Remove from list) or `Delete`: removes the selected images
   from the list (the files are not deleted).

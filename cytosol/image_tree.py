@@ -1,14 +1,88 @@
 """The image list: images grouped under collapsible group folders, addressed
-by row (= index in MainWindow.items) like the plain list it replaces."""
+by row (= index in MainWindow.items) like the plain list it replaces.  Long
+names wrap onto more lines (at word boundaries, else anywhere) so the whole
+name stays visible at any panel width."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QAbstractItemView, QTreeWidget, QTreeWidgetItem
+from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QFont, QPalette, QTextLayout, QTextOption
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QTreeWidget,
+    QTreeWidgetItem,
+)
 
 ROW = Qt.ItemDataRole.UserRole       # image row, on image items
 GROUP = Qt.ItemDataRole.UserRole + 1  # group name, on folder items
+
+
+PAD = 3  # px above / below the text of a row
+BREAK_AFTER = '._-+'  # file-name separators that may end a line
+
+
+def wrap_lines(text: str, font, width: float) -> list[str]:
+    """`text` wrapped to `width` px: at spaces or name separators (. _ - +),
+    or anywhere when one piece is wider than the line."""
+    text = ''.join(c + '\u200b' if c in BREAK_AFTER else c for c in text)
+    layout = QTextLayout(text, font)
+    opt = QTextOption()
+    opt.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+    layout.setTextOption(opt)
+    layout.beginLayout()
+    lines = []
+    while True:
+        line = layout.createLine()
+        if not line.isValid():
+            break
+        line.setLineWidth(max(width, 1.0))
+        lines.append(text[line.textStart():line.textStart() + line.textLength()])
+    layout.endLayout()
+    return lines
+
+
+class WrapDelegate(QStyledItemDelegate):
+    """Draws an item's text over as many lines as the column width needs."""
+
+    def _text_width(self, option, index) -> int:
+        view = self.parent()
+        depth = 0
+        p = index.parent()
+        while p.isValid():
+            depth += 1
+            p = p.parent()
+        indent = view.indentation() * (depth + (1 if view.rootIsDecorated() else 0))
+        return view.viewport().width() - indent - 8
+
+    def sizeHint(self, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        n = len(wrap_lines(opt.text, opt.font, self._text_width(opt, index))) or 1
+        return QSize(10, n * opt.fontMetrics.lineSpacing() + 2 * PAD)
+
+    def paint(self, painter, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        text, opt.text = opt.text, ''
+        style = opt.widget.style() if opt.widget is not None else None
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+        r = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, opt.widget)
+        role = (QPalette.ColorRole.HighlightedText
+                if opt.state & QStyle.StateFlag.State_Selected else QPalette.ColorRole.Text)
+        painter.save()
+        painter.setFont(opt.font)
+        painter.setPen(opt.palette.color(role))
+        fm = opt.fontMetrics
+        lines = wrap_lines(text, opt.font, self._text_width(opt, index))
+        y = r.top() + max((r.height() - len(lines) * fm.lineSpacing()) / 2, 0)
+        for line in lines:
+            painter.drawText(QRectF(r.left() + 2, y, r.width(), fm.lineSpacing()),
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, line)
+            y += fm.lineSpacing()
+        painter.restore()
 
 
 class ImageTree(QTreeWidget):
@@ -20,11 +94,22 @@ class ImageTree(QTreeWidget):
         self.setColumnCount(1)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setExpandsOnDoubleClick(True)
+        # names wrap to the panel width instead of scrolling sideways
+        self.setItemDelegate(WrapDelegate(self))
+        self.setUniformRowHeights(False)
+        self.setTextElideMode(Qt.TextElideMode.ElideNone)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.header().setStretchLastSection(True)
         self._leaves: list[QTreeWidgetItem] = []
         self._collapsed: set[str] = set()
         self.itemCollapsed.connect(lambda n: self._collapsed.add(n.data(0, GROUP)))
         self.itemExpanded.connect(lambda n: self._collapsed.discard(n.data(0, GROUP)))
         self.currentItemChanged.connect(self._current_changed)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if event.size().width() != event.oldSize().width():
+            self.scheduleDelayedItemsLayout()  # row heights follow the new width
 
     def _current_changed(self, item, _prev):
         if item is not None and item.data(0, ROW) is not None:

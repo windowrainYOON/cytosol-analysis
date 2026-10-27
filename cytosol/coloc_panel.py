@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -35,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from .coloc import REGRESSIONS, Coloc2Result, Coloc2Settings, ValueType, d2s, run_coloc2
+from .flow import FlowLayout
 from .lut import item_folder, item_stem
 
 REGIONS = [
@@ -216,18 +216,21 @@ class ColocPanel(QWidget):
         lay.addWidget(data)
 
         opt = QGroupBox('Coloc 2 옵션')
-        ol = QGridLayout(opt)
+        ov = QVBoxLayout(opt)
+        ol = QFormLayout()
+        ol.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.regression = QComboBox()
         self.regression.addItems(REGRESSIONS)
-        ol.addWidget(QLabel('Threshold regression'), 0, 0)
-        ol.addWidget(self.regression, 0, 1)
+        ol.addRow('Threshold regression', self.regression)
+        ov.addLayout(ol)
+        algos = FlowLayout()  # the check boxes follow the pane width
         self.algo = {}
-        for i, (key, text) in enumerate(ALGORITHMS):
+        for key, text in ALGORITHMS:
             b = QCheckBox(text)
             b.setChecked(True)
             self.algo[key] = b
-            ol.addWidget(b, 1 + i // 2, i % 2)
-        r = 1 + (len(ALGORITHMS) + 1) // 2
+            algos.addWidget(b)
+        ov.addLayout(algos)
         self.psf = QSpinBox()
         self.psf.setRange(1, 100)
         self.psf.setValue(3)
@@ -236,14 +239,17 @@ class ColocPanel(QWidget):
         self.nrand = QSpinBox()
         self.nrand.setRange(2, 100000)
         self.nrand.setValue(10)
-        ol.addWidget(QLabel('PSF'), r, 0)
-        ol.addWidget(self.psf, r, 1)
-        ol.addWidget(QLabel('Costes randomisations'), r + 1, 0)
-        ol.addWidget(self.nrand, r + 1, 1)
+        nums = QFormLayout()
+        nums.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        nums.addRow('PSF', self.psf)
+        nums.addRow('Costes randomisations', self.nrand)
+        ov.addLayout(nums)
         self.show_shuffled = QCheckBox('Display Shuffled Images')
         self.show_images = QCheckBox('Display Images in Result')
-        ol.addWidget(self.show_images, r + 2, 0)
-        ol.addWidget(self.show_shuffled, r + 2, 1)
+        shows = FlowLayout()
+        shows.addWidget(self.show_images)
+        shows.addWidget(self.show_shuffled)
+        ov.addLayout(shows)
         self.algo['costes'].toggled.connect(self._costes_toggled)
         lay.addWidget(opt)
 

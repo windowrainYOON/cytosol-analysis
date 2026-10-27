@@ -23,8 +23,15 @@ owner writes in Korean, so reply in Korean.
 
 ## Window structure (v0.26.0)
 
-- **Left**: image list with group folders (`image_tree.py`, `groups.py`),
-  buttons 파일 추가… / 폴더 불러오기… / groups.
+- **Panes** (`MainWindow.main_split`): left and right keep their width
+  (stretch 0, defaults `LEFT_W` / `RIGHT_W`, widths remembered in
+  `QSettings` `layout/*_width`), only the centre grows with the window.
+  Pane contents follow the pane width: `flow.reflow` turns rows of 3+
+  buttons / check boxes of every right tab into `FlowLayout`s and lets form
+  rows wrap; use `FlowLayout` (or word-wrapping labels, `wrapped_check` for a
+  long check box) in new panels instead of wide fixed rows.
+- **Left**: image list with group folders (`image_tree.py`, `groups.py`;
+  long names wrap, `WrapDelegate`), buttons 파일 추가… / 폴더 불러오기… / groups.
 - **Centre**: `Canvas` (QGraphicsView in `app.py`) with the Z slider (left),
   T slider (below), toolbar (영역 확대, 화면 맞춤).
   - Zoom: `Cmd`/`Ctrl` + left-drag up/down (`ZOOM_DRAG_RATE` × sensitivity),
@@ -103,6 +110,7 @@ owner writes in Korean, so reply in Korean.
 | `marker_panel.py` | Scale bar, time stamp, bleach ROI display |
 | `figure.py`, `figure_window.py` | Figure window (image table, insets, scale bars, PNG/TIFF/PDF/SVG) |
 | `groups.py`, `image_tree.py` | Image groups and the grouped image list |
+| `flow.py` | `FlowLayout` and `reflow` (panel rows that follow the pane width) |
 | `project.py` | `.cyproj` project files (see below) |
 | `settings.py` | `QSettings` preferences: mouse sensitivities, recent projects; `SettingsDialog` |
 | `worklog.py` | `WorkLog`, `LoggingStatusBar`, `LogWindow` |
@@ -210,4 +218,5 @@ not affected.
 | #42 | 0.28 | 세포질 ROI: 가는 목으로 붙은 세포 자르기 (geodesic rings from the nucleus + darkest-path cut, else concave-point chord; `cellroi.cut_necks`), 자르기 (C) editing tool (`CellRois.cut`) |
 | #43 | 0.29 | 강도 측정: 핵 → 세포막 등거리 띠 (`radial.py`, relative / µm distance, n bands, per-band intensity + particles, graph with selectable axes, `<name>_bands.csv`) |
 | #44 | 0.29.1 | Neck cut on by default, neck ≤ 6 µm, part beyond ≥ 2 × wider (FV3000 tip-joined cell cut; PRD 24h cell IoU 0.733 → 0.738) |
-| this PR | 0.30 | Nucleus split kept only when the shape says two nuclei (`_split_ok`: notches at both ends, convex pieces / non-convex pair, short cut, centres apart); bean nuclei stay whole (FV3000: 19 split blobs → 7) |
+| #45 | 0.30 | Nucleus split kept only when the shape says two nuclei (`_split_ok`: notches at both ends, convex pieces / non-convex pair, short cut, centres apart); bean nuclei stay whole (FV3000: 19 split blobs → 7) |
+| this PR | 0.31 | Side panes keep their width (only the preview grows, dragged widths remembered), pane contents reflow to the width (`flow.py`), long image names wrap in the list |
