@@ -41,7 +41,10 @@ from .cellroi import (
     CellRois,
     RoiParams,
     ThresholdPreview,
+    cell_nucleus,
+    image_nucleus_levels,
     image_size_range,
+    nucleus_signal,
     merged_preview,
     segment_cells,
     threshold_cells,
@@ -431,6 +434,57 @@ class RoiPanel(QWidget):
         hint.setStyleSheet('color: gray;')
         el.addWidget(hint)
 
+        # nucleus re-detection inside the (edited) cell ROIs: one nucleus per
+        # cell, each cell with its own threshold; the cell ROIs stay as they are
+        self.cn_auto = QCheckBox('자동')
+        self.cn_auto.setChecked(True)
+        self.cn_auto.setToolTip(
+            '켜면 세포마다 자기 ROI(+바깥 2 µm 띠) 안에서 LUT를 따로 늘리고 Otsu로 threshold를 따로 '
+            '정합니다. 칸에는 선택한 세포에 쓰는(쓸) 값이 표시됩니다. 끄면 칸·슬라이더의 값이 선택한 '
+            '세포의 threshold가 되고, 움직이면 그 세포의 핵이 바로 다시 그려집니다.')
+        self.cn_spin = QDoubleSpinBox()
+        self.cn_spin.setRange(-1e9, 1e9)
+        self.cn_spin.setDecimals(2)
+        self.cn_slider = QSlider(Qt.Orientation.Horizontal)
+        self.cn_slider.setRange(0, THR_STEPS)
+        for w in (self.cn_spin, self.cn_slider):
+            w.setEnabled(False)
+        self._cn_range = (0.0, 1.0)
+        self._cn_key = None  # (cells, label) the fields show
+        self._cn_signal = None  # (key, nucleus signal, image levels) of the current image
+        self._cn_undo_key = None  # selection whose manual edit already has an undo step
+        self.cn_auto.toggled.connect(self._cn_auto_toggled)
+        self.cn_spin.valueChanged.connect(self._cn_spin_changed)
+        self.cn_slider.valueChanged.connect(self._cn_slider_changed)
+        self._cn_timer = QTimer(self)
+        self._cn_timer.setSingleShot(True)
+        self._cn_timer.setInterval(120)
+        self._cn_timer.timeout.connect(self._cn_apply_manual)
+        cn_sel = QPushButton('핵 다시 찾기 (선택 세포)')
+        cn_sel.setToolTip('선택한 세포(Shift+클릭으로 여러 개)의 핵을 위 설정(자동 또는 입력한 threshold)으로 '
+                          '세포 ROI 안에서 다시 찾습니다. 세포 ROI는 바뀌지 않습니다.')
+        cn_sel.clicked.connect(self.redetect_selected)
+        cn_all = QPushButton('모든 세포')
+        cn_all.setToolTip('모든 세포의 핵을 다시 찾습니다. 수동 threshold를 정해 둔 세포는 그 값을, '
+                          '나머지는 세포마다 자동 threshold를 씁니다.')
+        cn_all.clicked.connect(self.redetect_all)
+        cn = QGroupBox('핵 다시 찾기 (세포 ROI 안, 세포당 핵 1개)')
+        cl = QFormLayout(cn)
+        note = QLabel('세포 ROI를 고친 뒤 누르세요. 세포 ROI는 그대로 두고, 세포마다 따로 정한 '
+                      'threshold로 그 안에서 핵 하나를 다시 찾습니다.')
+        note.setWordWrap(True)
+        note.setStyleSheet('color: gray;')
+        cl.addRow(note)
+        row = QHBoxLayout()
+        row.addWidget(self.cn_auto)
+        row.addWidget(self.cn_spin, 1)
+        cl.addRow('핵 threshold', row)
+        cl.addRow('', self.cn_slider)
+        row = QHBoxLayout()
+        row.addWidget(cn_sel, 2)
+        row.addWidget(cn_all, 1)
+        cl.addRow(row)
+
         # which ROIs the 세포질 ROI menu writes (menu check items)
         self.save_cell = QAction('저장할 ROI: 세포 전체', self, checkable=True)
         self.save_nuc = QAction('저장할 ROI: 핵', self, checkable=True)
@@ -456,6 +510,7 @@ class RoiPanel(QWidget):
         lay.addWidget(roles)
         lay.addWidget(det)
         lay.addWidget(ed, 1)
+        lay.addWidget(cn)
         lay.addWidget(meas)
         lay.addWidget(self.measure, 1)
 
@@ -1169,10 +1224,18 @@ class RoiPanel(QWidget):
         c = self.cells
         if c is not None:
             px = c.px_um
+            n = int(c.labels.max()) + 1
+            has_nuc = (np.bincount(c.labels[(c.nuclei == c.labels) & (c.labels > 0)], minlength=n) > 0
+                       if c.nuclei is not None else np.zeros(n, bool))
             for l in c.ids():
                 area = int((c.labels == l).sum())
                 a = f'{area * px ** 2:.0f} µm²' if px else f'{area} px'
-                st = STATUS_KO.get(c.status.get(l, 'ok'), '')
+                notes = [STATUS_KO.get(c.status.get(l, 'ok'), '')]
+                if not has_nuc[l]:
+                    notes.append('핵 없음')
+                elif l in c.nuc_thr and not c.nuc_thr[l][1]:
+                    notes.append(f'핵 threshold {c.nuc_thr[l][0]:.2f}')
+                st = ', '.join(x for x in notes if x)
                 e = QListWidgetItem(f'cell{l:03d}   {a}' + (f'   ({st})' if st else ''))
                 e.setData(Qt.ItemDataRole.UserRole, l)
                 self.cell_list.addItem(e)
@@ -1241,6 +1304,7 @@ class RoiPanel(QWidget):
             top = (float((xy[:, 0].min() + xy[:, 0].max()) / 2), float(xy[:, 1].min()))
             self._hover[l] = ('\n'.join(lines), top)
         self.win.canvas.show_cells(shapes, 0 if live else (self.selection() or self.selected))
+        self._cn_sync()
 
     @staticmethod
     def _area_text(px, px_um):
@@ -1392,6 +1456,128 @@ class RoiPanel(QWidget):
             traceback.print_exc()
             found = False
         return ', 핵 자동 검출' if found else ', 핵을 찾지 못함'
+
+    # ---- nucleus re-detection per cell -----------------------------------
+
+    def _cn_data(self):
+        """(nucleus signal, image levels) of the current image's nucleus
+        channel, cached; None without a nucleus channel."""
+        it = self.item
+        ch = self.roles(it)['nuc'] if it is not None else None
+        if ch is None:
+            return None
+        key = (id(it), id(it.planes()), it.z, it.image.t, ch)
+        if self._cn_signal is None or self._cn_signal[0] != key:
+            px = (it.cells.px_um if it.cells is not None else None) or it.pixel_um or 0.1
+            s = nucleus_signal(it.planes()[ch], px)
+            self._cn_signal = (key, s, image_nucleus_levels(s))
+        return self._cn_signal[1:]
+
+    def _cn_show(self, value):
+        lo, hi = self._cn_range
+        self.cn_spin.blockSignals(True)
+        self.cn_slider.blockSignals(True)
+        self.cn_spin.setValue(value)
+        self.cn_slider.setValue(int(round((value - lo) / max(hi - lo, 1e-9) * THR_STEPS)))
+        self.cn_spin.blockSignals(False)
+        self.cn_slider.blockSignals(False)
+
+    def _cn_sync(self, force=False):
+        """Show the selected cell's nucleus threshold: the one it was
+        re-detected with, else the automatic one it would get."""
+        c, l = self.cells, self.selected
+        key = (id(c), l)
+        if key == self._cn_key and not force:
+            return
+        self._cn_key = key
+        self._cn_undo_key = None
+        sl = c.cell_window(l) if c is not None and l else None
+        data = self._cn_data() if sl is not None else None
+        if data is None:
+            return
+        s, levels = data
+        cell = c.labels[sl] == l
+        v = s[sl][cell]
+        self._cn_range = (float(v.min()), float(np.percentile(v, 99.9)))
+        if l in c.nuc_thr:
+            t, auto = c.nuc_thr[l]
+        else:
+            t, auto = cell_nucleus(s[sl], cell, c.px_um or 0.1, None, levels)[1], True
+        self.cn_auto.blockSignals(True)
+        self.cn_auto.setChecked(auto)
+        self.cn_auto.blockSignals(False)
+        for w in (self.cn_spin, self.cn_slider):
+            w.setEnabled(not auto)
+        if t is not None:
+            self._cn_show(t)
+
+    def _cn_auto_toggled(self, on):
+        for w in (self.cn_spin, self.cn_slider):
+            w.setEnabled(not on)
+        if on and self.selection():  # back to each cell's own automatic threshold
+            self.redetect_selected()
+
+    def _cn_spin_changed(self, value):
+        self._cn_show(value)
+        self._cn_timer.start()
+
+    def _cn_slider_changed(self, v):
+        lo, hi = self._cn_range
+        self.cn_spin.setValue(lo + v / THR_STEPS * (hi - lo))
+
+    def _cn_apply_manual(self):
+        """The threshold field / slider moved: re-draw the selected cells' nuclei."""
+        if self.cn_auto.isChecked() or not self.selection():
+            return
+        sel = tuple(sorted(self.selection()))
+        if self._cn_undo_key != (id(self.cells), sel):  # one undo step per cell being tuned
+            self.cells._push()
+            self._cn_undo_key = (id(self.cells), sel)
+        self._redetect(sel, self.cn_spin.value(), push=False)
+
+    def _redetect(self, ids, threshold=None, thresholds=None, push=True):
+        """Re-detect the nuclei of cells ids; threshold: one value for all
+        (None: automatic), thresholds: per cell (overrides threshold)."""
+        c = self.cells
+        data = self._cn_data()
+        if c is None or not ids:
+            return
+        if data is None:
+            self.status('핵 채널을 먼저 정하세요 (채널 역할).')
+            return
+        s, levels = data
+        if push:
+            c._push()
+        thresholds = thresholds or {}
+        none = [l for l in ids
+                if not c.redetect_nucleus(l, s, thresholds.get(l, threshold), levels)]
+        names = ', '.join(f'cell{l:03d}' for l in ids) if len(ids) <= 5 else f'{len(ids)}개 세포'
+        how = '세포마다 자동 threshold' if threshold is None and not thresholds else \
+            (f'threshold {threshold:.2f}' if not thresholds else '수동 threshold는 그 값, 나머지 자동')
+        msg = f'{names} 핵 다시 찾음 ({how}, 세포 ROI는 그대로)'
+        if none:
+            msg += '; 핵 없음: ' + ', '.join(f'cell{l:03d}' for l in none)
+        self.status(msg)
+        self.refresh_list()
+        self.draw_overlay()
+        self._cn_sync(force=True)
+
+    def redetect_selected(self):
+        sel = sorted(self.selection())
+        if self.cells is None or not sel:
+            self.status('핵을 다시 찾을 세포를 클릭해 고르세요 (Shift+클릭으로 여러 개).')
+            return
+        self._cn_undo_key = None
+        self._redetect(sel, None if self.cn_auto.isChecked() else self.cn_spin.value())
+
+    def redetect_all(self):
+        c = self.cells
+        if c is None or not len(c):
+            self.status('먼저 ROI를 검출하거나 불러오세요.')
+            return
+        self._cn_undo_key = None
+        manual = {l: t for l, (t, auto) in c.nuc_thr.items() if not auto}
+        self._redetect(c.ids(), thresholds=manual)
 
     def delete_selected(self):
         c, sel = self.cells, self.selection()

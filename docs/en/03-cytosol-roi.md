@@ -114,7 +114,24 @@ Hovering over a ROI shows its name and area above it (`cellNNN`, and
 `nucNNN` / `cytoNNN` when it has a nucleus), also on the live preview.
 
 The cell list shows each cell's area and whether it was cut at the frame
-(**프레임 안쪽으로 자름**) or touches it (**프레임에 걸침**).
+(**프레임 안쪽으로 자름**) or touches it (**프레임에 걸침**), has no nucleus
+(**핵 없음**) or has a nucleus threshold set by hand (**핵 threshold value**).
+
+### 핵 다시 찾기 (Re-detect nuclei inside the cell ROIs, one per cell)
+
+Use this box after editing the cells. The cell ROIs stay as they are; inside
+each cell, **one** nucleus is found again with **the cell's own threshold**.
+
+| Item | Description |
+|---|---|
+| **핵 threshold** · **자동** | On: every cell gets its own LUT stretch (1st – 99.5th percentile of the cell plus a 2 µm outer ring) and its own Otsu threshold; the field shows the value used (or to be used) for the selected cell. Off: the field / slider value is the threshold of the selected cell(s) (Shift+click for several), and moving it re-draws their nuclei at once (one undo step brings them back). Selecting a cell sets the check box and value to that cell's setting. |
+| **핵 다시 찾기 (선택 세포)** | Re-detect the nuclei of the selected cells with the setting above (automatic or the value entered). |
+| **모든 세포** (All cells) | Re-detect every cell's nucleus: cells with a manual threshold keep it, the others get their own automatic threshold. |
+
+Inside the cell, pieces above the threshold closer than 2 µm are joined and
+the piece with the most signal becomes the nucleus. An automatic result about
+as dark as the image background (noise in a cell piece without a nucleus) is
+left as no nucleus. The threshold of each cell is saved in the project.
 
 ## 4. ImageJ ROI 파일 (ImageJ ROI files)
 
