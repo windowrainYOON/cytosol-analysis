@@ -191,6 +191,65 @@ def _local_nuclei(s, thr, px_um, p: RoiParams) -> np.ndarray:
     return out
 
 
+def image_nucleus_levels(s: np.ndarray) -> tuple[float, float]:
+    """(Otsu threshold, background) of a whole nucleus-signal plane: the
+    scale a single cell's nucleus is judged on."""
+    thr = float(filters.threshold_otsu(s))
+    below = s[s < thr]
+    return thr, float(np.median(below)) if below.size else float(s.min())
+
+
+def cell_nucleus(s: np.ndarray, cell: np.ndarray, px_um: float, threshold: float | None = None,
+                 levels: tuple[float, float] | None = None, p: RoiParams = RoiParams(),
+                 ring_um: float = 2.0, min_level: float = 0.2) -> tuple[np.ndarray, float | None]:
+    """The one nucleus inside a fixed cell mask, on the cell's own contrast.
+
+    s: nucleus signal (`nucleus_signal`) of a crop holding the cell with a
+    margin; cell: the cell's mask in that crop. The threshold is the cell's
+    own: with threshold None its window (the cell plus a ring_um outer ring,
+    so a cell that is nearly all nucleus still has background) is stretched
+    from its 1st percentile to the cell's 99.5th (its own LUT) and Otsu-
+    thresholded there (held within 15 - 60 % of the stretch, as
+    `_local_nuclei`); a given threshold (raw units) is used as it is. Pieces
+    above it inside the cell are opened, joined across gaps < nucleus_gap_um
+    and filled; the piece with the most signal above the threshold is the
+    nucleus. An automatic result whose median stands less than min_level of
+    the image's background → threshold step (`levels`) above the background
+    is noise in a cell without a nucleus and is dropped.
+    Returns (mask, threshold used); the mask is empty when there is none."""
+    empty = np.zeros(cell.shape, bool)
+    if not cell.any():
+        return empty, threshold
+    if threshold is None:
+        win = ndi.binary_dilation(cell, iterations=max(1, round(ring_um / px_um)))
+        lo = float(np.percentile(s[win], 1))
+        hi = float(np.percentile(s[cell], 99.5))
+        lut = np.clip((s[win] - lo) / max(hi - lo, 1e-9), 0, 1)
+        try:
+            t01 = float(filters.threshold_otsu(lut))
+        except ValueError:
+            t01 = p.nuc_local_k
+        threshold = lo + min(max(t01, 0.15), 0.6) * (hi - lo)
+        auto = True
+    else:
+        auto = False
+    m = (s > threshold) & cell
+    m = ndi.binary_opening(m, morphology.disk(max(1, round(0.4 / px_um))))
+    r = max(1, round(p.nucleus_gap_um / 2 / px_um))
+    m = (ndi.binary_closing(np.pad(m, r + 1), morphology.disk(r))[r + 1:-r - 1, r + 1:-r - 1] | m) & cell
+    m = ndi.binary_fill_holes(m) & cell
+    cc = measure.label(m)
+    if cc.max() == 0:
+        return empty, float(threshold)
+    weight = ndi.sum(np.clip(s - threshold, 0, None), cc, np.arange(1, cc.max() + 1))
+    m = cc == int(np.argmax(weight)) + 1
+    if auto and levels is not None:
+        thr, bg = levels
+        if (float(np.median(s[m])) - bg) < min_level * max(thr - bg, 1e-9):
+            return empty, float(threshold)
+    return m, float(threshold)
+
+
 def segment_nuclei(nuc: np.ndarray, px_um: float, p: RoiParams) -> np.ndarray:
     s = nucleus_signal(nuc, px_um)
     thr = nucleus_threshold(s, p)
@@ -991,6 +1050,8 @@ class CellRois:
     # thresholds the detection used, in raw channel values
     nuc_threshold: float | None = None
     cell_threshold: float | None = None
+    # nucleus re-detected per cell (redetect_nucleus): label -> (threshold, automatic)
+    nuc_thr: dict = field(default_factory=dict)
     _undo: list = field(default_factory=list, repr=False)
     _redo: list = field(default_factory=list, repr=False)
     max_undo: int = 30
@@ -1055,6 +1116,7 @@ class CellRois:
         if self.nuclei is not None:
             self.nuclei[self.nuclei == l] = 0
         self.status.pop(l, None)
+        self.nuc_thr.pop(l, None)
 
     # ---- editing -------------------------------------------------------
 
@@ -1271,6 +1333,46 @@ class CellRois:
         self.nuclei[y0:y1, x0:x1][m] = l
         return True
 
+    def cell_window(self, l: int, margin_um: float = 3.0):
+        """Slices of the box around cell l with a margin (None: no such cell)."""
+        ys, xs = np.nonzero(self.labels == l)
+        if not ys.size:
+            return None
+        pad = max(4, int(round(margin_um / (self.px_um or 0.1))))
+        return (slice(max(ys.min() - pad, 0), ys.max() + pad + 1),
+                slice(max(xs.min() - pad, 0), xs.max() + pad + 1))
+
+    def redetect_nucleus(self, l: int, s: np.ndarray, threshold: float | None = None,
+                         levels: tuple[float, float] | None = None,
+                         p: RoiParams = RoiParams()) -> bool:
+        """Replace the nucleus of cell l by `cell_nucleus` run inside the cell
+        (the cell ROI is not changed; no undo step). s: the nucleus signal of
+        the whole plane (`nucleus_signal`); threshold None = the cell's own
+        automatic threshold. The threshold used is kept in nuc_thr[l]."""
+        sl = self.cell_window(l)
+        if sl is None:
+            return False
+        m, used = cell_nucleus(s[sl], self.labels[sl] == l, self.px_um or 0.1, threshold, levels, p)
+        if self.nuclei is None:
+            self.nuclei = np.zeros(self.shape, np.int32)
+        self.nuclei[self.nuclei == l] = 0
+        self.nuclei[sl][m] = l
+        self.nuc_thr[l] = (used, threshold is None)
+        return bool(m.any())
+
+    def redetect_nuclei(self, nuc: np.ndarray, ids=None, thresholds: dict | None = None,
+                        p: RoiParams = RoiParams()) -> dict:
+        """Re-detect the nucleus of every cell in ids (all cells: None) in a
+        nucleus-channel plane, each with its own threshold (thresholds[l],
+        else automatic). One undo step. Returns {label: found}."""
+        px = self.px_um or 0.1
+        s = nucleus_signal(nuc, px)
+        levels = image_nucleus_levels(s)
+        self._push()
+        thresholds = thresholds or {}
+        return {l: self.redetect_nucleus(l, s, thresholds.get(l), levels, p)
+                for l in (self.ids() if ids is None else ids)}
+
     def delete(self, l):
         """Delete cell l (or a list of cells, one undo step)."""
         self._push()
@@ -1296,6 +1398,7 @@ class CellRois:
         if self.nuclei is not None:
             self.nuclei = lut[np.clip(self.nuclei, 0, len(lut) - 1)] * (self.nuclei > 0)
         self.status = {int(lut[o]): s for o, s in self.status.items() if o < len(lut) and lut[o]}
+        self.nuc_thr = {int(lut[o]): t for o, t in self.nuc_thr.items() if o < len(lut) and lut[o]}
 
     # ---- geometry ------------------------------------------------------
 

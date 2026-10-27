@@ -80,7 +80,10 @@ owner writes in Korean, so reply in Korean.
   `RoiParams` default). Editing: Shift+click (`Canvas.cellShiftClicked`)
   builds a multi-selection (`RoiPanel.selection()`), 합치기 (M) joins it
   (`CellRois.merge`, bridges gaps ≤ 3 µm), Option/Alt+drag with 선택 draws a
-  cut line (`Canvas.roi_edit_active`, `_lasso_tool`).
+  cut line (`Canvas.roi_edit_active`, `_lasso_tool`). The **핵 다시 찾기**
+  box under 확인 · 수정 re-draws nuclei inside the existing cell ROIs (never
+  changing them), one per cell, with a per-cell threshold (`cn_auto`,
+  `cn_spin` / `cn_slider` follow the selected cell, `CellRois.nuc_thr`).
   - Rule from the owner (2026-10-27, v0.26): the plain manual threshold mode
     (at or above the threshold = ROI, below = discarded, nothing else) must
     always stay, whatever detection algorithms are added later; automatic
@@ -229,4 +232,5 @@ not affected.
 | #45 | 0.30 | Nucleus split kept only when the shape says two nuclei (`_split_ok`: notches at both ends, convex pieces / non-convex pair, short cut, centres apart); bean nuclei stay whole (FV3000: 19 split blobs → 7) |
 | #46 | 0.31 | Wedge-shaped cell ROIs around dim nuclei fixed: nucleus patches < 2 µm apart are joined before splitting (`nucleus_gap_um`), auto size range gets 10 % slack; 자동 checkbox per value (cell / nucleus size separately, smoothing, neck, margin), all on and filled when an image is picked; Shift+click multi-select, 합치기 (M), Option+drag cut |
 | #48 | 0.32 | Nucleus outline per seed: own LUT stretch + own Otsu threshold (`_local_nuclei`), dim nuclei kept when compact with a sharp edge; FV3000 dim nuclei found, PRD 24h cell IoU 0.733 |
-| this PR | 0.33 | Side panes keep their width (only the preview grows, dragged widths remembered), pane contents reflow to the width (`flow.py`), long image names wrap in the list |
+| #47 | 0.33 | Side panes keep their width (only the preview grows, dragged widths remembered), pane contents reflow to the width (`flow.py`), long image names wrap in the list |
+| this PR | 0.34 | 핵 다시 찾기: nuclei re-detected inside the (edited) cell ROIs, cells untouched, one nucleus per cell, each cell its own threshold (자동 = own LUT stretch + Otsu over the cell and a 2 µm ring, or a manual value per cell, live), noise in nucleus-free cells dropped (`cellroi.cell_nucleus`, `CellRois.redetect_nucleus`, `nuc_thr` saved in projects); PRD 24h ref-cell nucleus IoU 0.969 |

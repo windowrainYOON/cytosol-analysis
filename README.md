@@ -12,6 +12,9 @@ feature is added; keep the bracketed words only when the 입자 ROI tab's
 **강도 측정 ROI** was set to **등강도선 ROI**, and change 50% to the
 **레벨** used):
 
+> Where nuclei were re-defined inside edited cell ROIs, each cell's single
+> nucleus was segmented with its own Otsu threshold (as in ImageJ's Auto
+> Threshold) on the cell's own intensity range.
 > Line intensity profiles, per-cell colocalization (Pearson's, Spearman's
 > and Kendall's correlations, Manders' coefficients with Costes' automatic
 > threshold, Li's ICQ and Costes' significance test), and mean intensities of
@@ -476,6 +479,23 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
    middle-button drag pans in any tool (right-button too on images without T
    or Z). A cell is always one filled piece
    (ImageJ polygon ROIs cannot have holes), so cut from its border.
+   **핵 다시 찾기** box (`CellRois.redetect_nucleus`, `cellroi.cell_nucleus`):
+   after editing the cells, re-draws the nuclei inside them without touching
+   the cell ROIs, one nucleus per cell, each cell with its own threshold.
+   `자동`: the cell plus a 2 µm outer ring (so a cell that is nearly all
+   nucleus still has background) is stretched from its 1st percentile to the
+   cell's 99.5th (the cell's own LUT) and Otsu-thresholded there (held within
+   15 – 60 % of the stretch); manual: the value in the field / slider (raw
+   nucleus-channel units, lightly smoothed), applied live to the selected
+   cells. Inside the cell, pieces above the threshold are opened, joined
+   across gaps < 2 µm and filled; the piece with the most signal above the
+   threshold is the nucleus. An automatic result whose median is less than
+   0.2 of the image's background → Otsu step above the background is noise
+   in a cell without a nucleus (marked `핵 없음` in the list). The threshold
+   used is kept per cell (`CellRois.nuc_thr`, saved in projects); `모든 세포`
+   keeps the manual ones and runs the rest automatically. Validation: PRD 24h
+   reference cells, nucleus IoU 0.969 (detection 0.972); FV3000 260720 set,
+   451 cells, dim nuclei found whole, the 12 nucleus-free cell pieces left without one.
 4. **ImageJ ROI 파일** (세포질 ROI menu): `ROI 저장 (현재 이미지)…` writes a RoiSet `.zip` (ROI Manager › Open)
    or, when saved as `.roi`, one `.roi` file per ROI. Per cell: `cellNNN`
    (whole cell polygon), `nucNNN` (nucleus polygon) and `cytoNNN` (cell minus

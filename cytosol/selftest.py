@@ -241,7 +241,40 @@ def run(out_dir) -> int:
         got = segment_nuclei(img, 0.2, RoiParams()).max()
         if got != 4:
             raise AssertionError(f'dim nucleus: {got} nuclei, expected 4')
+        # nucleus re-detected inside fixed cell ROIs: one nucleus per cell, each
+        # cell its own threshold (a dim and a bright nucleus), the cells unchanged
+        yy, xx = np.mgrid[0:200, 0:400]
+        cells = np.zeros(yy.shape, np.int32)
+        cells[20:180, 10:190] = 1
+        cells[20:180, 210:390] = 2
+        sig = np.full(yy.shape, 100.0)
+        sig[(yy - 100) ** 2 + (xx - 100) ** 2 < 35 ** 2] = 2000   # bright
+        sig[(yy - 100) ** 2 + (xx - 300) ** 2 < 35 ** 2] = 300    # dim
+        sig[(yy - 100) ** 2 + (xx - 150) ** 2 < 4 ** 2] = 2000    # speck, not a second nucleus
+        sig = _ndi.gaussian_filter(sig, 1.5) + np.random.default_rng(1).normal(0, 10, yy.shape)
+        cr = CellRois(cells.copy(), None, 0.2)
+        found = cr.redetect_nuclei(sig)
+        disc = np.pi * 35 ** 2
+        for l in (1, 2):
+            n = cr.nuclei == l
+            from skimage.measure import label as _lab
+            if not found[l] or _lab(n).max() != 1 or not 0.8 < n.sum() / disc < 1.2:
+                raise AssertionError(f'cell nucleus {l}: found {found[l]}, {_lab(n).max()} pieces, '
+                                     f'{n.sum() / disc:.2f} of the disc')
+        if not np.array_equal(cr.labels, cells) or not cr.nuc_thr[1][0] > cr.nuc_thr[2][0]:
+            raise AssertionError(f'cell nucleus: cells changed or thresholds {cr.nuc_thr}')
+        cr.redetect_nuclei(sig, [2], {2: 1e6})  # manual threshold above the signal: no nucleus
+        if (cr.nuclei == 2).any() or cr.nuc_thr[2] != (1e6, False):
+            raise AssertionError('manual per-cell nucleus threshold not used')
+        cr.undo()
+        if not (cr.nuclei == 2).any():
+            raise AssertionError('nucleus re-detection not undone')
+        empty = CellRois(cells.copy(), None, 0.2)
+        if any(empty.redetect_nuclei(np.where(cells == 2, 100.0, sig)
+                                     + np.random.default_rng(2).normal(0, 10, yy.shape), [2]).values()):
+            raise AssertionError('noise in a cell without a nucleus taken as its nucleus')
         # manual cut line
+        yy, xx = np.mgrid[0:300, 0:400]
         cr = CellRois(two.astype(np.int32), one_nuc.copy(), 0.2)
         new = cr.cut([(200, 120), (200, 180)])
         if len(new) != 1 or len(cr) != 2 or (cr.nuclei == 1).sum() != (one_nuc > 0).sum():
@@ -252,7 +285,8 @@ def run(out_dir) -> int:
         if len(cr) != 1:
             raise AssertionError('manual cut not undone')
         return (f'touching cells 1 -> 2 ({a[0]:.0f}, {a[1]:.0f} µm²), manual threshold ROI, '
-                'neck cut, manual cut line, nucleus split by shape, dim nucleus')
+                'neck cut, manual cut line, nucleus split by shape, dim nucleus, '
+                'nucleus per cell (own threshold)')
 
     def coloc2():
         from .coloc import Coloc2Settings, ValueType, run_coloc2
@@ -1039,6 +1073,29 @@ def run(out_dir) -> int:
         rp.undo()
         if len(own.cells) != n0:
             raise AssertionError('합치기 / 자르기 not undone')
+        # 핵 다시 찾기: cell ROIs untouched, one nucleus per cell; a manual
+        # threshold for one cell is kept by 모든 세포
+        before = own.cells.labels.copy()
+        rp.redetect_all()
+        c = own.cells
+        if not np.array_equal(c.labels, before) or set(c.nuc_thr) != set(c.ids()):
+            raise AssertionError('핵 다시 찾기 changed the cell ROIs or skipped cells')
+        from skimage.measure import label as _lab
+        if any(_lab(c.nuclei == l).max() > 1 for l in c.ids()):
+            raise AssertionError('핵 다시 찾기: a cell got more than one nucleus piece')
+        a = c.ids()[0]
+        rp.select(a)
+        if not rp.cn_auto.isChecked() or abs(rp.cn_spin.value() - c.nuc_thr[a][0]) > 0.01:
+            raise AssertionError('핵 threshold field does not show the selected cell\'s value')
+        rp.cn_auto.setChecked(False)
+        rp.cn_spin.setValue(c.nuc_thr[a][0] * 1.2)
+        rp._cn_apply_manual()
+        rp.redetect_all()
+        if c.nuc_thr[a][1] or abs(c.nuc_thr[a][0] - rp.cn_spin.value()) > 0.01:
+            raise AssertionError(f'manual nucleus threshold of cell {a} not kept: {c.nuc_thr[a]}')
+        rp.cn_auto.setChecked(True)  # back to automatic for the selected cell
+        if not c.nuc_thr[a][1]:
+            raise AssertionError('자동 not restored for the selected cell')
         rp.select(0)
         rp.min_cell.setValue(80)
         rp.max_cell.setValue(0)
