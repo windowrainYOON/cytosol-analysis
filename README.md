@@ -394,8 +394,9 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
    Cells cut by the image frame are, by default, cut again along a new border
    `안쪽 경계 여백` inside the frame, so no ROI runs along the frame
    (`제외` drops them, `그대로 두기` keeps them as they are).
-   **핵 threshold / 세포 threshold**: by default Otsu picks them; tick `수동` to
-   set either by hand (spin box or slider), starting from the automatic value.
+   **핵 threshold / 세포 threshold**: by default Otsu picks them (`자동` ticked,
+   the value in use shown in the field); untick `자동` to set either by hand
+   (spin box or slider). `배경 포화값` works the same way.
    The nucleus threshold is in nucleus-channel values (lightly smoothed), the
    cell threshold in background-channel values (cells brighter, gaps darker;
    keep it below `배경 포화값`). `threshold 영역 미리보기` paints what passes
@@ -403,6 +404,27 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
    the sliders live while you drag them; changing a manual threshold turns it on.
    The values used are shown after detection. `모든 이미지` runs the
    same settings on every loaded image, matching channels by name.
+   The status bar also gives the detection time (about 0.7 s for a
+   1024 × 1024 two-channel image).
+   **Size ranges** `세포 크기` / `핵 크기` (min – max, with log-scale sliders;
+   max 0 = no limit): cells and nuclei outside them are dropped. With
+   `붙은 세포를 크기 범위에 맞게 나누기 · 합치기`, regions above the maximum are cut
+   along the cell-cell valleys into the fewest pieces that fit (seeds at
+   distance-map maxima or k-means centres, compact watershed; a cell's nucleus
+   stays whole in one piece) and regions below the minimum are merged with the
+   neighbour across the weakest border when the merged size fits better
+   (`cellroi.fit_sizes`); nuclei are fitted the same way. `자동 (모든 이미지에서
+   추정)` fills the ranges with the smallest – largest cell / nucleus found on
+   all images by one detection without limits, after Tukey fences on log area
+   (`cellroi.size_range`).
+   **수동 (threshold)** sub-tab: the plain manual mode, kept whatever else is
+   added: connected areas at or above the cell threshold are the cells (holes
+   filled), the largest area at or above the nucleus threshold inside each is
+   its nucleus; only the size ranges and frame handling apply
+   (`cellroi.threshold_cells`).
+   `실시간 미리보기` reruns the detection in the background after every change
+   and draws the result as dashed ROIs; `ROI 검출` keeps it. Hovering over a
+   ROI shows its name and area above it.
 3. **확인 · 수정**: click a cell to select it (or pick it in the list). With
    `더하기 (A)` / `빼기 (S)` drag a freehand area to add it to or remove it from
    the selected cell; `새 세포 (N)` turns the drawn area into a new cell and,

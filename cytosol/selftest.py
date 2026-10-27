@@ -15,6 +15,12 @@ from pathlib import Path
 import numpy as np
 
 
+def ndi_fill(m):
+    from scipy import ndimage
+
+    return ndimage.binary_fill_holes(m)
+
+
 def _synthetic_item():
     from .io import Image
     from .lut import ImageItem
@@ -173,6 +179,33 @@ def run(out_dir) -> int:
         item.cells = rois
         rois.save(out / 'selftest_RoiSet.zip', properties=item.id_properties())
         return f'{len(rois)} cells'
+
+    def cell_size_range():
+        from .cellroi import RoiParams, segment_cells, size_range, threshold_cells
+        yy, xx = np.mgrid[0:256, 0:256]
+        bg = np.full((256, 256), 5, np.float32)
+        nuc = np.zeros_like(bg)
+        for cy, cx in ((128, 95), (128, 160)):  # two touching cells
+            bg[(yy - cy) ** 2 + (xx - cx) ** 2 < 45 ** 2] = 60
+            nuc[(yy - cy) ** 2 + (xx - cx) ** 2 < 14 ** 2] = 1000
+        bg += np.random.default_rng(0).normal(0, 3, bg.shape).astype(np.float32)
+        one = segment_cells(bg, None, 0.2)
+        two = segment_cells(bg, None, 0.2, RoiParams(fit_size=True, min_cell_um2=120,
+                                                     max_cell_um2=300))
+        if len(one) != 1 or len(two) != 2:
+            raise AssertionError(f'size fit: {len(one)} -> {len(two)} cells (want 1 -> 2)')
+        a = [m['cell_area_um2'] for m in two.measurements()]
+        if not all(120 <= x <= 300 for x in a):
+            raise AssertionError(f'split cells outside the range: {a}')
+        # manual mode: at or above the threshold is the ROI, nothing else
+        man = threshold_cells(bg, nuc, 0.2, 30, 500, RoiParams(min_cell_um2=5))
+        if len(man) != 1 or (man.labels > 0).sum() != ndi_fill(bg >= 30).sum():
+            raise AssertionError('manual threshold ROI is not the area >= threshold')
+        if not len(threshold_cells(bg, nuc, 0.2, 30, None, RoiParams(max_cell_um2=400))) == 0:
+            raise AssertionError('manual mode ignored the maximum cell size')
+        if size_range([100, 120, 130, 140, 150, 5000]) != (100.0, 150.0):
+            raise AssertionError(f'size_range outlier: {size_range([100, 120, 130, 140, 150, 5000])}')
+        return f'touching cells 1 -> 2 ({a[0]:.0f}, {a[1]:.0f} µm²), manual threshold ROI'
 
     def coloc2():
         from .coloc import Coloc2Settings, ValueType, run_coloc2
@@ -826,6 +859,54 @@ def run(out_dir) -> int:
         cm.refresh(force=True)
         if len(cm.rows) != 3 * len(own.cells):
             raise AssertionError(f'cell intensity rows {len(cm.rows)} for {len(own.cells)} cells')
+        # 세포질 ROI: hover label, 자동 fields hold the values in use, 수동 mode,
+        # size range estimated from every image
+        rp = win.roi_panel
+        rp.draw_overlay()
+        l1 = own.cells.ids()[0]
+        hx, hy = own.cells.centroid(l1)
+        info = rp.hover_info(hx, hy)
+        if not info or not info[0].startswith(f'cell{l1:03d}') or 'µm²' not in info[0]:
+            raise AssertionError(f'ROI hover label: {info}')
+        rp.show_auto_values(own)
+        if not rp.sat_auto.isChecked() or rp.sat.value() <= 0 or rp.sat.isEnabled():
+            raise AssertionError('automatic saturation not shown in its field')
+        auto_thr = rp._auto_thresholds(own)['cell']
+        if abs(rp.thr['cell']['spin'].value() - auto_thr) > 0.01:
+            raise AssertionError('automatic cell threshold not shown in its field')
+        rp.mode_tabs.setCurrentIndex(1)
+        rp.man['cell']['spin'].setValue(30)
+        man = rp._detect(own, rp.roles(own))
+        if (man.labels > 0).sum() != ndi_fill(own.planes()[rp.roles(own)['bg']] >= 30).sum():
+            raise AssertionError('수동 mode is not "at or above the threshold"')
+        rp.mode_tabs.setCurrentIndex(0)
+        # live preview: a background detection drawn instead of the ROIs
+        import time as _time
+        rp.live.setChecked(True)
+        rp._live_timer.stop()
+        rp._live_start()
+        t_end = _time.time() + 30
+        while rp._live is None and _time.time() < t_end:
+            app.processEvents()
+            _time.sleep(0.02)
+        if rp._live is None or rp._hover_rois is not rp._live[1]:
+            raise AssertionError('live preview did not show a detection')
+        rp.min_cell.setValue(120)  # a slider under the field follows it
+        if rp._size_sliders[rp.min_cell].value() <= 0:
+            raise AssertionError('size slider did not follow its field')
+        rp.live.setChecked(False)
+        rp._live_timer.stop()
+        if rp._live is not None:
+            raise AssertionError('live preview not cleared when switched off')
+        rp.size_auto.setChecked(True)
+        if rp.min_cell.isEnabled() or not 50 < rp.min_cell.value() <= rp.max_cell.value():
+            raise AssertionError(f'size range estimate {rp.min_cell.value()}–{rp.max_cell.value()}')
+        rp.size_auto.setChecked(False)
+        rp.min_cell.setValue(80)
+        rp.max_cell.setValue(0)
+        rp.min_nuc.setValue(15)
+        rp.max_nuc.setValue(0)
+        rp.man['cell']['spin'].setValue(0)
         win.show_tab('particle_tab')
         pp = win.particle_panel
         pp.part_channel.setCurrentIndex(1)
@@ -1019,6 +1100,7 @@ def run(out_dir) -> int:
     step('MP4 (odd frame size)', mp4_odd_size)
     step('line profile', line_profile_step)
     step('cell ROIs + RoiSet.zip', cell_rois)
+    step('cell size range + manual threshold', cell_size_range)
     step('Coloc 2 per cell ROI', coloc2)
     step('intensity + particle ROIs', intensity)
     step('image ID in exports + pairing', image_id_pairing)

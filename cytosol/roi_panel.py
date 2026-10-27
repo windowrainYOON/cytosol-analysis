@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import csv
 import re
+import copy
+import threading
+import time
 import traceback
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from skimage import filters
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,6 +32,7 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QSlider,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -37,6 +43,8 @@ from .cellroi import (
     ThresholdPreview,
     merged_preview,
     segment_cells,
+    size_range,
+    threshold_cells,
 )
 from .imageid import roi_id
 from .intensity import make_regions
@@ -58,11 +66,13 @@ TOOLS = [
 THR_STEPS = 1000
 THRESHOLDS = [
     ('nuc', '핵 threshold',
-     '핵 채널(약하게 스무딩)에서 이 값보다 밝은 곳을 핵으로 봅니다. 수동을 끄면 Otsu 자동값.'),
+     '핵 채널(약하게 스무딩)에서 이 값보다 밝은 곳을 핵으로 봅니다. 자동을 켜면 Otsu 값을 쓰고 칸에 표시합니다.'),
     ('cell', '세포 threshold',
      '배경 신호 채널에서 이 값보다 밝은 곳을 세포로 봅니다 (세포 사이 틈은 이보다 어둡게). '
-     '배경 포화값보다 작아야 합니다. 수동을 끄면 Otsu 자동값.'),
+     '배경 포화값보다 작아야 합니다. 자동을 켜면 Otsu 값을 쓰고 칸에 표시합니다.'),
 ]
+SIZE_STEPS = 1000
+SIZE_LOG = (0.0, 5.0)  # size sliders span 10**0 … 10**5 µm²
 THR_COLORS = {'cell': (1.0, 0.85, 0.0), 'nuc': (0.2, 0.5, 1.0)}
 NUC_HINT = re.compile(r'dapi|hoechst|nuc|draq|h2b|405', re.I)
 
@@ -85,6 +95,7 @@ def guess_roles(item: ImageItem) -> dict:
 
 
 class RoiPanel(QWidget):
+    liveDone = Signal(int, object, float)  # job number, CellRois or error text, seconds
     def __init__(self, win):
         super().__init__()
         self.win = win
@@ -111,19 +122,24 @@ class RoiPanel(QWidget):
         self.sat = QDoubleSpinBox()
         self.sat.setRange(0, 1e9)
         self.sat.setDecimals(2)
-        self.sat.setSpecialValueText('자동')
+        self.sat.setEnabled(False)
         self.sat.setToolTip('배경 신호 채널을 이 값에서 흰색으로 포화시킵니다 (LUT를 밝게). '
                             '세포질 전체가 하나의 덩어리로 보이도록 낮추세요.')
         self.sat.valueChanged.connect(self._sat_changed)
-        self.sat_auto_btn = QPushButton('자동값')
-        self.sat_auto_btn.clicked.connect(lambda: self.sat.setValue(0))
+        self.sat_auto = QCheckBox('자동')
+        self.sat_auto.setChecked(True)
+        self.sat_auto.setToolTip('켜면 배경 신호 채널의 중앙값(스무딩 후)을 포화값으로 씁니다. '
+                                 '칸에는 실제로 쓰는 값이 표시됩니다. 끄면 직접 입력합니다.')
+        self.sat_auto.toggled.connect(self._sat_auto_toggled)
         self.input_view = QCheckBox('검출용 합성 이미지 보기 (배경 밝게 + 핵)')
         self.input_view.toggled.connect(lambda _: self.win.update_preview())
-        # manual thresholds: checkbox, value, slider over the channel's value range
+        # thresholds: 자동 checkbox (Otsu), value shown either way, slider over
+        # the channel's value range
         self.thr = {}
         for key, label, tip in THRESHOLDS:
-            manual = QCheckBox('수동')
-            manual.setToolTip(tip)
+            auto = QCheckBox('자동')
+            auto.setChecked(True)
+            auto.setToolTip(tip)
             spin = QDoubleSpinBox()
             spin.setRange(-1e9, 1e9)
             spin.setDecimals(2)
@@ -132,23 +148,47 @@ class RoiPanel(QWidget):
             slider.setRange(0, THR_STEPS)
             for w in (spin, slider):
                 w.setEnabled(False)
-            manual.toggled.connect(lambda on, k=key: self._thr_manual(k, on))
+            auto.toggled.connect(lambda on, k=key: self._thr_auto(k, on))
             spin.valueChanged.connect(lambda _, k=key: self._thr_spin(k))
             slider.valueChanged.connect(lambda v, k=key: self._thr_slider(k, v))
-            self.thr[key] = {'label': label, 'manual': manual, 'spin': spin, 'slider': slider,
+            self.thr[key] = {'label': label, 'auto': auto, 'spin': spin, 'slider': slider,
                              'range': (0.0, 1.0)}
         self.thr_view = QCheckBox('threshold 영역 미리보기 (노랑: 세포, 파랑: 핵)')
         self.thr_view.setToolTip('threshold를 넘는 영역을 검출용 합성 이미지 위에 칠해 보여줍니다. '
                                  '수동 threshold 슬라이더를 움직이면 자동으로 켜지고 바로 갱신됩니다.')
         self.thr_view.toggled.connect(lambda _: self.win.update_preview())
-        self.min_cell = QDoubleSpinBox()
-        self.min_cell.setRange(1, 1e6)
-        self.min_cell.setValue(RoiParams.min_cell_um2)
-        self.min_cell.setSuffix(' µm²')
-        self.min_nuc = QDoubleSpinBox()
-        self.min_nuc.setRange(1, 1e6)
-        self.min_nuc.setValue(RoiParams.min_nucleus_um2)
-        self.min_nuc.setSuffix(' µm²')
+        def area_spin(value, special=None):
+            w = QDoubleSpinBox()
+            w.setRange(0 if special else 1, 1e6)
+            w.setDecimals(1)
+            w.setValue(value)
+            w.setSuffix(' µm²')
+            if special:
+                w.setSpecialValueText(special)
+            return w
+
+        # size ranges (both modes): cells / nuclei outside them are dropped
+        self.min_cell = area_spin(RoiParams.min_cell_um2)
+        self.max_cell = area_spin(RoiParams.max_cell_um2, '제한 없음')
+        self.min_nuc = area_spin(RoiParams.min_nucleus_um2)
+        self.max_nuc = area_spin(RoiParams.max_nucleus_um2, '제한 없음')
+        for w in (self.min_cell, self.max_cell):
+            w.setToolTip('이 범위 밖의 세포는 버립니다 (최대 0 = 제한 없음).')
+        for w in (self.min_nuc, self.max_nuc):
+            w.setToolTip('이 범위 밖의 핵은 핵으로 쓰지 않습니다 (최대 0 = 제한 없음).')
+        self.size_auto = QCheckBox('자동 (모든 이미지에서 추정)')
+        self.size_auto.setToolTip(
+            '모든 이미지에서 크기 제한 없이 한 번 검출해 (프레임에 걸친 세포 제외) 가장 작은 세포·핵과 '
+            '가장 큰 세포·핵의 크기를 범위로 넣습니다. 동떨어진 값(먼지, 덩어리)은 로그 크기의 '
+            'Tukey 기준(사분위 ± 1.5 IQR)으로 뺍니다. 칸에는 추정한 값이 표시되고, '
+            '끄면 직접 입력합니다.')
+        self.size_auto.toggled.connect(self._size_auto_toggled)
+        self._size_key = None  # what the automatic range was estimated from
+        self.fit_size = QCheckBox('붙은 세포를 크기 범위에 맞게 나누기 · 합치기')
+        self.fit_size.setToolTip(
+            '최대보다 큰 덩어리는 세포 사이 어두운 골을 따라 범위에 맞는 개수로 나누고, '
+            '최소보다 작은 조각은 경계가 가장 약한 이웃과 합칩니다 (합친 크기가 범위에 더 맞을 때만). '
+            '핵 크기 범위에도 똑같이 적용합니다. 그래도 범위 밖이면 버립니다.')
         self.smooth = QDoubleSpinBox()
         self.smooth.setRange(0.1, 20)
         self.smooth.setSingleStep(0.1)
@@ -162,34 +202,124 @@ class RoiPanel(QWidget):
         self.edge_margin.setValue(RoiParams.edge_margin_um)
         self.edge_margin.setSuffix(' µm')
         self.edge_margin.setToolTip('프레임에 걸친 세포는 프레임에서 이만큼 안쪽에 새 경계선을 그어 자릅니다.')
-        det = QGroupBox('자동 검출')
-        dl = QFormLayout(det)
+
+        # 자동 sub-tab: the full pipeline (manual thresholds feed into it)
+        auto = QWidget()
+        dl = QFormLayout(auto)
         row = QHBoxLayout()
+        row.addWidget(self.sat_auto)
         row.addWidget(self.sat, 1)
-        row.addWidget(self.sat_auto_btn)
         dl.addRow('배경 포화값', row)
         dl.addRow(self.input_view)
         for key, t in self.thr.items():
             row = QHBoxLayout()
-            row.addWidget(t['manual'])
+            row.addWidget(t['auto'])
             row.addWidget(t['spin'], 1)
             dl.addRow(t['label'], row)
             dl.addRow('', t['slider'])
         dl.addRow(self.thr_view)
-        dl.addRow('최소 세포 크기', self.min_cell)
-        dl.addRow('최소 핵 크기', self.min_nuc)
         dl.addRow('스무딩', self.smooth)
+        dl.addRow(self.fit_size)
+
+        # 수동 sub-tab: threshold only (at or above = ROI, below = discarded)
+        manual = QWidget()
+        ml = QFormLayout(manual)
+        note = QLabel('배경 신호 채널에서 threshold 이상인 연결된 영역이 그대로 세포 ROI가 되고, '
+                      '그 아래는 버립니다. 핵은 세포 안에서 핵 threshold 이상인 가장 큰 영역입니다. '
+                      '스무딩·분할 없이 크기 범위와 프레임 처리만 적용합니다.')
+        note.setWordWrap(True)
+        note.setStyleSheet('color: gray;')
+        ml.addRow(note)
+        self.man = {}
+        for key, label in (('cell', '세포 threshold'), ('nuc', '핵 threshold')):
+            spin = QDoubleSpinBox()
+            spin.setRange(-1e9, 1e9)
+            spin.setDecimals(2)
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, THR_STEPS)
+            spin.valueChanged.connect(lambda _, k=key: self._man_spin(k))
+            slider.valueChanged.connect(lambda v, k=key: self._man_slider(k, v))
+            self.man[key] = {'spin': spin, 'slider': slider, 'range': (0.0, 1.0)}
+            ml.addRow(label, spin)
+            ml.addRow('', slider)
+        self.last_seconds = 0.0  # time the last detection took
+        self.man_view = QCheckBox('threshold 영역 미리보기 (노랑: 세포, 파랑: 핵)')
+        self.man_view.setChecked(True)
+        self.man_view.toggled.connect(lambda _: self.win.update_preview())
+        ml.addRow(self.man_view)
+
+        self.mode_tabs = QTabWidget()
+        self.mode_tabs.addTab(auto, '자동')
+        self.mode_tabs.addTab(manual, '수동 (threshold)')
+        self.mode_tabs.currentChanged.connect(self._mode_changed)
+
+        det = QGroupBox('ROI 검출')
+        top = QVBoxLayout(det)
+        top.addWidget(self.mode_tabs)
+        dl = QFormLayout()
+        top.addLayout(dl)
+
+        def span(a, b):
+            row = QHBoxLayout()
+            row.addWidget(a, 1)
+            row.addWidget(QLabel('–'))
+            row.addWidget(b, 1)
+            return row
+
+        # a log-scale slider under every size field (1 µm² … 100 000 µm²; the
+        # right end of a maximum slider = no limit)
+        self._size_sliders = {}
+        for spin in (self.min_cell, self.max_cell, self.min_nuc, self.max_nuc):
+            sl = QSlider(Qt.Orientation.Horizontal)
+            sl.setRange(0, SIZE_STEPS)
+            sl.valueChanged.connect(lambda v, w=spin: self._size_slider(w, v))
+            spin.valueChanged.connect(lambda _, w=spin: self._size_sync(w))
+            self._size_sliders[spin] = sl
+            self._size_sync(spin)
+        dl.addRow('세포 크기', span(self.min_cell, self.max_cell))
+        dl.addRow('', span(self._size_sliders[self.min_cell], self._size_sliders[self.max_cell]))
+        dl.addRow('핵 크기', span(self.min_nuc, self.max_nuc))
+        dl.addRow('', span(self._size_sliders[self.min_nuc], self._size_sliders[self.max_nuc]))
+        dl.addRow('', self.size_auto)
         dl.addRow('프레임에 걸친 세포', self.edge_combo)
         dl.addRow('안쪽 경계 여백', self.edge_margin)
         run_one = QPushButton('ROI 검출 (현재 이미지)')
         run_one.clicked.connect(self.detect_current)
         run_all = QPushButton('모든 이미지')
-        run_all.setToolTip('같은 이름의 채널을 같은 역할로 모든 이미지에서 검출')
+        run_all.setToolTip('같은 이름의 채널을 같은 역할로 모든 이미지에서 검출 (선택한 자동/수동 방식)')
         run_all.clicked.connect(self.detect_all)
         row = QHBoxLayout()
         row.addWidget(run_one, 2)
         row.addWidget(run_all, 1)
         dl.addRow(row)
+        self.live = QCheckBox('실시간 미리보기 (값을 바꾸면 바로 검출)')
+        self.live.setToolTip(
+            'threshold, 크기 범위, 스무딩 등을 바꿀 때마다 현재 이미지에서 검출을 다시 돌려 '
+            '점선 ROI로 보여줍니다 (이미지 한 장에 약 1초). ROI 검출을 누르면 그 결과를 씁니다. '
+            '느리면 끄세요.')
+        self.live.toggled.connect(self._live_toggled)
+        dl.addRow(self.live)
+        # live preview: debounced, one background job at a time
+        self._live = None  # (key, CellRois) of the preview shown
+        self._live_job = 0
+        self._live_busy = False
+        self._live_again = False
+        self._live_timer = QTimer(self)
+        self._live_timer.setSingleShot(True)
+        self._live_timer.setInterval(250)
+        self._live_timer.timeout.connect(self._live_start)
+        self.liveDone.connect(self._live_finished)
+        for w in (self.min_cell, self.max_cell, self.min_nuc, self.max_nuc, self.smooth,
+                  self.edge_margin, self.sat):
+            w.valueChanged.connect(self.live_changed)
+        for w in (self.fit_size, self.sat_auto):
+            w.toggled.connect(self.live_changed)
+        self.edge_combo.currentIndexChanged.connect(self.live_changed)
+        self.mode_tabs.currentChanged.connect(self.live_changed)
+        for t in list(self.thr.values()) + list(self.man.values()):
+            t['spin'].valueChanged.connect(self.live_changed)
+            if 'auto' in t:
+                t['auto'].toggled.connect(self.live_changed)
 
         # editing
         self.tool_group = QButtonGroup(self)
@@ -278,6 +408,9 @@ class RoiPanel(QWidget):
         lay.addWidget(meas)
         lay.addWidget(self.measure, 1)
 
+        self._hover = {}  # label -> (text, anchor) of the ROIs drawn now
+        self._hover_rois = None
+        win.canvas.hover_info = self.hover_info
         win.canvas.cellClicked.connect(self._canvas_click)
         win.canvas.lassoDrawn.connect(self._lasso)
 
@@ -296,10 +429,13 @@ class RoiPanel(QWidget):
 
     def params(self) -> RoiParams:
         return RoiParams(
-            saturation=self.sat.value() or None,
+            saturation=None if self.sat_auto.isChecked() else (self.sat.value() or None),
             smooth_um=self.smooth.value(),
             min_cell_um2=self.min_cell.value(),
+            max_cell_um2=self.max_cell.value(),
             min_nucleus_um2=self.min_nuc.value(),
+            max_nucleus_um2=self.max_nuc.value(),
+            fit_size=self.fit_size.isChecked(),
             edge_mode=self.edge_combo.currentData(),
             edge_margin_um=self.edge_margin.value(),
             nuc_threshold=self._thr_value('nuc'),
@@ -310,11 +446,72 @@ class RoiPanel(QWidget):
 
     def _thr_value(self, key):
         t = self.thr[key]
-        return t['spin'].value() if t['manual'].isChecked() else None
+        return None if t['auto'].isChecked() else t['spin'].value()
 
     def show_input(self) -> bool:
         """Whether the preview shows the detector's input instead of the composite."""
+        if self.manual_mode():
+            return self.win.tab_current('roi_tab') and self.man_view.isChecked()
         return self.input_view.isChecked() or self.thr_view.isChecked()
+
+    # ---- manual (threshold only) mode -------------------------------------
+
+    def manual_mode(self) -> bool:
+        return self.mode_tabs.currentIndex() == 1
+
+    def _mode_changed(self, _):
+        if self.item is not None:
+            self._man_fill(self.item)
+        self.win.update_preview()
+
+    def _man_fill(self, item):
+        """A threshold never set (0) starts from Otsu of the image's channel; set
+        ones are kept for every image, so a batch uses one threshold."""
+        if not self.manual_mode():
+            return
+        bg, nuc = self._inputs(item)
+        for key, plane in (('cell', bg), ('nuc', nuc)):
+            if plane is not None and self._man_value(key) == 0:
+                self._man_show(key, float(filters.threshold_otsu(plane)))
+
+    def _man_value(self, key):
+        return self.man[key]['spin'].value()
+
+    def _man_show(self, key, value):
+        t = self.man[key]
+        t['spin'].blockSignals(True)
+        t['spin'].setValue(value)
+        t['spin'].blockSignals(False)
+        self._man_sync_slider(key)
+
+    def _man_sync_slider(self, key):
+        t = self.man[key]
+        lo, hi = t['range']
+        t['slider'].blockSignals(True)
+        t['slider'].setValue(int(round((t['spin'].value() - lo) / (hi - lo) * THR_STEPS)))
+        t['slider'].blockSignals(False)
+
+    def _man_spin(self, key):
+        self._man_sync_slider(key)
+        if self.show_input():
+            self._preview_timer.start()
+
+    def _man_slider(self, key, v):
+        t = self.man[key]
+        lo, hi = t['range']
+        t['spin'].setValue(lo + (hi - lo) * v / THR_STEPS)
+
+    def _man_preview(self, item) -> np.ndarray:
+        """The composite with the areas at or above each manual threshold painted."""
+        rgb = item.composite().copy()
+        bg, nuc = self._inputs(item)
+        masks = {'cell': bg >= self._man_value('cell')}
+        if nuc is not None:
+            masks['nuc'] = nuc >= self._man_value('nuc')
+        for key, m in masks.items():
+            if m.shape == rgb.shape[:2]:
+                rgb[m] = rgb[m] * 0.55 + 0.45 * np.asarray(THR_COLORS[key], np.float32)
+        return rgb
 
     def _thr_ranges(self, item):
         """Slider spans the current plane's value range of each role's channel."""
@@ -329,10 +526,14 @@ class RoiPanel(QWidget):
                 lo, hi = float(np.nanmin(plane)), float(np.nanmax(plane))
                 t['range'] = (lo, hi if hi > lo else lo + 1.0)
             self._thr_sync_slider(key)
+            self.man[key]['range'] = t['range']
+            self._man_sync_slider(key)
         has_nuc = r['nuc'] is not None
-        self.thr['nuc']['manual'].setEnabled(has_nuc)
+        for w in (self.man['nuc']['spin'], self.man['nuc']['slider']):
+            w.setEnabled(has_nuc)
+        self.thr['nuc']['auto'].setEnabled(has_nuc)
         if not has_nuc:
-            self.thr['nuc']['manual'].setChecked(False)
+            self.thr['nuc']['auto'].setChecked(True)
 
     def _thr_sync_slider(self, key):
         t = self.thr[key]
@@ -351,11 +552,11 @@ class RoiPanel(QWidget):
         t['spin'].blockSignals(False)
         self._thr_sync_slider(key)
 
-    def _thr_manual(self, key, on):
+    def _thr_auto(self, key, auto_on):
         t = self.thr[key]
-        if on and self.item is not None:  # start from the automatic value
-            auto = self._auto_thresholds(self.item)
-            self._thr_show(key, auto.get(key))
+        on = not auto_on  # manual value
+        if self.item is not None:  # the field holds the automatic value either way
+            self._thr_show(key, self._auto_thresholds(self.item).get(key))
         t['spin'].setEnabled(on)
         t['slider'].setEnabled(on)
         if on and not self.thr_view.isChecked():
@@ -385,7 +586,7 @@ class RoiPanel(QWidget):
         until the plane, the channel roles, saturation or smoothing change."""
         bg, nuc = self._inputs(item)
         key = (id(item), id(item.planes()), self.roles(item)['bg'], self.roles(item)['nuc'],
-               self.sat.value(), self.smooth.value())
+               self.sat_auto.isChecked() or self.sat.value(), self.smooth.value())
         if self._tp_cache is None or self._tp_cache[0] != key:
             p = self.params()
             tp = ThresholdPreview(bg, nuc, item.pixel_um, p)
@@ -419,25 +620,62 @@ class RoiPanel(QWidget):
                 self.bg_combo.addItem(f'C{i}: {name}', i)
             self.nuc_combo.setCurrentIndex(max(0, self.nuc_combo.findData(r['nuc'])))
             self.bg_combo.setCurrentIndex(max(0, self.bg_combo.findData(r['bg'])))
-            if item.cells is not None and item.cells.saturation:
-                self.sat.setValue(item.cells.saturation)
+            if not self.sat_auto.isChecked():
+                pass
+            elif item.cells is not None and item.cells.saturation:
+                self._sat_show(item.cells.saturation)
+            elif self.win.tab_open('roi_tab'):
+                self.show_auto_values(item)
             self._thr_ranges(item)
+            self._man_fill(item)
             if item.cells is not None:
                 for key in self.thr:
-                    if not self.thr[key]['manual'].isChecked():
+                    if self.thr[key]['auto'].isChecked():
                         self._thr_show(key, getattr(item.cells, f'{key}_threshold', None))
         self._busy = False
         self.selected = 0
         self.refresh_list()
         self.measure.bind(item)
+        self.live_changed()
 
     def _roles_changed(self, _):
         if self._busy or self.item is None:
             return
         self.item.roi_roles = {'nuc': self.nuc_combo.currentData(), 'bg': self.bg_combo.currentData()}
         self._thr_ranges(self.item)
+        self.show_auto_values(self.item)
         if self.show_input():
             self.win.update_preview()
+
+    def _sat_show(self, value):
+        """Show the saturation in use (automatic) without triggering an update."""
+        if value is None:
+            return
+        self.sat.blockSignals(True)
+        self.sat.setValue(value)
+        self.sat.blockSignals(False)
+
+    def _sat_auto_toggled(self, on):
+        self.sat.setEnabled(not on)
+        if self.item is not None:
+            self.show_auto_values(self.item)
+        if self.show_input():
+            self.win.update_preview()
+
+    def show_auto_values(self, item):
+        """Fill the 자동 fields (saturation, thresholds) with the values the
+        detection would use on this image now."""
+        try:
+            tp = self._preview_data(item)[0]
+            if self.sat_auto.isChecked():
+                self._sat_show(tp.saturation)
+            got = tp(self._thr_value('nuc'), self._thr_value('cell'))
+        except Exception:
+            traceback.print_exc()
+            return
+        for key in self.thr:
+            if self.thr[key]['auto'].isChecked():
+                self._thr_show(key, got[f'{key}_threshold'])
 
     def _sat_changed(self, _):
         if self.show_input():
@@ -445,6 +683,8 @@ class RoiPanel(QWidget):
 
     def preview_rgb(self, item: ImageItem) -> np.ndarray:
         """What the detector sees: the background channel with a bright LUT plus nuclei."""
+        if self.manual_mode():
+            return self._man_preview(item)
         prev, base = self._preview_data(item)
         rgb = base.copy()
         if self.thr_view.isChecked():
@@ -453,18 +693,36 @@ class RoiPanel(QWidget):
                 m = tp[key]
                 if m is not None:
                     rgb[m] = rgb[m] * 0.55 + 0.45 * np.asarray(THR_COLORS[key], np.float32)
-                if not self.thr[key]['manual'].isChecked():
+                if self.thr[key]['auto'].isChecked():
                     self._thr_show(key, tp[f'{key}_threshold'])
         return rgb
 
     # ---- detection ------------------------------------------------------
 
-    def _detect(self, item: ImageItem, roles: dict) -> CellRois:
-        planes = item.planes()
+    @staticmethod
+    def _run_planes(planes, px_um, roles, p, manual, man_cell, man_nuc) -> CellRois:
         bg = planes[roles['bg']]
         nuc = planes[roles['nuc']] if roles['nuc'] is not None else None
-        rois = segment_cells(bg, nuc, item.pixel_um, self.params())
-        rois.renumber()
+        if manual:
+            return threshold_cells(bg, nuc, px_um, man_cell,
+                                   man_nuc if nuc is not None else None, p)
+        return segment_cells(bg, nuc, px_um, p)
+
+    def _run(self, item: ImageItem, roles: dict, p: RoiParams) -> CellRois:
+        """Detect with the selected method (자동 / 수동 sub-tab)."""
+        return self._run_planes(item.planes(), item.pixel_um, roles, p, self.manual_mode(),
+                                self._man_value('cell'), self._man_value('nuc'))
+
+    def _detect(self, item: ImageItem, roles: dict) -> CellRois:
+        t0 = time.perf_counter()
+        live = self._live
+        if (live is not None and item is self.item and roles == self.roles(item)
+                and live[0] == self._live_key(item)):
+            rois = copy.deepcopy(live[1])  # the preview shown is exactly this detection
+        else:
+            rois = self._run(item, roles, self.params())
+            rois.renumber()
+        self.last_seconds = time.perf_counter() - t0
         return rois
 
     def detect_current(self):
@@ -472,6 +730,8 @@ class RoiPanel(QWidget):
         if it is None:
             return
         if it.cells is not None and len(it.cells) and not self._confirm_replace():
+            return
+        if self.size_auto.isChecked() and not self.estimate_sizes():
             return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
@@ -482,14 +742,25 @@ class RoiPanel(QWidget):
             return
         finally:
             QApplication.restoreOverrideCursor()
-        msg = f'세포 {len(it.cells)}개 검출'
-        if not self.sat.value():
+        self._live = None
+        if self.manual_mode():
+            msg = (f'세포 {len(it.cells)}개 검출 (수동: 세포 ≥ {self._man_value("cell"):.4g}'
+                   + (f', 핵 ≥ {self._man_value("nuc"):.4g}' if self.roles()['nuc'] is not None else '')
+                   + f', {self.last_seconds:.1f}초)')
+            self.status(msg)
+            self.selected = 0
+            self.refresh_list()
+            self.win.update_preview()
+            return
+        msg = f'세포 {len(it.cells)}개 검출 ({self.last_seconds:.1f}초)'
+        if self.sat_auto.isChecked():
+            self._sat_show(it.cells.saturation)
             msg += f' (배경 포화값 자동: {it.cells.saturation:.3g})'
         used = []
         for key in self.thr:
             v = getattr(it.cells, f'{key}_threshold', None)
             if v is not None:
-                how = '수동' if self.thr[key]['manual'].isChecked() else '자동'
+                how = '자동' if self.thr[key]['auto'].isChecked() else '수동'
                 used.append(f"{self.thr[key]['label']} {v:.4g} ({how})")
                 if how == '자동':
                     self._thr_show(key, v)
@@ -502,14 +773,99 @@ class RoiPanel(QWidget):
         self.refresh_list()
         self.win.update_preview()
 
-    def _confirm_replace(self):
-        r = QMessageBox.question(self, 'ROI 다시 검출', '이 이미지의 ROI(수정 포함)를 새로 검출한 결과로 바꿀까요?')
-        return r == QMessageBox.StandardButton.Yes
+    # ---- automatic size range -------------------------------------------
 
-    def detect_all(self):
-        src = self.item
-        if src is None:
+    def _size_slider(self, spin, v):
+        if v >= SIZE_STEPS and spin.specialValueText():
+            spin.setValue(0)  # right end of a maximum: no limit
+        else:
+            spin.setValue(round(10 ** (SIZE_LOG[0] + (SIZE_LOG[1] - SIZE_LOG[0]) * v / SIZE_STEPS), 1))
+
+    def _size_sync(self, spin):
+        sl = self._size_sliders.get(spin)
+        if sl is None:
             return
+        v = spin.value()
+        if v <= 0:
+            pos = SIZE_STEPS
+        else:
+            pos = (np.log10(v) - SIZE_LOG[0]) / (SIZE_LOG[1] - SIZE_LOG[0]) * SIZE_STEPS
+        sl.blockSignals(True)
+        sl.setValue(int(round(min(max(pos, 0), SIZE_STEPS))))
+        sl.blockSignals(False)
+
+    # ---- live preview -------------------------------------------------------
+
+    def _live_key(self, item):
+        r = self.roles(item)
+        return (id(item), id(item.planes()), r['bg'], r['nuc'], self.manual_mode(),
+                self._man_value('cell'), self._man_value('nuc'), repr(self.params()))
+
+    def live_changed(self, *_):
+        if self.live.isChecked() and self.item is not None and not self._busy:
+            self._live_timer.start()
+
+    def _live_toggled(self, on):
+        if on:
+            self._live_timer.start()
+        else:
+            self._live = None
+            self._live_timer.stop()
+            self.draw_overlay()
+
+    def _live_start(self):
+        it = self.item
+        if it is None or not self.live.isChecked():
+            return
+        if self._live_busy:
+            self._live_again = True
+            return
+        key = self._live_key(it)
+        if self._live is not None and self._live[0] == key:
+            return
+        self._live_busy = True
+        self._live_job += 1
+        job, roles, p = self._live_job, dict(self.roles(it)), self.params()
+        planes = it.planes()
+        man = self.manual_mode(), self._man_value('cell'), self._man_value('nuc')
+
+        def work():
+            t0 = time.perf_counter()
+            try:
+                res = self._run_planes(planes, it.pixel_um, roles, p, *man)
+                res.renumber()
+            except Exception as exc:
+                traceback.print_exc()
+                res = str(exc)
+            self.liveDone.emit(job, (key, res), time.perf_counter() - t0)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _live_finished(self, job, result, secs):
+        self._live_busy = False
+        key, res = result
+        if self.live.isChecked() and self.item is not None and job == self._live_job:
+            if isinstance(res, str):
+                self.win.statusBar().showMessage(f'미리보기 실패: {res}', 5000)
+            elif key == self._live_key(self.item):
+                self._live = (key, res)
+                self.win.statusBar().showMessage(
+                    f'미리보기: 세포 {len(res)}개 ({secs:.1f}초). ROI 검출을 누르면 이 결과를 씁니다.', 8000)
+                self.draw_overlay()
+        if self._live_again:
+            self._live_again = False
+            self._live_timer.start()
+
+    def _size_auto_toggled(self, on):
+        for w in (self.min_cell, self.max_cell, self.min_nuc, self.max_nuc):
+            w.setEnabled(not on)
+            self._size_sliders[w].setEnabled(not on)
+        if on and self.win.items:
+            self._size_key = None
+            self.estimate_sizes()
+
+    def _jobs(self, src):
+        """(image, roles) for every image with channels matching src's roles."""
         r = self.roles(src)
         jobs = []
         for it in self.win.items:
@@ -519,9 +875,71 @@ class RoiPanel(QWidget):
                 nuc = match_channel(it, src.channels[r['nuc']], r['nuc'], like=src)
                 if nuc is None:
                     continue
-            if bg is None:
+            if bg is not None:
+                jobs.append((it, {'nuc': nuc, 'bg': bg}))
+        return jobs
+
+    def estimate_sizes(self) -> bool:
+        """Fill the size ranges from a detection without size limits over all
+        images (kept until the images, roles or method change). False when
+        cancelled."""
+        src = self.item
+        if src is None:
+            return False
+        jobs = self._jobs(src)
+        p = replace(self.params(), min_cell_um2=10.0, max_cell_um2=0.0, min_nucleus_um2=2.0,
+                    max_nucleus_um2=0.0, fit_size=False, edge_mode='exclude')
+        key = (tuple((id(it), it.z, it.image.t, ro['bg'], ro['nuc']) for it, ro in jobs),
+               self.manual_mode(), self._man_value('cell'), self._man_value('nuc'),
+               p.saturation, p.smooth_um, p.nuc_threshold, p.cell_threshold)
+        if key == self._size_key:
+            return True
+        prog = QProgressDialog('크기 범위 추정 중…', '취소', 0, len(jobs), self.win)
+        prog.setWindowModality(Qt.WindowModality.WindowModal)
+        prog.setMinimumDuration(500)
+        cells, nucs = [], []
+        t0 = time.perf_counter()
+        for i, (it, ro) in enumerate(jobs):
+            if prog.wasCanceled():
+                return False
+            prog.setLabelText(f'크기 범위 추정 중: {it.label}')
+            prog.setValue(i)
+            QApplication.processEvents()
+            try:
+                rois = self._run(it, ro, p)
+            except Exception:
+                traceback.print_exc()
                 continue
-            jobs.append((it, {'nuc': nuc, 'bg': bg}))
+            px2 = (rois.px_um or 0.1) ** 2
+            cl = np.bincount(rois.labels.ravel())[1:]
+            cells += (cl[cl > 0] * px2).tolist()
+            if rois.nuclei is not None:
+                nl = np.bincount(rois.nuclei.ravel())[1:]
+                nucs += (nl[nl > 0] * px2).tolist()
+        prog.setValue(len(jobs))
+        got = []
+        for (lo_w, hi_w), areas, name in (((self.min_cell, self.max_cell), cells, '세포'),
+                                          ((self.min_nuc, self.max_nuc), nucs, '핵')):
+            rng = size_range(areas)
+            if rng is None:
+                continue
+            lo_w.setValue(max(1.0, np.floor(rng[0] * 10) / 10))
+            hi_w.setValue(np.ceil(rng[1] * 10) / 10)
+            got.append(f'{name} {rng[0]:.0f}–{rng[1]:.0f} µm² ({len(areas)}개)')
+        self._size_key = key
+        self.status(f'크기 범위 자동 추정 (이미지 {len(jobs)}개, {time.perf_counter() - t0:.1f}초): '
+                    + (', '.join(got) if got else '검출된 세포 없음'))
+        return True
+
+    def _confirm_replace(self):
+        r = QMessageBox.question(self, 'ROI 다시 검출', '이 이미지의 ROI(수정 포함)를 새로 검출한 결과로 바꿀까요?')
+        return r == QMessageBox.StandardButton.Yes
+
+    def detect_all(self):
+        src = self.item
+        if src is None:
+            return
+        jobs = self._jobs(src)
         edited = [it for it, _ in jobs if it.cells is not None and it is not src]
         if edited:
             q = QMessageBox.question(
@@ -534,9 +952,11 @@ class RoiPanel(QWidget):
                 return
             if q == QMessageBox.StandardButton.No:
                 jobs = [(it, ro) for it, ro in jobs if it.cells is None]
+        if self.size_auto.isChecked() and not self.estimate_sizes():
+            return
         prog = QProgressDialog('ROI 검출 중…', '취소', 0, len(jobs), self.win)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
-        errors, n = [], 0
+        errors, n, secs = [], 0, 0.0
         for i, (it, roles) in enumerate(jobs):
             if prog.wasCanceled():
                 break
@@ -546,13 +966,15 @@ class RoiPanel(QWidget):
             try:
                 it.roi_roles = roles
                 it.cells = self._detect(it, roles)
+                secs += self.last_seconds
                 n += 1
             except Exception as exc:
                 errors.append(f'{it.label}: {exc}')
                 traceback.print_exc()
         prog.setValue(len(jobs))
         skipped = len(self.win.items) - len(jobs)
-        msg = f'이미지 {n}개에서 ROI를 검출했습니다.'
+        msg = f'이미지 {n}개에서 ROI를 검출했습니다' + (
+            f' (이미지당 평균 {secs / n:.1f}초).' if n else '.')
         if skipped:
             msg += f' (역할에 맞는 채널이 없거나 건너뛴 이미지 {skipped}개)'
         self.status(msg)
@@ -606,17 +1028,46 @@ class RoiPanel(QWidget):
         changed = getattr(self.win, 'rois_changed', None)
         if changed is not None:  # measurements and particles follow every ROI edit
             changed(hidden)
+        self._hover = {}
+        self.win.canvas.hide_hover()
+        live = (self._live is not None and self.live.isChecked() and self.item is not None
+                and self._live[0][0] == id(self.item))
+        if live:  # the live preview replaces the ROIs while it is on
+            c = self._live[1]
+        self._hover_rois = c
         if hidden or c is None or not self.show_rois.isChecked():
             self.win.canvas.show_cells([], 0)
             return
         shapes = []
+        n = int(c.labels.max()) + 1
+        cell_px = np.bincount(c.labels.ravel(), minlength=n)
+        nuc_px = (np.bincount(c.labels[c.nuclei == c.labels].ravel(), minlength=n)
+                  if c.nuclei is not None else np.zeros(n, int))
         for l in c.ids():
             xy = c.contour(l)
             if xy is None:
                 continue
             nxy = c.nucleus_contour(l) if self.show_nuc.isChecked() else None
-            shapes.append((l, xy, nxy, c.status.get(l, 'ok'), c.centroid(l)))
-        self.win.canvas.show_cells(shapes, self.selected)
+            shapes.append((l, xy, nxy, 'preview' if live else c.status.get(l, 'ok'),
+                           c.centroid(l)))
+            lines = [f'cell{l:03d}   {self._area_text(cell_px[l], c.px_um)}']
+            if nuc_px[l]:
+                lines += [f'nuc{l:03d}   {self._area_text(nuc_px[l], c.px_um)}',
+                          f'cyto{l:03d}   {self._area_text(cell_px[l] - nuc_px[l], c.px_um)}']
+            top = (float((xy[:, 0].min() + xy[:, 0].max()) / 2), float(xy[:, 1].min()))
+            self._hover[l] = ('\n'.join(lines), top)
+        self.win.canvas.show_cells(shapes, 0 if live else self.selected)
+
+    @staticmethod
+    def _area_text(px, px_um):
+        return f'{px * px_um ** 2:.1f} µm²' if px_um else f'{int(px)} px'
+
+    def hover_info(self, x, y):
+        """Name and area of the cell ROI under (x, y), shown above it."""
+        c = self._hover_rois
+        if c is None or not self._hover:
+            return None
+        return self._hover.get(c.label_at(x, y))
 
     # ---- editing ----------------------------------------------------------
 

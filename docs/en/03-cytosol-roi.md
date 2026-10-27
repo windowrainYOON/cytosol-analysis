@@ -18,30 +18,70 @@ Detection works on the current Z plane (or MIP) and timepoint.
   cytoplasm when its LUT is pushed very bright (autofluorescence or
   non-specific signal is fine).
 
-## 2. 자동 검출 (Automatic detection)
+## 2. ROI 검출 (Detect ROIs: automatic / manual)
+
+The **ROI 검출** box has two sub-tabs, **자동** (Automatic) and
+**수동 (threshold)** (Manual); detection uses the method of the selected
+one. The size ranges, frame handling and live preview are shared.
+
+Every automatic setting has its own **자동** checkbox. Even when it is on,
+the value field shows the value actually used; untick it to edit from there.
+
+### 자동 (Automatic)
 
 How it works: the background channel is saturated at **배경 포화값**, merged
 with the nuclei, and split into cells by a watershed seeded from each
 in-focus nucleus, so every cell gets one nucleus (touching nuclei are split
 first). Without a nucleus channel, cells are split along the dark borders
-between them.
+between them. Thresholds you set by hand go into this pipeline as they are.
 
 | Setting | Meaning |
 |---|---|
-| **배경 포화값** (Background saturation) | The background channel is shown as white from this value up. **자동** (Auto) = median of the smoothed channel; **자동값** (Auto value) puts the automatic value back. Lower it until each cell is one solid blob. |
+| **배경 포화값** ☑ 자동 (Background saturation) | The background channel is shown as white from this value up. Auto = median of the smoothed channel (shown in the field). Untick and lower it until each cell is one solid blob. |
 | **검출용 합성 이미지 보기 (배경 밝게 + 핵)** | Show exactly what the detector sees (bright background + nuclei). |
-| **핵 threshold** (Nucleus threshold) | Brighter than this in the lightly smoothed nucleus channel = nucleus. Otsu by default; tick **수동** (Manual) to set it with the box or slider. |
-| **세포 threshold** (Cell threshold) | Brighter than this in the background channel = cell; the gaps between cells must be darker. Keep it below the saturation value. Otsu by default, or **수동**. |
-| **threshold 영역 미리보기 (노랑: 세포, 파랑: 핵)** | Paint what passes each threshold (yellow: cell, blue: nucleus) on the image. Follows the sliders live; moving a manual slider turns it on. |
-| **최소 세포 크기** / **최소 핵 크기** | Smaller objects are dropped (defaults 80 µm² and 15 µm²). |
+| **핵 threshold** ☑ 자동 (Nucleus threshold) | Brighter than this in the lightly smoothed nucleus channel = nucleus. Auto = Otsu (shown); untick to set it with the box or slider. |
+| **세포 threshold** ☑ 자동 (Cell threshold) | Brighter than this in the background channel = cell; the gaps between cells must be darker. Keep it below the saturation value. |
+| **threshold 영역 미리보기 (노랑: 세포, 파랑: 핵)** | Paint what passes each threshold (yellow: cell, blue: nucleus) on the image; follows the sliders live. |
 | **스무딩** (Smoothing) | Gaussian smoothing of the merged image (default 0.8 µm). |
+| **붙은 세포를 크기 범위에 맞게 나누기 · 합치기** (Fit touching cells to the size range) | Regions larger than the **세포 크기** maximum are cut along the dark valleys between cells into the fewest pieces that fit the range (seeds: distance-map maxima, k-means centres where there are too few; a cell's nucleus stays whole in one piece). Pieces smaller than the minimum are merged with the neighbour across the weakest border, when the merged size fits better (their nuclei are joined). The nucleus size range is fitted the same way. Off by default. |
+
+### 수동 (threshold) (Manual)
+
+The simplest method; it stays available whatever other algorithms are added.
+
+- Every connected area **at or above the cell threshold** in the background
+  channel is a cell ROI; everything below is discarded (holes are filled,
+  since ImageJ polygon ROIs have none).
+- The nucleus is the largest area at or above the **nucleus threshold**
+  inside each cell.
+- No smoothing, splitting or merging: only the size ranges and the frame
+  handling apply.
+- The first time, each field starts at the channel's Otsu value; after
+  that the values you set are used for every image. **threshold 영역
+  미리보기** (on by default) paints what is at or above each threshold on
+  the normal composite.
+
+### Shared settings
+
+| Setting | Meaning |
+|---|---|
+| **세포 크기** min – max (Cell size) | Cells outside this range are dropped (default 80 µm² – no limit). The sliders under the fields (log scale, 1 – 100 000 µm²) set them too; the maximum slider at its right end = **제한 없음** (no limit). |
+| **핵 크기** min – max (Nucleus size) | Nuclei outside this range are not used as nuclei (default 15 µm² – no limit). |
+| **☑ 자동 (모든 이미지에서 추정)** (Auto, estimated from all images) | Runs one detection without size limits on every open image (cells on the frame left out) and puts the smallest – largest cell and nucleus areas into the fields. Outliers such as debris or clumps of touching cells are set aside first (Tukey fences on log area: quartiles ± 1.5 IQR). While on, the fields are locked; the range is estimated again at detection when the images, channels or method changed. |
 | **프레임에 걸친 세포** (Cells touching the frame) | **안쪽 경계로 자르기** (cut along an inner border, default), **제외** (drop) or **그대로 두기** (keep as is). |
-| **안쪽 경계 여백** (Inner border margin) | Distance of that inner border from the frame (default 1 µm), so no ROI runs along the edge of the image. |
+| **안쪽 경계 여백** (Inner border margin) | Distance of that inner border from the frame (default 1 µm). |
+| **실시간 미리보기** (Live preview) | When on, every change of a threshold, size range, smoothing etc. reruns the detection on the current image in the background (about 1 s per image) and shows the result as dashed ROIs in place of the existing ones. **ROI 검출** then keeps exactly that result. Turn it off when it is too slow. Off by default. |
 
 Run it with **ROI 검출 (현재 이미지)** (Detect ROIs, current image) or
 **모든 이미지** (All images: same settings, channels matched by name; you are
-asked whether to redo images that already have ROIs). The thresholds that
-were used are shown after detection.
+asked whether to redo images that already have ROIs). The status bar shows
+the number of cells, the time it took (per image on average for all images)
+and the values used.
+
+**Detection time** (for reference): about 0.7 s for one 1024 × 1024 Zeiss
+image (nucleus + background channel), 0.8 – 1.1 s with size fitting on, and
+2 – 4 s for a 1058 × 1058 TCF fluorescence MIP (4-core cloud machine; a Mac
+is usually faster).
 
 ## 3. 확인 · 수정 (Check and edit)
 
@@ -59,6 +99,9 @@ were used are shown after detection.
 A cell is always one filled piece (ImageJ polygon ROIs have no holes), so
 to cut into a cell, start the drawing from outside its border. You can draw
 **새 세포** without running detection first.
+
+Hovering over a ROI shows its name and area above it (`cellNNN`, and
+`nucNNN` / `cytoNNN` when it has a nucleus), also on the live preview.
 
 The cell list shows each cell's area and whether it was cut at the frame
 (**프레임 안쪽으로 자름**) or touches it (**프레임에 걸침**).
@@ -96,10 +139,15 @@ images. How the table, batch measurement and saving work is described in
 
 - Each cell is grown from one nucleus, so when cells come out wrong, look
   at the nuclei first with **threshold 영역 미리보기**: a nucleus split in
-  two gives two cells, two nuclei found as one give one cell. Then check
+  two gives two cells, two nuclei found as one give one cell. When touching
+  cells come out as one, set a **세포 크기** range and tick the size
+  fitting (check it with **실시간 미리보기**). Then check
   with **검출용 합성 이미지 보기** that every cell is one solid blob, and
   lower **배경 포화값** (or set the cell threshold by hand) if it is not.
 - Fix the remaining cells by hand with **더하기**, **빼기** and **새 세포**.
 - If no nucleus is found, the status bar says so and cells are split
   without nuclei.
-- From Python: `cytosol.cellroi.segment_cells(bg_plane, nucleus_plane, pixel_um, RoiParams())`.
+- When nothing else works, the **수동 (threshold)** tab takes exactly what is
+  at or above a threshold.
+- From Python: `cytosol.cellroi.segment_cells(bg_plane, nucleus_plane, pixel_um, RoiParams())`;
+  the manual method is `threshold_cells(bg_plane, nucleus_plane, pixel_um, cell_thr, nuc_thr, RoiParams())`.
