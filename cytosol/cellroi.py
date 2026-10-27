@@ -129,6 +129,7 @@ def segment_nuclei(nuc: np.ndarray, px_um: float, p: RoiParams) -> np.ndarray:
             cy, cx = map(int, r.coords[np.argmax(dist[tuple(r.coords.T)])])
             markers[cy, cx] = markers.max() + 1
     lab = segmentation.watershed(-dist, markers, mask=m)
+    lab = _rejoin_nuclei(lab, lab0, px_um)
     lo, hi = p.min_nucleus_um2 / px_um ** 2, p.max_nucleus_um2 / px_um ** 2
     if p.fit_size:
         lab = fit_sizes(lab, s, lo, hi, min_border=max(2, int(0.5 / px_um)))
@@ -137,6 +138,77 @@ def segment_nuclei(nuc: np.ndarray, px_um: float, p: RoiParams) -> np.ndarray:
     if out:
         lab[np.isin(lab, out)] = 0
     return segmentation.relabel_sequential(lab)[0]
+
+
+def _split_ok(a, b, px_um) -> bool:
+    """Whether two touching pieces a, b (bool crops) are two nuclei rather
+    than one nucleus cut in two. Nuclei keep a smooth, convex outline, so a
+    true pair shows (1) a sharp notch at both ends of the cut (the outline's
+    curvature turns inward: depth inside the convex hull), (2) each piece
+    convex on its own while together they are not, (3) a cut shorter than
+    the pieces are wide, and (4) centres well apart for their size. A kidney
+    or bean nucleus has a notch on one side only and is kept whole."""
+    from skimage.morphology import convex_hull_image
+    u = a | b
+    se = np.ones((3, 3), bool)
+    cut = a & ndi.binary_dilation(b, se)
+    if not cut.any():
+        return False
+    ra, rb = (np.sqrt(x.sum() / np.pi) for x in (a, b))
+    r = np.sqrt(u.sum() / np.pi)
+    # (3) the cut against the pieces' widths
+    wa, wb = (2 * float(ndi.distance_transform_edt(x).max()) for x in (a, b))
+    length = float(np.ptp(np.argwhere(cut), axis=0).max() + 1) if cut.sum() > 1 else 1.0
+    if length > 0.8 * min(wa, wb):
+        return False
+    # (2) convex pieces, a non-convex union
+    def solidity(x):
+        h = convex_hull_image(x)
+        return x.sum() / max(h.sum(), 1)
+    if solidity(u) > 0.93 or min(solidity(a), solidity(b)) < 0.8:
+        return False
+    # (1) a notch at both ends of the cut
+    hull = convex_hull_image(u)
+    depth = ndi.distance_transform_edt(np.pad(hull, 1))[1:-1, 1:-1]
+    ends = cut & ndi.binary_dilation(~u, se)
+    pts = np.argwhere(ends)
+    if len(pts) < 2:
+        return False
+    i, j = np.unravel_index(np.argmax(((pts[:, None] - pts[None]) ** 2).sum(-1)), (len(pts),) * 2)
+    near = lambda q: ((pts - pts[q]) ** 2).sum(1) <= ((pts[i] - pts[j]) ** 2).sum() / 4
+    d1 = float(depth[tuple(pts[near(i)].T)].max())
+    d2 = float(depth[tuple(pts[near(j)].T)].max())
+    notch = max(0.4 / px_um, 0.08 * r)
+    if min(d1, d2) < notch:
+        return False
+    # (4) centres apart
+    ca, cb = (np.argwhere(x).mean(0) for x in (a, b))
+    return float(np.hypot(*(ca - cb))) >= 0.6 * (ra + rb)
+
+
+def _rejoin_nuclei(lab, lab0, px_um):
+    """Merge back watershed pieces of one nucleus that _split_ok rejects."""
+    lab = lab.copy()
+    for r in measure.regionprops(lab0):
+        sl = tuple(slice(max(s.start - 1, 0), s.stop + 1) for s in r.slice)
+        while True:
+            view = lab[sl]
+            own = (lab0[sl] == r.label)
+            ids = [int(i) for i in np.unique(view[own]) if i]
+            if len(ids) < 2:
+                break
+            merged = False
+            for (a, b), _ in sorted(_border_stats(np.where(own, view, 0), view.astype(float)).items(),
+                                    key=lambda kv: -kv[1][1]):  # longest shared border first
+                if a not in ids or b not in ids:
+                    continue
+                if not _split_ok(view == a, view == b, px_um):
+                    view[view == b] = a
+                    merged = True
+                    break
+            if not merged:
+                break
+    return lab
 
 
 # ---------------------------------------------------------------------------

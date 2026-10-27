@@ -221,6 +221,17 @@ def run(out_dir) -> int:
                 raise AssertionError(f'neck cut {"with" if nn is not None else "without"} nucleus: {sizes}')
         if cut_necks(one_nuc, one_nuc, one_nuc * 1.0, 0.2, RoiParams(neck_cut=True)).max() != 1:
             raise AssertionError('neck cut split a round cell')
+        # nucleus split: two touching round nuclei are two, a bean-shaped one stays one
+        from .cellroi import segment_nuclei
+        yy, xx = np.mgrid[0:200, 0:300]
+        noise = np.random.default_rng(0).normal(0, 20, yy.shape)
+        pair = ((yy - 100) ** 2 + (xx - 110) ** 2 < 45 ** 2) | ((yy - 100) ** 2 + (xx - 190) ** 2 < 45 ** 2)
+        bean = ((((yy - 100) / 50.) ** 2 + ((xx - 150) / 80.) ** 2 < 1)
+                & ~(((yy - 160) ** 2 + (xx - 150) ** 2) < 40 ** 2))
+        for shape, want in ((pair, 2), (bean, 1)):
+            got = segment_nuclei(shape * 1000.0 + noise, 0.2, RoiParams()).max()
+            if got != want:
+                raise AssertionError(f'nucleus split: {got} nuclei, expected {want}')
         # manual cut line
         cr = CellRois(two.astype(np.int32), one_nuc.copy(), 0.2)
         new = cr.cut([(200, 120), (200, 180)])
@@ -232,7 +243,7 @@ def run(out_dir) -> int:
         if len(cr) != 1:
             raise AssertionError('manual cut not undone')
         return (f'touching cells 1 -> 2 ({a[0]:.0f}, {a[1]:.0f} µm²), manual threshold ROI, '
-                'neck cut, manual cut line')
+                'neck cut, manual cut line, nucleus split by shape')
 
     def coloc2():
         from .coloc import Coloc2Settings, ValueType, run_coloc2
