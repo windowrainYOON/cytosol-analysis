@@ -217,6 +217,7 @@ class Canvas(QGraphicsView):
     rotateDragged = Signal(str, float)  # axis 'Y' / 'X', screen pixels from the press
     lineDrawn = Signal(float, float, float, float)
     cellClicked = Signal(float, float)
+    cellShiftClicked = Signal(float, float)  # Shift+click: add to / remove from the selection
     lassoDrawn = Signal(str, object)
     scrubStarted = Signal()
     scrubDragged = Signal(float, float)  # screen pixels from the press (x right, y down)
@@ -244,6 +245,9 @@ class Canvas(QGraphicsView):
         # (w, h) image pixels: Crop mode places a box of this size under the cursor
         self.crop_size = None
         self.roi_tool = 'select'
+        self._lasso_tool = None  # tool of the line / area being drawn
+        self.roi_edit_active = None  # callable: whether ROI editing (세포질 ROI tab) is shown
+        self._zoom_shift = False  # rectangle zoom started by Shift (a click selects)
         self._origin = None
         self._region_items = []
         self._cell_items = []
@@ -374,12 +378,14 @@ class Canvas(QGraphicsView):
                 self._region_items.append(it)
 
     def show_cells(self, shapes, selected=0):
-        """shapes: (label, cell_xy, nucleus_xy or None, status, (cx, cy)) per cell."""
+        """shapes: (label, cell_xy, nucleus_xy or None, status, (cx, cy)) per cell;
+        selected: a label or a set of labels."""
+        selected = set(selected) if isinstance(selected, (set, list, tuple)) else {selected}
         for it in self._cell_items:
             self.scene().removeItem(it)
         self._cell_items = []
         for label, xy, nxy, status, (cx, cy) in shapes:
-            sel = label == selected
+            sel = label in selected
             col = QColor(255, 255, 0) if sel else CELL_COLORS[label % len(CELL_COLORS)]
             pen = QPen(col)
             pen.setCosmetic(True)
@@ -612,6 +618,7 @@ class Canvas(QGraphicsView):
         if btn == Qt.MouseButton.LeftButton and (
                 self.zoom_mode or (shift and not self._drawing())):
             self._zoom_origin = pos
+            self._zoom_shift = not self.zoom_mode
             self.zoom_item.setRect(QRectF(pos, pos))
             self.zoom_item.show()
             return
@@ -626,14 +633,19 @@ class Canvas(QGraphicsView):
             width = self._line[4] if self._line else 1
             self.show_line((*self._line_origin, pos.x(), pos.y()), width)
             return
-        if self.roi_tool in LASSO_COLORS and btn == Qt.MouseButton.LeftButton:
+        alt_cut = (self.roi_tool == 'select' and self.roi_edit_active is not None
+                   and self.roi_edit_active()
+                   and event.modifiers() & Qt.KeyboardModifier.AltModifier)
+        if (self.roi_tool in LASSO_COLORS or alt_cut) and btn == Qt.MouseButton.LeftButton:
+            # Alt (Option)+drag with 선택: a cut line without switching tools
+            self._lasso_tool = 'cut' if alt_cut else self.roi_tool
             self._lasso = [(pos.x(), pos.y())]
-            col = LASSO_COLORS[self.roi_tool]
+            col = LASSO_COLORS[self._lasso_tool]
             pen = QPen(col)
             pen.setCosmetic(True)
             pen.setWidthF(2)
             fill = QColor(col)
-            fill.setAlpha(0 if self.roi_tool in OPEN_LASSO else 60)
+            fill.setAlpha(0 if self._lasso_tool in OPEN_LASSO else 60)
             self._lasso_item.setPen(pen)
             self._lasso_item.setBrush(fill)
             self._lasso_item.setPath(QPainterPath())
@@ -756,7 +768,7 @@ class Canvas(QGraphicsView):
         if self._lasso is not None:
             p = self.mapToScene(event.position().toPoint())
             self._lasso.append((p.x(), p.y()))
-            if self.roi_tool in OPEN_LASSO:
+            if self._lasso_tool in OPEN_LASSO:
                 path = QPainterPath(QPointF(*self._lasso[0]))
                 for x, y in self._lasso[1:]:
                     path.lineTo(QPointF(x, y))
@@ -788,6 +800,9 @@ class Canvas(QGraphicsView):
             if min(r.width(), r.height()) * scale >= 4:
                 self.fitInView(r, Qt.AspectRatioMode.KeepAspectRatio)
                 self._fitted = True
+            elif self._zoom_shift and max(r.width(), r.height()) * scale < 4:
+                self.cellShiftClicked.emit(r.center().x(), r.center().y())  # Shift+click
+                return
             self.zoomDone.emit()
             return
         if self._crop_drag is not None:
@@ -830,7 +845,7 @@ class Canvas(QGraphicsView):
             if len(pts) < 3 or max(span) * scale < 4:
                 self.cellClicked.emit(*pts[-1])
             else:
-                self.lassoDrawn.emit(self.roi_tool, pts)
+                self.lassoDrawn.emit(self._lasso_tool, pts)
             return
         if self._press_view is not None:
             moved = (event.position() - self._press_view).manhattanLength()
