@@ -426,7 +426,17 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
    distance-map maxima or k-means centres, compact watershed; a cell's nucleus
    stays whole in one piece) and regions below the minimum are merged with the
    neighbour across the weakest border when the merged size fits better
-   (`cellroi.fit_sizes`); nuclei are fitted the same way. Touching nuclei
+   (`cellroi.fit_sizes`); nuclei are fitted the same way. Nuclei are drawn
+   per seed (`cellroi._local_nuclei`): seeds are areas above a quarter of the
+   way from the background to the (Otsu or manual) nucleus threshold; around
+   each, the signal is stretched from the local background to the seed's
+   bright end and cut at that window's own Otsu value (15 – 60 % of the
+   stretch). A result over 2.5 × the image's typical nucleus keeps the image
+   threshold's area; seeds the image threshold alone did not find must be
+   compact (solidity ≥ 0.85), drop off sharply (outer 1 µm ring < 0.22 on
+   their stretch), stand out (≥ 25 % of the threshold's step) and be at least
+   half the typical size, so dim nuclei are found and cytoplasmic stain is
+   not. Touching nuclei
    are split at distance-map maxima (watershed) and the cut is kept only
    when the shape says two nuclei (`cellroi._split_ok`): a notch (depth
    inside the convex hull ≥ 0.4 µm and 8% of the radius) at both ends of the

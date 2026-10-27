@@ -232,6 +232,15 @@ def run(out_dir) -> int:
             got = segment_nuclei(shape * 1000.0 + noise, 0.2, RoiParams()).max()
             if got != want:
                 raise AssertionError(f'nucleus split: {got} nuclei, expected {want}')
+        # a dim nucleus next to bright ones is found (its own LUT and threshold)
+        from scipy import ndimage as _ndi
+        img = np.zeros((200, 300))
+        for cy, cx, v in ((60, 60, 1000), (60, 150, 1000), (140, 100, 900), (130, 230, 250)):
+            img[(yy - cy) ** 2 + (xx - cx) ** 2 < 30 ** 2] = v
+        img = _ndi.gaussian_filter(img, 2) + noise
+        got = segment_nuclei(img, 0.2, RoiParams()).max()
+        if got != 4:
+            raise AssertionError(f'dim nucleus: {got} nuclei, expected 4')
         # manual cut line
         cr = CellRois(two.astype(np.int32), one_nuc.copy(), 0.2)
         new = cr.cut([(200, 120), (200, 180)])
@@ -243,7 +252,7 @@ def run(out_dir) -> int:
         if len(cr) != 1:
             raise AssertionError('manual cut not undone')
         return (f'touching cells 1 -> 2 ({a[0]:.0f}, {a[1]:.0f} µm²), manual threshold ROI, '
-                'neck cut, manual cut line, nucleus split by shape')
+                'neck cut, manual cut line, nucleus split by shape, dim nucleus')
 
     def coloc2():
         from .coloc import Coloc2Settings, ValueType, run_coloc2
