@@ -205,6 +205,9 @@ def run(out_dir) -> int:
             raise AssertionError('manual mode ignored the maximum cell size')
         if size_range([100, 120, 130, 140, 150, 5000]) != (100.0, 150.0):
             raise AssertionError(f'size_range outlier: {size_range([100, 120, 130, 140, 150, 5000])}')
+        from .cellroi import image_size_range
+        if not np.allclose(image_size_range([1000]), (250.0, 3000.0)):
+            raise AssertionError(f'image_size_range of one cell: {image_size_range([1000])}')
         return f'touching cells 1 -> 2 ({a[0]:.0f}, {a[1]:.0f} µm²), manual threshold ROI'
 
     def coloc2():
@@ -899,8 +902,41 @@ def run(out_dir) -> int:
         if rp._live is not None:
             raise AssertionError('live preview not cleared when switched off')
         rp.size_auto.setChecked(True)
-        if rp.min_cell.isEnabled() or not 50 < rp.min_cell.value() <= rp.max_cell.value():
+        if rp.min_cell.isEnabled() or not 0 < rp.min_cell.value() <= rp.max_cell.value():
             raise AssertionError(f'size range estimate {rp.min_cell.value()}–{rp.max_cell.value()}')
+        # 자동: each image gets its own range, shown in the fields
+        from PySide6.QtWidgets import QMessageBox as _MB
+        _q = _MB.question
+        _MB.question = staticmethod(lambda *a, **k: _MB.StandardButton.Yes)
+        kept = [(it, it.cells, it.roi_roles) for it in win.items]
+        try:
+            rp.detect_current()
+            own_sizes = rp.last_sizes
+            if own_sizes is None or rp.max_cell.value() != np.ceil(own_sizes[0][1] * 10) / 10:
+                raise AssertionError(f'per-image size range not used / shown: {own_sizes}')
+            rp.size_auto.setChecked(False)
+            # manual range, several images: asked whether all get the same range
+            two = [(own, dict(rp.roles(own)))] * 2
+            rp._jobs = lambda src: list(two)
+            asked = []
+            _MB.question = staticmethod(
+                lambda *a, **k: asked.append(a[2]) or (
+                    _MB.StandardButton.No if '같은 크기 범위' in a[2] else _MB.StandardButton.Yes))
+            rp.detect_all()
+            if not any('같은 크기 범위' in t for t in asked) or rp.last_sizes is None:
+                raise AssertionError(f'모든 이미지 did not ask about the size range: {asked}')
+            asked.clear()
+            _MB.question = staticmethod(
+                lambda *a, **k: asked.append(a[2]) or _MB.StandardButton.Yes)
+            rp.detect_all()
+            if rp.last_sizes is not None:
+                raise AssertionError('same range for all images not applied')
+        finally:
+            _MB.question = _q
+            rp.__dict__.pop('_jobs', None)
+            for it, cells, roles in kept:
+                it.cells, it.roi_roles = cells, roles
+            rp.refresh_list()
         rp.size_auto.setChecked(False)
         rp.min_cell.setValue(80)
         rp.max_cell.setValue(0)

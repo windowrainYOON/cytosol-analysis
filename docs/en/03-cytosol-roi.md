@@ -67,14 +67,14 @@ The simplest method; it stays available whatever other algorithms are added.
 |---|---|
 | **세포 크기** min – max (Cell size) | Cells outside this range are dropped (default 80 µm² – no limit). The sliders under the fields (log scale, 1 – 100 000 µm²) set them too; the maximum slider at its right end = **제한 없음** (no limit). |
 | **핵 크기** min – max (Nucleus size) | Nuclei outside this range are not used as nuclei (default 15 µm² – no limit). |
-| **☑ 자동 (모든 이미지에서 추정)** (Auto, estimated from all images) | Runs one detection without size limits on every open image (cells on the frame left out) and puts the smallest – largest cell and nucleus areas into the fields. Outliers such as debris or clumps of touching cells are set aside first (Tukey fences on log area: quartiles ± 1.5 IQR). While on, the fields are locked; the range is estimated again at detection when the images, channels or method changed. |
+| **☑ 자동 (이미지마다 추정)** (Auto, estimated per image) | Each image gets its own size range. One detection without size limits runs on that image (cells on the frame left out); the range is the median cell area ÷ 4 to × 3 (nuclei ÷ 20 to × 3), widened to the smallest – largest area left after setting outliers aside (debris, clumps; Tukey fences on log area, quartiles ± 1.5 IQR). One image holds only a few whole cells, so their smallest – largest alone is far too narrow; and a small nucleus (on the edge, dim) that is dropped hands its cell to a neighbour, so the nucleus minimum stays low. While on, the fields are locked and show the range used on the current image; the status bar lists the range of each image. |
 | **프레임에 걸친 세포** (Cells touching the frame) | **안쪽 경계로 자르기** (cut along an inner border, default), **제외** (drop) or **그대로 두기** (keep as is). |
 | **안쪽 경계 여백** (Inner border margin) | Distance of that inner border from the frame (default 1 µm). |
 | **실시간 미리보기** (Live preview) | When on, every change of a threshold, size range, smoothing etc. reruns the detection on the current image in the background (about 1 s per image) and shows the result as dashed ROIs in place of the existing ones. **ROI 검출** then keeps exactly that result. Turn it off when it is too slow. Off by default. |
 
 Run it with **ROI 검출 (현재 이미지)** (Detect ROIs, current image) or
 **모든 이미지** (All images: same settings, channels matched by name; you are
-asked whether to redo images that already have ROIs). The status bar shows
+asked whether to redo images that already have ROIs). With a manual size range (자동 off), **모든 이미지** asks whether every image gets the same range: Yes uses the fields' range everywhere, No estimates a range for each image as 자동 does. The status bar shows
 the number of cells, the time it took (per image on average for all images)
 and the values used.
 
