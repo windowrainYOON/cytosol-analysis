@@ -426,7 +426,7 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
    `가는 목으로 붙은 세포 자르기` (`cellroi.cut_necks`), rings of equal geodesic
    distance are grown out from each cell's nucleus (from the widest point
    without one); where the front squeezes through a gap of at most `목 폭`
-   into a part ≥ 2.5 × wider and at least the minimum cell size, the part is
+   into a part ≥ 2 × wider and at least the minimum cell size, the part is
    cut off along the darkest path of the signal across the neck (marker
    watershed in a band around it); without such a neck, the shortest chord
    between two deep concave points of the outline (depth from the convex
