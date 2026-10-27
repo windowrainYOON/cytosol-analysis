@@ -58,7 +58,8 @@ EDGE_LABELS = [
 ]
 STATUS_KO = {'ok': '', 'edge-trimmed': '프레임 안쪽으로 자름', 'edge': '프레임에 걸침'}
 TOOLS = [
-    ('select', '선택/이동', 'V', '클릭: 세포 선택, 드래그: 화면 이동'),
+    ('select', '선택/이동', 'V', '클릭: 세포 선택, Shift+클릭: 여러 세포 선택 (합치기), '
+     'Option(Alt)+드래그: 선을 그어 자르기, 드래그: 화면 이동'),
     ('add', '더하기', 'A', '드래그로 영역을 그려 선택한 세포에 더하기'),
     ('sub', '빼기', 'S', '드래그로 영역을 그려 선택한 세포에서 빼기 (선택 없으면 모든 세포에서)'),
     ('new', '새 세포', 'N', '드래그로 그린 영역을 새 세포로 추가'),
@@ -97,10 +98,12 @@ def guess_roles(item: ImageItem) -> dict:
 
 class RoiPanel(QWidget):
     liveDone = Signal(int, object, float)  # job number, CellRois or error text, seconds
+    sizesDone = Signal(object)  # size-cache key of an estimate finished in the background
     def __init__(self, win):
         super().__init__()
         self.win = win
         self.selected = 0
+        self.multi = set()  # cells picked with Shift+click (with `selected`)
         self._busy = False
         self._tp_cache = None  # (key, ThresholdPreview, detector-input RGB)
         # coalesce preview updates while a threshold slider moves
@@ -177,15 +180,22 @@ class RoiPanel(QWidget):
             w.setToolTip('이 범위 밖의 세포는 버립니다 (최대 0 = 제한 없음).')
         for w in (self.min_nuc, self.max_nuc):
             w.setToolTip('이 범위 밖의 핵은 핵으로 쓰지 않습니다 (최대 0 = 제한 없음).')
-        self.size_auto = QCheckBox('자동 (이미지마다 추정)')
+        self.size_auto = QCheckBox('자동')
         self.size_auto.setToolTip(
             '이미지마다 크기 제한 없이 한 번 검출해 (프레임에 걸친 세포 제외) 그 이미지의 '
             '범위를 정합니다: 세포 크기의 중앙값 ÷ 4 ~ × 3 (핵은 ÷ 20 ~ × 3; 작은 핵을 버리면 그 세포가 '
             '이웃 세포에 붙기 때문), 그리고 동떨어진 값(먼지, 덩어리; '
             '로그 크기의 Tukey 기준, 사분위 ± 1.5 IQR)을 뺀 가장 작은 ~ 가장 큰 크기를 모두 '
             '포함하는 범위입니다. 칸에는 현재 이미지에 쓴 값이 표시되고, 끄면 직접 입력합니다.')
+        self.size_auto.setChecked(True)
+        self.nuc_size_auto = QCheckBox('자동')
+        self.nuc_size_auto.setToolTip(self.size_auto.toolTip())
+        self.nuc_size_auto.setChecked(True)
         self.size_auto.toggled.connect(self._size_auto_toggled)
+        self.nuc_size_auto.toggled.connect(self._size_auto_toggled)
         self._size_cache = {}  # image key -> (cell range, nucleus range) estimated on it
+        self._size_jobs = set()  # keys being estimated in the background
+        self.sizesDone.connect(self._sizes_finished)
         self.fit_size = QCheckBox('붙은 세포를 크기 범위에 맞게 나누기 · 합치기')
         self.fit_size.setToolTip(
             '최대보다 큰 덩어리는 세포 사이 어두운 골을 따라 범위에 맞는 개수로 나누고, '
@@ -217,6 +227,16 @@ class RoiPanel(QWidget):
         self.edge_margin.setValue(RoiParams.edge_margin_um)
         self.edge_margin.setSuffix(' µm')
         self.edge_margin.setToolTip('프레임에 걸친 세포는 프레임에서 이만큼 안쪽에 새 경계선을 그어 자릅니다.')
+        # 자동 checkbox per value: on = the default (shown, field locked)
+        self.val_auto = {}
+        for spin, default in ((self.smooth, RoiParams.smooth_um), (self.neck_max, RoiParams.neck_max_um),
+                              (self.edge_margin, RoiParams.edge_margin_um)):
+            box = QCheckBox('자동')
+            box.setChecked(True)
+            box.setToolTip(f'켜면 기본값 {default:g} µm를 씁니다 (칸에 표시). 끄면 직접 입력합니다.')
+            box.toggled.connect(lambda on, w=spin, d=default: self._val_auto(w, d, on))
+            spin.setEnabled(False)
+            self.val_auto[spin] = box
 
         # 자동 sub-tab: the full pipeline (manual thresholds feed into it)
         auto = QWidget()
@@ -233,12 +253,12 @@ class RoiPanel(QWidget):
             dl.addRow(t['label'], row)
             dl.addRow('', t['slider'])
         dl.addRow(self.thr_view)
-        dl.addRow('스무딩', self.smooth)
+        dl.addRow('스무딩', self._with_auto(self.smooth))
         dl.addRow(self.fit_size)
         row = QHBoxLayout()
         row.addWidget(self.neck_cut)
         row.addWidget(QLabel('목 폭 ≤'))
-        row.addWidget(self.neck_max)
+        row.addLayout(self._with_auto(self.neck_max), 1)
         dl.addRow(row)
 
         # 수동 sub-tab: threshold only (at or above = ROI, below = discarded)
@@ -297,13 +317,19 @@ class RoiPanel(QWidget):
             spin.valueChanged.connect(lambda _, w=spin: self._size_sync(w))
             self._size_sliders[spin] = sl
             self._size_sync(spin)
-        dl.addRow('세포 크기', span(self.min_cell, self.max_cell))
-        dl.addRow('', span(self._size_sliders[self.min_cell], self._size_sliders[self.max_cell]))
-        dl.addRow('핵 크기', span(self.min_nuc, self.max_nuc))
-        dl.addRow('', span(self._size_sliders[self.min_nuc], self._size_sliders[self.max_nuc]))
-        dl.addRow('', self.size_auto)
+        for box, label, lo, hi in ((self.size_auto, '세포 크기', self.min_cell, self.max_cell),
+                                   (self.nuc_size_auto, '핵 크기', self.min_nuc, self.max_nuc)):
+            row = span(lo, hi)
+            row.addWidget(box)
+            dl.addRow(label, row)
+            row = span(self._size_sliders[lo], self._size_sliders[hi])
+            row.addSpacing(box.sizeHint().width())
+            dl.addRow('', row)
+            for w in (lo, hi):  # automatic: the fields only show the range in use
+                w.setEnabled(not box.isChecked())
+                self._size_sliders[w].setEnabled(not box.isChecked())
         dl.addRow('프레임에 걸친 세포', self.edge_combo)
-        dl.addRow('안쪽 경계 여백', self.edge_margin)
+        dl.addRow('안쪽 경계 여백', self._with_auto(self.edge_margin))
         run_one = QPushButton('ROI 검출 (현재 이미지)')
         run_one.clicked.connect(self.detect_current)
         run_all = QPushButton('모든 이미지')
@@ -357,6 +383,11 @@ class RoiPanel(QWidget):
             b.toggled.connect(lambda on, k=key: on and self.set_tool(k))
             QShortcut(QKeySequence(sc), win, activated=lambda k=key: self.tool_btns[k].setChecked(True))
         self.tool_btns['select'].setChecked(True)
+        merge_btn = QPushButton('합치기 (M)')
+        merge_btn.setToolTip('Shift+클릭으로 고른 세포들을 하나로 합칩니다. 떨어져 있으면 사이 틈(3 µm 이하)을 '
+                             '메워 잇고, 가까운 핵 조각도 하나로 잇습니다.')
+        merge_btn.clicked.connect(self.merge_selected)
+        QShortcut(QKeySequence('M'), win, activated=self.merge_selected)
         del_btn = QPushButton('선택 세포 삭제')
         del_btn.clicked.connect(self.delete_selected)
         undo_btn = QPushButton('되돌리기')
@@ -384,6 +415,7 @@ class RoiPanel(QWidget):
         el = QVBoxLayout(ed)
         el.addLayout(tools)
         row = QHBoxLayout()
+        row.addWidget(merge_btn)
         row.addWidget(del_btn)
         row.addWidget(undo_btn)
         row.addWidget(redo_btn)
@@ -396,6 +428,7 @@ class RoiPanel(QWidget):
         el.addLayout(row)
         el.addWidget(self.cell_list, 1)
         hint = QLabel('세포를 클릭해 선택한 뒤 더하기/빼기로 영역을 그리세요. '
+                      'Shift+클릭으로 여러 세포를 골라 합치기(M), Option(Alt)+드래그로 선을 그어 자릅니다. '
                       '가운데 버튼 드래그로 화면을 움직이고, Cmd(Ctrl)+드래그로 확대·축소합니다.')
         hint.setWordWrap(True)
         hint.setStyleSheet('color: gray;')
@@ -433,9 +466,22 @@ class RoiPanel(QWidget):
         self._hover_rois = None
         win.canvas.hover_info = self.hover_info
         win.canvas.cellClicked.connect(self._canvas_click)
+        win.canvas.cellShiftClicked.connect(self._canvas_shift_click)
+        win.canvas.roi_edit_active = lambda: self.win.tab_current('roi_tab') and self.cells is not None
         win.canvas.lassoDrawn.connect(self._lasso)
 
     # ---- helpers --------------------------------------------------------
+
+    def _with_auto(self, spin):
+        row = QHBoxLayout()
+        row.addWidget(spin, 1)
+        row.addWidget(self.val_auto[spin])
+        return row
+
+    def _val_auto(self, spin, default, on):
+        spin.setEnabled(not on)
+        if on:
+            spin.setValue(default)  # the value in use
 
     @property
     def item(self) -> ImageItem | None:
@@ -651,10 +697,12 @@ class RoiPanel(QWidget):
                 self.show_auto_values(item)
             self._thr_ranges(item)
             self._man_fill(item)
-            if self.size_auto.isChecked():
+            if self._any_size_auto():
                 sizes = self._size_cache.get(self._size_key(item, r))
                 if sizes is not None:
-                    self._show_sizes(sizes)
+                    self._show_sizes(self._auto_sizes(sizes))
+                elif self.win.tab_open('roi_tab') and not self.manual_mode():
+                    self._estimate_async(item)  # fill the 자동 size fields without a click
             if item.cells is not None:
                 for key in self.thr:
                     if self.thr[key]['auto'].isChecked():
@@ -744,9 +792,9 @@ class RoiPanel(QWidget):
         """sizes: (cell, nucleus) ranges to use; None = the fields, or this
         image's own range when 자동 is on."""
         t0 = time.perf_counter()
-        live = self._live if sizes is None or self.size_auto.isChecked() else None
-        if sizes is None and self.size_auto.isChecked():
-            sizes = self._image_sizes(item, roles)
+        live = self._live if sizes is None or self._any_size_auto() else None
+        if sizes is None and self._any_size_auto():
+            sizes = self._auto_sizes(self._image_sizes(item, roles))
         self.last_sizes = sizes
         if (live is not None and item is self.item and roles == self.roles(item)
                 and live[0] == self._live_key(item)):
@@ -836,7 +884,9 @@ class RoiPanel(QWidget):
         r = self.roles(item)
         p = self.params()
         if self.size_auto.isChecked():  # the fields only show the range in use
-            p = replace(p, min_cell_um2=-1, max_cell_um2=-1, min_nucleus_um2=-1, max_nucleus_um2=-1)
+            p = replace(p, min_cell_um2=-1, max_cell_um2=-1)
+        if self.nuc_size_auto.isChecked():
+            p = replace(p, min_nucleus_um2=-1, max_nucleus_um2=-1)
         return (id(item), id(item.planes()), r['bg'], r['nuc'], self.manual_mode(),
                 self._man_value('cell'), self._man_value('nuc'), repr(p))
 
@@ -867,7 +917,8 @@ class RoiPanel(QWidget):
         job, roles, p = self._live_job, dict(self.roles(it)), self.params()
         planes = it.planes()
         man = self.manual_mode(), self._man_value('cell'), self._man_value('nuc')
-        skey = self._size_key(it, roles) if self.size_auto.isChecked() else None
+        skey = self._size_key(it, roles) if self._any_size_auto() else None
+        pick = self._auto_sizes
         cache = self._size_cache
 
         def work():
@@ -877,7 +928,7 @@ class RoiPanel(QWidget):
                 if skey is not None:
                     if skey not in cache:
                         cache[skey] = self._estimate_planes(planes, it.pixel_um, roles, p, man)
-                    pp = self._sized(p, cache[skey])
+                    pp = self._sized(p, pick(cache[skey]))
                 res = self._run_planes(planes, it.pixel_um, roles, pp, *man)
                 res.renumber()
             except Exception as exc:
@@ -895,10 +946,10 @@ class RoiPanel(QWidget):
                 self.win.statusBar().showMessage(f'미리보기 실패: {res}', 5000)
             elif key == self._live_key(self.item):
                 self._live = (key, res)
-                if self.size_auto.isChecked():
+                if self._any_size_auto():
                     sizes = self._size_cache.get(self._size_key(self.item, self.roles()))
                     if sizes is not None:
-                        self._show_sizes(sizes)
+                        self._show_sizes(self._auto_sizes(sizes))
                 self.win.statusBar().showMessage(
                     f'미리보기: 세포 {len(res)}개 ({secs:.1f}초). ROI 검출을 누르면 이 결과를 씁니다.', 8000)
                 self.draw_overlay()
@@ -906,16 +957,56 @@ class RoiPanel(QWidget):
             self._live_again = False
             self._live_timer.start()
 
-    def _size_auto_toggled(self, on):
-        for w in (self.min_cell, self.max_cell, self.min_nuc, self.max_nuc):
-            w.setEnabled(not on)
-            self._size_sliders[w].setEnabled(not on)
-        if on and self.item is not None:
+    def _estimate_async(self, item):
+        """Estimate this image's size ranges in the background; the fields
+        are filled when it ends (if the image is still the current one)."""
+        roles = dict(self.roles(item))
+        key = self._size_key(item, roles)
+        if key in self._size_jobs:
+            return
+        self._size_jobs.add(key)
+        planes, px, p = item.planes(), item.pixel_um, self.params()
+        man = self.manual_mode(), self._man_value('cell'), self._man_value('nuc')
+        cache = self._size_cache
+
+        def work():
+            try:
+                cache[key] = self._estimate_planes(planes, px, roles, p, man)
+            except Exception:
+                traceback.print_exc()
+            self.sizesDone.emit(key)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _sizes_finished(self, key):
+        self._size_jobs.discard(key)
+        it = self.item
+        if it is not None and self._any_size_auto() and key == self._size_key(it, self.roles(it)) \
+                and key in self._size_cache:
+            self._show_sizes(self._auto_sizes(self._size_cache[key]))
+
+    def _any_size_auto(self) -> bool:
+        return self.size_auto.isChecked() or self.nuc_size_auto.isChecked()
+
+    def _auto_sizes(self, sizes):
+        """The estimated (cell, nucleus) ranges, None where the range is set by hand."""
+        cell, nuc = sizes
+        return (cell if self.size_auto.isChecked() else None,
+                nuc if self.nuc_size_auto.isChecked() else None)
+
+    def _size_auto_toggled(self, _=None):
+        for box, ws in ((self.size_auto, (self.min_cell, self.max_cell)),
+                        (self.nuc_size_auto, (self.min_nuc, self.max_nuc))):
+            for w in ws:
+                w.setEnabled(not box.isChecked())
+                self._size_sliders[w].setEnabled(not box.isChecked())
+        if self._any_size_auto() and self.item is not None and self.win.tab_open('roi_tab'):
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             try:
-                self._show_sizes(self._image_sizes(self.item, self.roles()))
+                self._show_sizes(self._auto_sizes(self._image_sizes(self.item, self.roles())))
             finally:
                 QApplication.restoreOverrideCursor()
+        self.live_changed()
 
     def _jobs(self, src):
         """(image, roles) for every image with channels matching src's roles."""
@@ -1012,7 +1103,7 @@ class RoiPanel(QWidget):
             if q == QMessageBox.StandardButton.No:
                 jobs = [(it, ro) for it, ro in jobs if it.cells is None]
         sizes = None  # None: the fields (자동: each image's own range)
-        if not self.size_auto.isChecked() and len(jobs) > 1:
+        if not self._any_size_auto() and len(jobs) > 1:
             fixed = ((self.min_cell.value(), self.max_cell.value()),
                      (self.min_nuc.value(), self.max_nuc.value()))
 
@@ -1029,7 +1120,7 @@ class RoiPanel(QWidget):
                 return
             per_image = q == QMessageBox.StandardButton.No
         else:
-            per_image = self.size_auto.isChecked()
+            per_image = self._any_size_auto()
         prog = QProgressDialog('ROI 검출 중…', '취소', 0, len(jobs), self.win)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
         errors, n, secs, ranges = [], 0, 0.0, []
@@ -1045,6 +1136,8 @@ class RoiPanel(QWidget):
                     prog.setLabelText(f'크기 범위 추정 · ROI 검출 중: {it.label}')
                     QApplication.processEvents()
                     sizes = self._image_sizes(it, roles)
+                    if self._any_size_auto():
+                        sizes = self._auto_sizes(sizes)
                 it.cells = self._detect(it, roles, sizes)
                 if per_image:
                     ranges.append(f'{it.label}: {self._sizes_text(sizes)}')
@@ -1062,7 +1155,8 @@ class RoiPanel(QWidget):
         if ranges:
             msg += ' 이미지별 크기 범위: ' + '; '.join(ranges)
             if src.cells is not None and per_image:
-                self._show_sizes(self._image_sizes(src, self.roles(src)))
+                self._show_sizes(self._auto_sizes(self._image_sizes(src, self.roles(src)))
+                                 if self._any_size_auto() else self._image_sizes(src, self.roles(src)))
         self.status(msg)
         if errors:
             QMessageBox.warning(self, '검출 실패', '\n'.join(errors))
@@ -1094,8 +1188,15 @@ class RoiPanel(QWidget):
         self.selected = e.data(Qt.ItemDataRole.UserRole) if e is not None else 0
         self.draw_overlay()
 
+    def selection(self) -> set:
+        """Labels picked now: the selected cell plus Shift+clicked ones."""
+        c = self.cells
+        ids = set(c.ids()) if c is not None else set()
+        return ({self.selected} | self.multi) & ids if self.selected else self.multi & ids
+
     def select(self, label):
         self.selected = label
+        self.multi = set()
         for i in range(self.cell_list.count()):
             if self.cell_list.item(i).data(Qt.ItemDataRole.UserRole) == label:
                 self.cell_list.blockSignals(True)
@@ -1142,7 +1243,7 @@ class RoiPanel(QWidget):
                           f'cyto{l:03d}   {self._area_text(cell_px[l] - nuc_px[l], c.px_um)}']
             top = (float((xy[:, 0].min() + xy[:, 0].max()) / 2), float(xy[:, 1].min()))
             self._hover[l] = ('\n'.join(lines), top)
-        self.win.canvas.show_cells(shapes, 0 if live else self.selected)
+        self.win.canvas.show_cells(shapes, 0 if live else (self.selection() or self.selected))
 
     @staticmethod
     def _area_text(px, px_um):
@@ -1171,6 +1272,39 @@ class RoiPanel(QWidget):
         if c is None:
             return
         self.select(c.label_at(x, y))
+
+    def _canvas_shift_click(self, x, y):
+        """Shift+click: add the cell under the cursor to the selection, or take it out."""
+        c = self.cells
+        if c is None or not self.win.tab_current('roi_tab'):
+            return
+        l = c.label_at(x, y)
+        if not l:
+            return
+        sel = self.selection()
+        sel ^= {l}
+        self.multi = set(sel)
+        if self.selected not in sel:
+            self.selected = min(sel) if sel else 0
+        self.draw_overlay()
+        if len(sel) > 1:
+            self.status(f'{len(sel)}개 세포 선택: ' + ', '.join(f'cell{i:03d}' for i in sorted(sel))
+                        + ' (M: 합치기)')
+
+    def merge_selected(self):
+        c = self.cells
+        sel = self.selection()
+        if c is None or len(sel) < 2:
+            self.status('합칠 세포를 Shift+클릭으로 두 개 이상 고르세요.')
+            return
+        l = c.merge(sel)
+        if not l:
+            self.status('세포 사이가 너무 멀어 (3 µm 넘게 떨어짐) 합치지 못했습니다.')
+            return
+        self.status(f'{", ".join(f"cell{i:03d}" for i in sorted(sel))}을(를) cell{l:03d}로 합쳤습니다.')
+        self.selected, self.multi = l, set()
+        self.refresh_list()
+        self.draw_overlay()
 
     def _ensure_cells(self):
         it = self.item
@@ -1263,12 +1397,12 @@ class RoiPanel(QWidget):
         return ', 핵 자동 검출' if found else ', 핵을 찾지 못함'
 
     def delete_selected(self):
-        c, l = self.cells, self.selected
-        if c is None or not l:
+        c, sel = self.cells, self.selection()
+        if c is None or not sel:
             return
-        c.delete(l)
-        self.selected = 0
-        self.status(f'cell{l:03d} 삭제')
+        c.delete(sorted(sel))
+        self.selected, self.multi = 0, set()
+        self.status(', '.join(f'cell{l:03d}' for l in sorted(sel)) + ' 삭제')
         self.refresh_list()
         self.draw_overlay()
 

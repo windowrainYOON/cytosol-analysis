@@ -1085,6 +1085,46 @@ class CellRois:
                     self._tidy(i)
         return new
 
+    def merge(self, ids, max_gap_um: float = 3.0) -> int:
+        """Join cells into one; the lowest number keeps its label. Cells that
+        do not touch are bridged across the gap between them (through pixels
+        no other cell holds, gaps up to max_gap_um). Their nuclei join as
+        one where they lie close. Returns the label, 0 when nothing joined."""
+        ids = sorted({int(i) for i in ids if i and (self.labels == i).any()})
+        if len(ids) < 2:
+            return 0
+        keep = ids[0]
+        m = np.isin(self.labels, ids)
+        ys, xs = np.nonzero(m)
+        px = self.px_um or 0.1
+        rmax = max(1, int(round(max_gap_um / px)))
+        pad = rmax + 2
+        sl = (slice(max(ys.min() - pad, 0), ys.max() + pad + 1),
+              slice(max(xs.min() - pad, 0), xs.max() + pad + 1))
+        sub = m[sl]
+        free = sub | (self.labels[sl] == 0)
+        joined = sub
+        r = 1
+        while measure.label(joined).max() > 1:
+            if r > rmax:
+                return 0
+            joined = sub | (ndi.binary_closing(np.pad(sub, r + 1), morphology.disk(r))
+                            [r + 1:-r - 1, r + 1:-r - 1] & free)
+            r += 1
+        self._push()
+        view = self.labels[sl]
+        view[joined] = keep
+        for l in ids[1:]:
+            self.status.pop(l, None)
+        self.status.setdefault(keep, 'ok')
+        if self.nuclei is not None:
+            nv = self.nuclei[sl]
+            nv[np.isin(nv, ids)] = keep
+            self.nuclei = _join_nuclei(self.nuclei, self.labels, max(1, round(1.0 / px))) \
+                if (self.nuclei == keep).any() else self.nuclei
+        self._tidy(keep)
+        return keep
+
     def new_cell(self, mask: np.ndarray) -> int:
         """Drawn area becomes a new cell (only where no other cell is)."""
         m = mask & (self.labels == 0)
@@ -1129,9 +1169,11 @@ class CellRois:
         self.nuclei[y0:y1, x0:x1][m] = l
         return True
 
-    def delete(self, l: int):
+    def delete(self, l):
+        """Delete cell l (or a list of cells, one undo step)."""
         self._push()
-        self._erase(l)
+        for i in (l if isinstance(l, (list, tuple, set)) else [l]):
+            self._erase(i)
 
     def label_at(self, x, y) -> int:
         H, W = self.shape
