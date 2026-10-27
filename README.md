@@ -15,7 +15,8 @@ feature is added; keep the bracketed words only when the 입자 ROI tab's
 > Line intensity profiles, per-cell colocalization (Pearson's, Spearman's
 > and Kendall's correlations, Manders' coefficients with Costes' automatic
 > threshold, Li's ICQ and Costes' significance test), and mean intensities of
-> cell, nucleus, cytosol and intracellular particle ROIs and particle shape
+> cell, nucleus, cytosol and intracellular particle ROIs (and of cytosol bands
+> of equal Euclidean distance from the nucleus) and particle shape
 > descriptors (area, perimeter, circularity, solidity, aspect ratio, roundness,
 > Feret's diameters and fitted ellipse) were analysed with the
 > algorithms of the ImageJ Plot Profile/RGB Profiler, the Fiji Coloc 2 plugin
@@ -255,7 +256,15 @@ A GUI for working on a whole set of images at once:
     `&` intersection, `|` union, `-` difference), shown filled in cyan on the
     image and saved as `<name>_regions.zip` (one ImageJ ROI per cell and
     region, `rgnCCC-R`, the expression in its `region` property) →
-    `<name>_intensity.csv` / `intensity.csv`.
+    `<name>_intensity.csv` / `intensity.csv`. Below it, **핵 → 세포막 등거리
+    띠** (`cytosol/radial.py`): every cytosol pixel of a cell with a nucleus
+    gets its distance from the nucleus, relative (d_nuc / (d_nuc + d_edge),
+    Euclidean distance maps; 0 = nucleus edge, 1 = cell edge) or in µm from
+    the nucleus outline; the chosen range is cut into n equal bands (default
+    10) measured per cell and band (same values as Measure, plus particles
+    with their centre in the band, particle area fraction and particle mean)
+    → `<name>_bands.csv` / `bands.csv`, and a graph with any two measured
+    columns as axes (cells grey, mean ± SD per band red).
 - **입자 ROI** in each cell's cytosol (or whole cell) of one channel, with a
   minimum size: **자동 (점 검출)** (v0.14)
   finds spot centres where the scale-normalised Hessian's smaller curvature

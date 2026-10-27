@@ -52,6 +52,36 @@ Files: `<name>_intensity.csv`, `intensity.csv`, and `<name>_regions.zip`
 (one ImageJ ROI per cell and region, `rgnCCC-R`, with the expression in its
 `region` property).
 
+### 핵 → 세포막 등거리 띠 (Distance bands from the nucleus to the cell edge)
+
+The cytosol is cut into bands of equal distance from the nucleus and every
+band is measured per channel. Only cells with a nucleus are measured.
+
+| Setting | Meaning |
+|---|---|
+| **거리** (Distance) | **상대 거리** (relative, default): distance from the nucleus ÷ (distance from the nucleus + distance to the cell edge), so 0 is the nucleus edge and 1 the cell edge whatever the cell's size. **핵 경계에서의 거리 (µm)**: the real distance from the nucleus outline (pixels without calibration). For cells cut by the frame the cut border counts as the cell edge. |
+| **범위** (Range) | The distance range measured: 0 – 1 by default for relative, 0 – 10 for µm. |
+| **띠 개수** (Number of bands) | How many equal bands the range is cut into (default 10). |
+| **이미지에 띠 표시** (Show bands) | Draws the band borders in cyan instead of the logic regions. |
+
+The measurement table below works like the logic regions' table. One row per
+cell and band, with `band`, `distance_rel` (or `distance_µm`, the band's
+centre) with `_from` and `_to`, the area and the values per channel. With
+particles, every band also gets `n_particles` (particles whose centre is in
+the band), `particle_area_um2`, `particle_area_fraction` and per channel
+`_particle_Mean` (mean of the particle pixels in the band).
+
+**그래프** (Graph): x and y can be any measured column (default x = the
+distance, y = the first channel's Mean). Grey lines are single cells, the red
+line and band the mean ± SD over cells per band. With the table set to **모든
+이미지**, the batch results are drawn.
+
+Saving (**강도 측정** menu): **등거리 띠 CSV 저장 (현재 이미지)…**
+(`<name>_bands.csv`), **등거리 띠: 모든 이미지 측정 + 저장 (폴더)…** (per image
+`<name>_bands.csv` and `bands.csv` for the set), **등거리 띠 그래프 저장
+(PNG / PDF / SVG / TIFF)…**. **모든 분석 결과 통합 저장** also writes
+`<name>_bands.csv`.
+
 ## The measurement table
 
 The 세포질 ROI, 입자 ROI and 강도 측정 tabs share the same measurement block.

@@ -95,7 +95,7 @@ owner writes in Korean, so reply in Korean.
 | `cellroi.py`, `roi_panel.py` | Cell / nucleus / cytosol ROI detection, editing, ImageJ ROI I/O (세포질 ROI tab) |
 | `intensity.py` | ImageJ Measure values, particle detection (Otsu / Hessian spot seeds + watershed), shape (iso-contours), logic regions |
 | `particle_panel.py` | 입자 ROI tab, per-cell and per-particle measurement, summaries |
-| `intensity_panel.py` | 강도 측정 tab (regions from expressions like `cyto - particle`) |
+| `intensity_panel.py`, `radial.py` | 강도 측정 tab (regions from expressions like `cyto - particle`; distance bands from the nucleus with graph) |
 | `measure_box.py` | Measurement table shared by the three measuring tabs |
 | `coloc.py`, `coloc_panel.py` | Fiji Coloc 2 port, per cell |
 | `lineprofile.py`, `profile_panel.py` | Line profile (ImageJ RGB Profiler) |
@@ -207,4 +207,5 @@ not affected.
 | #39 | 0.26 | 세포질 ROI: 자동 / 수동 (threshold) sub-tabs, cell and nucleus size ranges with sliders, split / merge touching cells to the range, size range estimated from all images, 자동 checkboxes showing the values in use, live detection preview, ROI hover label (name, area), detection time in the status bar |
 | #40 | | Mac auto update: launchd agent builds, self-tests and installs new `main` commits into /Applications, DMG + exe on the Desktop; Windows release per version |
 | #41 | 0.27 | 세포질 ROI size range: 자동 = each image its own range (median ÷ 4 – × 3, nuclei ÷ 20), 수동 range: 모든 이미지 asks whether all images get the same range |
-| this PR | 0.28 | 세포질 ROI: 가는 목으로 붙은 세포 자르기 (geodesic rings from the nucleus + darkest-path cut, else concave-point chord; `cellroi.cut_necks`), 자르기 (C) editing tool (`CellRois.cut`) |
+| #42 | 0.28 | 세포질 ROI: 가는 목으로 붙은 세포 자르기 (geodesic rings from the nucleus + darkest-path cut, else concave-point chord; `cellroi.cut_necks`), 자르기 (C) editing tool (`CellRois.cut`) |
+| this PR | 0.29 | 강도 측정: 핵 → 세포막 등거리 띠 (`radial.py`, relative / µm distance, n bands, per-band intensity + particles, graph with selectable axes, `<name>_bands.csv`) |
