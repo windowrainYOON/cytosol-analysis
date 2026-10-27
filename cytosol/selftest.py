@@ -1020,9 +1020,35 @@ def run(out_dir) -> int:
             if not res.get(id(own)):
                 raise AssertionError(f'{box.suffix}: all-image measurement skipped the image')
             box.save_item(own, out / 'intensity_gui', res[id(own)])
+        # distance bands from the nucleus: n bands per cell, particles per band, graph
+        bm = ip.bands_measure
+        ip.band_n.setValue(5)
+        bm.refresh(force=True)
+        cells_nuc = [l for l in own.cells.ids() if (own.cells.nuclei == l).any()]
+        bands = {r['band'] for r in bm.rows}
+        if len(bm.rows) != 5 * len(cells_nuc) or bands != set(range(1, 6)) \
+                or 'n_particles' not in bm.rows[0] or 'distance_rel' not in bm.rows[0]:
+            raise AssertionError(f'band rows: {len(bm.rows)} for {len(cells_nuc)} cells, {bands}')
+        area = sum(r['area_px'] for r in bm.rows)
+        cyto = sum(((own.cells.labels == l) & (own.cells.nuclei != l)).sum() for l in cells_nuc)
+        if area != cyto:
+            raise AssertionError(f'bands cover {area} px of {cyto} cytosol px')
+        if ip.graph_x.currentText() != 'distance_rel' or not ip.graph_y.currentText().endswith('_Mean') \
+                or not ip.ax.lines:
+            raise AssertionError(f'band graph {ip.graph_x.currentText()} / {ip.graph_y.currentText()}')
+        ip.graph_y.setCurrentIndex(ip.graph_y.findText('n_particles'))
+        if ip.graph_y.currentText() != 'n_particles' or not ip.ax.lines:
+            raise AssertionError('graph axis not switched to a particle value')
+        ip.show_bands.setChecked(True)
+        ip.draw_regions()
+        if win.canvas._logic_item is None:
+            raise AssertionError('bands not drawn on the image')
+        ip.show_bands.setChecked(False)
+        ip.fig.savefig(out / 'intensity_gui' / 'bands.png')
+        ip.band_n.setValue(10)
         from .lut import item_stem
         stem = item_stem(own)
-        for name in ('cell_intensity.csv', 'particle_intensity.csv', 'intensity.csv',
+        for name in ('cell_intensity.csv', 'particle_intensity.csv', 'intensity.csv', 'bands.csv',
                      'RoiSet.zip', 'particles.zip', 'particles_contour.zip', 'regions.zip',
                      'image.png'):
             if not (out / 'intensity_gui' / f'{stem}_{name}').exists():

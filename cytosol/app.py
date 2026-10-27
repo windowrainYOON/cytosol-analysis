@@ -1561,6 +1561,11 @@ class MainWindow(QMainWindow):
         sub = mb.addMenu('강도 측정')
         tab_action(sub, 'intensity_tab')
         self._measure_menu(sub, ip.measure)
+        sub.addSeparator()
+        act(sub, '등거리 띠 CSV 저장 (현재 이미지)…', ip.bands_measure.save_current)
+        act(sub, '등거리 띠: 모든 이미지 측정 + 저장 (폴더)…', ip.bands_measure.save_all,
+            tip=ip.bands_measure.save_tip)
+        act(sub, '등거리 띠 그래프 저장 (PNG / PDF / SVG / TIFF)…', ip.save_plot)
 
         sub = mb.addMenu('Coloc 2')
         tab_action(sub, 'coloc_tab')
@@ -1937,6 +1942,7 @@ class MainWindow(QMainWindow):
             'window': self, 'roi': self.roi_panel, 'roi_measure': self.roi_panel.measure,
             'particle': self.particle_panel, 'particle_measure': self.particle_panel.measure,
             'intensity': self.intensity_panel, 'intensity_measure': self.intensity_panel.measure,
+            'intensity_bands': self.intensity_panel.bands_measure,
             'coloc': self.coloc_panel, 'profile': self.profile_panel, 'markers': self.markers,
             'stack': self.stack_panel,
         }
@@ -3215,7 +3221,8 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, '저장 완료', msg)
 
     def _measure_boxes(self):
-        return [self.roi_panel.measure, self.particle_panel.measure, self.intensity_panel.measure]
+        return [self.roi_panel.measure, self.particle_panel.measure, self.intensity_panel.measure,
+                self.intensity_panel.bands_measure]
 
     def export_everything(self):
         """Save every image's TIFFs, ROIs and measurements into its own folder."""
