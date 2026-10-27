@@ -946,6 +946,7 @@ def run(out_dir) -> int:
         if rp._live is not None:
             raise AssertionError('live preview not cleared when switched off')
         rp.size_auto.setChecked(True)
+        rp.nuc_size_auto.setChecked(True)
         if rp.min_cell.isEnabled() or not 0 < rp.min_cell.value() <= rp.max_cell.value():
             raise AssertionError(f'size range estimate {rp.min_cell.value()}–{rp.max_cell.value()}')
         # 자동: each image gets its own range, shown in the fields
@@ -959,6 +960,7 @@ def run(out_dir) -> int:
             if own_sizes is None or rp.max_cell.value() != np.ceil(own_sizes[0][1] * 10) / 10:
                 raise AssertionError(f'per-image size range not used / shown: {own_sizes}')
             rp.size_auto.setChecked(False)
+            rp.nuc_size_auto.setChecked(False)
             # manual range, several images: asked whether all get the same range
             two = [(own, dict(rp.roles(own)))] * 2
             rp._jobs = lambda src: list(two)
@@ -982,6 +984,7 @@ def run(out_dir) -> int:
                 it.cells, it.roi_roles = cells, roles
             rp.refresh_list()
         rp.size_auto.setChecked(False)
+        rp.nuc_size_auto.setChecked(False)
         # 자르기 tool: a line across a cell splits it, undo restores it
         n0 = len(own.cells)
         cx, cy = own.cells.centroid(own.cells.ids()[0])
@@ -992,6 +995,22 @@ def run(out_dir) -> int:
         rp.undo()
         if len(own.cells) != n0:
             raise AssertionError('자르기 not undone')
+        # 합치기: Shift+click two neighbouring cells, then M; undo splits them again
+        rp._lasso('cut', np.array([(cx - 60, cy + 25), (cx + 60, cy + 25)]))
+        a, b = own.cells.ids()[0], own.cells.ids()[-1]
+        rp.select(a)
+        bx, by = own.cells.centroid(b)
+        rp._canvas_shift_click(bx, by)
+        if rp.selection() != {a, b}:
+            raise AssertionError(f'Shift+click selection {rp.selection()} != {{{a}, {b}}}')
+        rp.merge_selected()
+        if len(own.cells) != n0 or b in own.cells.ids():
+            raise AssertionError(f'합치기: {len(own.cells)} cells, ids {own.cells.ids()}')
+        rp.undo()
+        rp.undo()
+        if len(own.cells) != n0:
+            raise AssertionError('합치기 / 자르기 not undone')
+        rp.select(0)
         rp.min_cell.setValue(80)
         rp.max_cell.setValue(0)
         rp.min_nuc.setValue(15)
