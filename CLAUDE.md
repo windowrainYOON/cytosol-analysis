@@ -61,11 +61,19 @@ owner writes in Korean, so reply in Korean.
 - **세포질 ROI tab** (`roi_panel.py`): the **ROI 검출** box has sub-tabs
   **자동** (`segment_cells`) and **수동 (threshold)** (`threshold_cells`);
   `manual_mode()` says which one detection uses. Shared below them: cell /
-  nucleus size ranges (min–max with log sliders, `size_auto` estimates them
-  per image: `_image_sizes`, cached in `_size_cache`; with a manual range
-  `detect_all` asks whether all images get the same range), frame handling, and `live` (실시간 미리보기: debounced
+  nucleus size ranges (min–max with log sliders; `size_auto` (cells) and
+  `nuc_size_auto` (nuclei), both on by default, estimate them per image:
+  `_image_sizes`, cached in `_size_cache`, `_auto_sizes` keeps only the
+  automatic ones, `_estimate_async` fills the fields when an image is
+  picked; with both ranges manual `detect_all` asks whether all images get
+  the same range), frame handling, and `live` (실시간 미리보기: debounced
   background detection drawn as dashed ROIs, reused by ROI 검출). Hovering a
-  ROI shows its name and area (`Canvas.hover_info`).
+  ROI shows its name and area (`Canvas.hover_info`). Smoothing, neck width
+  and inner border margin have 자동 checkboxes too (`val_auto`; auto = the
+  `RoiParams` default). Editing: Shift+click (`Canvas.cellShiftClicked`)
+  builds a multi-selection (`RoiPanel.selection()`), 합치기 (M) joins it
+  (`CellRois.merge`, bridges gaps ≤ 3 µm), Option/Alt+drag with 선택 draws a
+  cut line (`Canvas.roi_edit_active`, `_lasso_tool`).
   - Rule from the owner (2026-10-27, v0.26): the plain manual threshold mode
     (at or above the threshold = ROI, below = discarded, nothing else) must
     always stay, whatever detection algorithms are added later; automatic
@@ -210,4 +218,5 @@ not affected.
 | #42 | 0.28 | 세포질 ROI: 가는 목으로 붙은 세포 자르기 (geodesic rings from the nucleus + darkest-path cut, else concave-point chord; `cellroi.cut_necks`), 자르기 (C) editing tool (`CellRois.cut`) |
 | #43 | 0.29 | 강도 측정: 핵 → 세포막 등거리 띠 (`radial.py`, relative / µm distance, n bands, per-band intensity + particles, graph with selectable axes, `<name>_bands.csv`) |
 | #44 | 0.29.1 | Neck cut on by default, neck ≤ 6 µm, part beyond ≥ 2 × wider (FV3000 tip-joined cell cut; PRD 24h cell IoU 0.733 → 0.738) |
-| this PR | 0.30 | Nucleus split kept only when the shape says two nuclei (`_split_ok`: notches at both ends, convex pieces / non-convex pair, short cut, centres apart); bean nuclei stay whole (FV3000: 19 split blobs → 7) |
+| #45 | 0.30 | Nucleus split kept only when the shape says two nuclei (`_split_ok`: notches at both ends, convex pieces / non-convex pair, short cut, centres apart); bean nuclei stay whole (FV3000: 19 split blobs → 7) |
+| this PR | 0.31 | Wedge-shaped cell ROIs around dim nuclei fixed: nucleus patches < 2 µm apart are joined before splitting (`nucleus_gap_um`), auto size range gets 10 % slack; 자동 checkbox per value (cell / nucleus size separately, smoothing, neck, margin), all on and filled when an image is picked; Shift+click multi-select, 합치기 (M), Option+drag cut |

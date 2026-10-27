@@ -66,6 +66,7 @@ class RoiParams:
     neck_ratio: float = 2.0          # the part beyond must be this many times wider than the neck
     nucleus_split_um: float = 6.0    # min distance between nucleus centers when splitting
     nucleus_neck_um: float = 1.0     # how much narrower the neck between two touching nuclei must be
+    nucleus_gap_um: float = 2.0      # nucleus patches closer than this are one nucleus
     edge_mode: str = 'trim'
     edge_margin_um: float = 1.0
     work_px_um: float = 0.2          # computations run at about this pixel size
@@ -104,6 +105,12 @@ def nucleus_threshold(s: np.ndarray, p: RoiParams) -> float:
 def segment_nuclei(nuc: np.ndarray, px_um: float, p: RoiParams) -> np.ndarray:
     s = nucleus_signal(nuc, px_um)
     m = s > nucleus_threshold(s, p)
+    # a dim, textured nucleus crosses the threshold only in patches: join
+    # patches closer than nucleus_gap_um before anything else, or each one
+    # would seed a cell of its own (wedges around the nucleus)
+    r = max(1, round(p.nucleus_gap_um / 2 / px_um))
+    m = ndi.binary_closing(np.pad(m, r + 1), morphology.disk(r))[r + 1:-r - 1, r + 1:-r - 1] | m
+    m = ndi.binary_fill_holes(m)
     m = ndi.binary_opening(m, morphology.disk(max(1, round(0.4 / px_um))))
     m = ndi.binary_fill_holes(m)
     m = morphology.remove_small_objects(m, max_size=int(p.min_nucleus_um2 / px_um ** 2))
@@ -833,7 +840,9 @@ def image_size_range(areas, below=4.0, above=3.0) -> tuple[float, float] | None:
         return None
     lo, hi = size_range(a)
     m = float(np.exp(np.median(np.log(a))))
-    return max(1.0, min(lo, m / below)), max(hi, m * above)
+    # 10 % slack: the detection with limits trims / cuts cells a little
+    # differently, and the largest cell must not fall just outside
+    return max(1.0, min(lo / 1.1, m / below)), max(hi * 1.1, m * above)
 
 
 def threshold_cells(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
