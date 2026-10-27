@@ -494,8 +494,10 @@ When `origin/main` has a new commit it builds the app in a separate worktree
 (`~/.cytosol-autoupdate/src`, the clone itself is not touched), runs its
 `--selftest`, and only if that passes swaps it into
 `/Applications/Cytosol Viewer.app` (after the running app quits; the old one
-goes to the Trash as `Cytosol Viewer <version>.app`). `MAKE_DMG=1` at install
-also writes the DMG to the Desktop each time. Log:
+goes to the Trash as `Cytosol Viewer <version>.app`). It also writes the DMG
+to the Desktop and copies the Windows zip of the newest release there; only the
+newest DMG and zip it made stay, older ones go to the Trash (`MAKE_DMG=0` /
+`GET_EXE=0` at install turn these off). Log:
 `~/Library/Logs/CytosolViewer-autoupdate.log`; remove with
 `scripts/install_auto_update.sh --uninstall`.
 
@@ -506,7 +508,8 @@ GitHub Actions (`.github/workflows/build-windows.yml`): open the run under the
 repository's **Actions → Build Windows app** and download the
 `CytosolViewer-<version>-<commit>-Windows` artifact. Unzip it anywhere and run
 `Cytosol Viewer.exe`; keep the `_internal` folder next to it. Nothing needs to
-be installed. The exe is not code-signed, so Windows SmartScreen asks once
+be installed. Pushes to `main` also publish the zip as a GitHub release, one per
+version (`v<version>`, holding the newest commit of that version). The exe is not code-signed, so Windows SmartScreen asks once
 (**추가 정보 → 실행**).
 
 On a Windows PC with Python 3.12:

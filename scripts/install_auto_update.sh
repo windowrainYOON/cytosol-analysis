@@ -34,7 +34,8 @@ cat > "$PLIST" <<PL
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>MAKE_DMG</key><string>${MAKE_DMG:-0}</string>
+    <key>MAKE_DMG</key><string>${MAKE_DMG:-1}</string>
+    <key>GET_EXE</key><string>${GET_EXE:-1}</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>1800</integer>
