@@ -18,7 +18,10 @@
 # Log: ~/Library/Logs/CytosolViewer-autoupdate.log
 set -euo pipefail
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+# the clone (CYTOSOL_REPO from the launchd agent: this file then runs as a
+# copy in ~/.cytosol-autoupdate, refreshed from main below, so switching
+# branches in the clone never changes or removes it)
+REPO="${CYTOSOL_REPO:-$(cd "$(dirname "$0")/.." && pwd)}"
 BASE="$HOME/.cytosol-autoupdate"     # no spaces: venv scripts break on them
 SRC="$BASE/src"
 STAMP="$BASE/installed_commit"
@@ -103,6 +106,8 @@ else
   git -C "$SRC" checkout --quiet --force --detach "$NEW"
   git -C "$SRC" clean -fdq -e .venv
 fi
+cp "$SRC/scripts/mac_auto_update.sh" "$BASE/mac_auto_update.sh.new" \
+  && mv "$BASE/mac_auto_update.sh.new" "$BASE/mac_auto_update.sh"   # next run
 
 log "building"
 "$SRC/build_mac.sh" > "$BASE/build.log" 2>&1 || {
