@@ -139,6 +139,19 @@ def reflow(root: QWidget):
 def _reflow_layout(lay, owner):
     if isinstance(lay, QFormLayout):
         lay.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        subs = [lay.itemAt(i).layout() for i in range(lay.count())]
+        for sub in subs:
+            if sub is None:
+                continue
+            flow = _to_flow(sub) if isinstance(sub, (QHBoxLayout, QGridLayout)) else None
+            if flow is None:
+                _reflow_layout(sub, owner)
+                continue
+            row, role = lay.getLayoutPosition(sub)
+            lay.takeAt(lay.indexOf(sub))
+            sub.setParent(None)
+            lay.setLayout(row, role, flow)
+        return
     for i in range(lay.count()):
         sub = lay.itemAt(i).layout()
         if sub is None:
