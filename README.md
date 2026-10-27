@@ -422,7 +422,14 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
    distance-map maxima or k-means centres, compact watershed; a cell's nucleus
    stays whole in one piece) and regions below the minimum are merged with the
    neighbour across the weakest border when the merged size fits better
-   (`cellroi.fit_sizes`); nuclei are fitted the same way. With
+   (`cellroi.fit_sizes`); nuclei are fitted the same way. Touching nuclei
+   are split at distance-map maxima (watershed) and the cut is kept only
+   when the shape says two nuclei (`cellroi._split_ok`): a notch (depth
+   inside the convex hull ≥ 0.4 µm and 8% of the radius) at both ends of the
+   cut, each piece convex (solidity ≥ 0.8) while the pair is not (≤ 0.93), a
+   cut shorter than 0.8 × the narrower piece's width, and centres ≥ 0.6 × the
+   sum of the pieces' radii apart; otherwise the pieces are joined again, so
+   kidney- or bean-shaped nuclei stay whole. With
    `가는 목으로 붙은 세포 자르기` (`cellroi.cut_necks`), rings of equal geodesic
    distance are grown out from each cell's nucleus (from the widest point
    without one); where the front squeezes through a gap of at most `목 폭`
