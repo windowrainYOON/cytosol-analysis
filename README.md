@@ -413,10 +413,12 @@ preview and in the file list tooltip (`cytosol/imageid.py`).
    distance-map maxima or k-means centres, compact watershed; a cell's nucleus
    stays whole in one piece) and regions below the minimum are merged with the
    neighbour across the weakest border when the merged size fits better
-   (`cellroi.fit_sizes`); nuclei are fitted the same way. `자동 (모든 이미지에서
-   추정)` fills the ranges with the smallest – largest cell / nucleus found on
-   all images by one detection without limits, after Tukey fences on log area
-   (`cellroi.size_range`).
+   (`cellroi.fit_sizes`); nuclei are fitted the same way. `자동 (이미지마다
+   추정)` gives each image its own range from one detection without limits on
+   it: median area ÷ 4 to × 3 for cells (÷ 20 to × 3 for nuclei, which seed the
+   cells), widened to the smallest – largest area left by Tukey fences on log
+   area (`cellroi.image_size_range`). With a manual range, 모든 이미지 asks
+   whether every image gets the same range or its own estimate.
    **수동 (threshold)** sub-tab: the plain manual mode, kept whatever else is
    added: connected areas at or above the cell threshold are the cells (holes
    filled), the largest area at or above the nucleus threshold inside each is

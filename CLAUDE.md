@@ -62,7 +62,8 @@ owner writes in Korean, so reply in Korean.
   **자동** (`segment_cells`) and **수동 (threshold)** (`threshold_cells`);
   `manual_mode()` says which one detection uses. Shared below them: cell /
   nucleus size ranges (min–max with log sliders, `size_auto` estimates them
-  from all images), frame handling, and `live` (실시간 미리보기: debounced
+  per image: `_image_sizes`, cached in `_size_cache`; with a manual range
+  `detect_all` asks whether all images get the same range), frame handling, and `live` (실시간 미리보기: debounced
   background detection drawn as dashed ROIs, reused by ROI 검출). Hovering a
   ROI shows its name and area (`Canvas.hover_info`).
   - Rule from the owner (2026-10-27, v0.26): the plain manual threshold mode
@@ -204,4 +205,5 @@ not affected.
 | #37 | 0.24 | Project files (`.cyproj`), 파일 / Tool menus, 불러오기 with automatic detection, tabs opened from Tool, Crop tab, work log, settings (mouse sensitivity), `Cmd`+drag / `[` `]` zoom, wheel = time, this file |
 | #38 | 0.25 | One menu per feature next to 파일 (tab, saves, loads), markers fixed under the LUT tab, marker settings save/load, Tool menu removed |
 | #39 | 0.26 | 세포질 ROI: 자동 / 수동 (threshold) sub-tabs, cell and nucleus size ranges with sliders, split / merge touching cells to the range, size range estimated from all images, 자동 checkboxes showing the values in use, live detection preview, ROI hover label (name, area), detection time in the status bar |
-| this PR | | Mac auto update: launchd agent builds, self-tests and installs new `main` commits into /Applications, DMG + exe on the Desktop; Windows release per version |
+| #40 | | Mac auto update: launchd agent builds, self-tests and installs new `main` commits into /Applications, DMG + exe on the Desktop; Windows release per version |
+| this PR | 0.27 | 세포질 ROI size range: 자동 = each image its own range (median ÷ 4 – × 3, nuclei ÷ 20), 수동 range: 모든 이미지 asks whether all images get the same range |

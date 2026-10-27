@@ -559,6 +559,19 @@ def size_range(areas, fence=1.5) -> tuple[float, float] | None:
     return float(a.min()), float(a.max())
 
 
+def image_size_range(areas, below=4.0, above=3.0) -> tuple[float, float] | None:
+    """Size range for one image: the typical (median) area / `below` to
+    × `above`, widened to the areas size_range keeps. One image holds only a
+    few whole cells, so the smallest – largest of them alone is far too
+    narrow (one cell gives a single value). None without areas."""
+    a = np.asarray([x for x in areas if x and x > 0], float)
+    if not len(a):
+        return None
+    lo, hi = size_range(a)
+    m = float(np.exp(np.median(np.log(a))))
+    return max(1.0, min(lo, m / below)), max(hi, m * above)
+
+
 def threshold_cells(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
                     cell_threshold: float, nuc_threshold: float | None = None,
                     p: RoiParams | None = None) -> 'CellRois':

@@ -41,9 +41,9 @@ from .cellroi import (
     CellRois,
     RoiParams,
     ThresholdPreview,
+    image_size_range,
     merged_preview,
     segment_cells,
-    size_range,
     threshold_cells,
 )
 from .imageid import roi_id
@@ -176,14 +176,15 @@ class RoiPanel(QWidget):
             w.setToolTip('이 범위 밖의 세포는 버립니다 (최대 0 = 제한 없음).')
         for w in (self.min_nuc, self.max_nuc):
             w.setToolTip('이 범위 밖의 핵은 핵으로 쓰지 않습니다 (최대 0 = 제한 없음).')
-        self.size_auto = QCheckBox('자동 (모든 이미지에서 추정)')
+        self.size_auto = QCheckBox('자동 (이미지마다 추정)')
         self.size_auto.setToolTip(
-            '모든 이미지에서 크기 제한 없이 한 번 검출해 (프레임에 걸친 세포 제외) 가장 작은 세포·핵과 '
-            '가장 큰 세포·핵의 크기를 범위로 넣습니다. 동떨어진 값(먼지, 덩어리)은 로그 크기의 '
-            'Tukey 기준(사분위 ± 1.5 IQR)으로 뺍니다. 칸에는 추정한 값이 표시되고, '
-            '끄면 직접 입력합니다.')
+            '이미지마다 크기 제한 없이 한 번 검출해 (프레임에 걸친 세포 제외) 그 이미지의 '
+            '범위를 정합니다: 세포 크기의 중앙값 ÷ 4 ~ × 3 (핵은 ÷ 20 ~ × 3; 작은 핵을 버리면 그 세포가 '
+            '이웃 세포에 붙기 때문), 그리고 동떨어진 값(먼지, 덩어리; '
+            '로그 크기의 Tukey 기준, 사분위 ± 1.5 IQR)을 뺀 가장 작은 ~ 가장 큰 크기를 모두 '
+            '포함하는 범위입니다. 칸에는 현재 이미지에 쓴 값이 표시되고, 끄면 직접 입력합니다.')
         self.size_auto.toggled.connect(self._size_auto_toggled)
-        self._size_key = None  # what the automatic range was estimated from
+        self._size_cache = {}  # image key -> (cell range, nucleus range) estimated on it
         self.fit_size = QCheckBox('붙은 세포를 크기 범위에 맞게 나누기 · 합치기')
         self.fit_size.setToolTip(
             '최대보다 큰 덩어리는 세포 사이 어두운 골을 따라 범위에 맞는 개수로 나누고, '
@@ -243,6 +244,7 @@ class RoiPanel(QWidget):
             ml.addRow(label, spin)
             ml.addRow('', slider)
         self.last_seconds = 0.0  # time the last detection took
+        self.last_sizes = None  # size ranges the last detection used, when set per image
         self.man_view = QCheckBox('threshold 영역 미리보기 (노랑: 세포, 파랑: 핵)')
         self.man_view.setChecked(True)
         self.man_view.toggled.connect(lambda _: self.win.update_preview())
@@ -628,6 +630,10 @@ class RoiPanel(QWidget):
                 self.show_auto_values(item)
             self._thr_ranges(item)
             self._man_fill(item)
+            if self.size_auto.isChecked():
+                sizes = self._size_cache.get(self._size_key(item, r))
+                if sizes is not None:
+                    self._show_sizes(sizes)
             if item.cells is not None:
                 for key in self.thr:
                     if self.thr[key]['auto'].isChecked():
@@ -713,14 +719,20 @@ class RoiPanel(QWidget):
         return self._run_planes(item.planes(), item.pixel_um, roles, p, self.manual_mode(),
                                 self._man_value('cell'), self._man_value('nuc'))
 
-    def _detect(self, item: ImageItem, roles: dict) -> CellRois:
+    def _detect(self, item: ImageItem, roles: dict, sizes=None) -> CellRois:
+        """sizes: (cell, nucleus) ranges to use; None = the fields, or this
+        image's own range when 자동 is on."""
         t0 = time.perf_counter()
-        live = self._live
+        live = self._live if sizes is None or self.size_auto.isChecked() else None
+        if sizes is None and self.size_auto.isChecked():
+            sizes = self._image_sizes(item, roles)
+        self.last_sizes = sizes
         if (live is not None and item is self.item and roles == self.roles(item)
                 and live[0] == self._live_key(item)):
             rois = copy.deepcopy(live[1])  # the preview shown is exactly this detection
         else:
-            rois = self._run(item, roles, self.params())
+            p = self.params() if sizes is None else self._sized(self.params(), sizes)
+            rois = self._run(item, roles, p)
             rois.renumber()
         self.last_seconds = time.perf_counter() - t0
         return rois
@@ -730,8 +742,6 @@ class RoiPanel(QWidget):
         if it is None:
             return
         if it.cells is not None and len(it.cells) and not self._confirm_replace():
-            return
-        if self.size_auto.isChecked() and not self.estimate_sizes():
             return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
@@ -743,10 +753,14 @@ class RoiPanel(QWidget):
         finally:
             QApplication.restoreOverrideCursor()
         self._live = None
+        sz = ''
+        if self.last_sizes is not None:
+            self._show_sizes(self.last_sizes)
+            sz = f', 크기 범위 자동: {self._sizes_text(self.last_sizes)}'
         if self.manual_mode():
             msg = (f'세포 {len(it.cells)}개 검출 (수동: 세포 ≥ {self._man_value("cell"):.4g}'
                    + (f', 핵 ≥ {self._man_value("nuc"):.4g}' if self.roles()['nuc'] is not None else '')
-                   + f', {self.last_seconds:.1f}초)')
+                   + f', {self.last_seconds:.1f}초{sz})')
             self.status(msg)
             self.selected = 0
             self.refresh_list()
@@ -766,6 +780,7 @@ class RoiPanel(QWidget):
                     self._thr_show(key, v)
         if used:
             msg += ', ' + ', '.join(used)
+        msg += sz
         if self.roles()['nuc'] is not None and it.cells.nuclei is None:
             msg += '. 핵 채널에서 핵을 찾지 못해 핵 없이 나눴습니다.'
         self.status(msg)
@@ -798,8 +813,11 @@ class RoiPanel(QWidget):
 
     def _live_key(self, item):
         r = self.roles(item)
+        p = self.params()
+        if self.size_auto.isChecked():  # the fields only show the range in use
+            p = replace(p, min_cell_um2=-1, max_cell_um2=-1, min_nucleus_um2=-1, max_nucleus_um2=-1)
         return (id(item), id(item.planes()), r['bg'], r['nuc'], self.manual_mode(),
-                self._man_value('cell'), self._man_value('nuc'), repr(self.params()))
+                self._man_value('cell'), self._man_value('nuc'), repr(p))
 
     def live_changed(self, *_):
         if self.live.isChecked() and self.item is not None and not self._busy:
@@ -828,11 +846,18 @@ class RoiPanel(QWidget):
         job, roles, p = self._live_job, dict(self.roles(it)), self.params()
         planes = it.planes()
         man = self.manual_mode(), self._man_value('cell'), self._man_value('nuc')
+        skey = self._size_key(it, roles) if self.size_auto.isChecked() else None
+        cache = self._size_cache
 
         def work():
             t0 = time.perf_counter()
             try:
-                res = self._run_planes(planes, it.pixel_um, roles, p, *man)
+                pp = p
+                if skey is not None:
+                    if skey not in cache:
+                        cache[skey] = self._estimate_planes(planes, it.pixel_um, roles, p, man)
+                    pp = self._sized(p, cache[skey])
+                res = self._run_planes(planes, it.pixel_um, roles, pp, *man)
                 res.renumber()
             except Exception as exc:
                 traceback.print_exc()
@@ -849,6 +874,10 @@ class RoiPanel(QWidget):
                 self.win.statusBar().showMessage(f'미리보기 실패: {res}', 5000)
             elif key == self._live_key(self.item):
                 self._live = (key, res)
+                if self.size_auto.isChecked():
+                    sizes = self._size_cache.get(self._size_key(self.item, self.roles()))
+                    if sizes is not None:
+                        self._show_sizes(sizes)
                 self.win.statusBar().showMessage(
                     f'미리보기: 세포 {len(res)}개 ({secs:.1f}초). ROI 검출을 누르면 이 결과를 씁니다.', 8000)
                 self.draw_overlay()
@@ -860,9 +889,12 @@ class RoiPanel(QWidget):
         for w in (self.min_cell, self.max_cell, self.min_nuc, self.max_nuc):
             w.setEnabled(not on)
             self._size_sliders[w].setEnabled(not on)
-        if on and self.win.items:
-            self._size_key = None
-            self.estimate_sizes()
+        if on and self.item is not None:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                self._show_sizes(self._image_sizes(self.item, self.roles()))
+            finally:
+                QApplication.restoreOverrideCursor()
 
     def _jobs(self, src):
         """(image, roles) for every image with channels matching src's roles."""
@@ -879,57 +911,63 @@ class RoiPanel(QWidget):
                 jobs.append((it, {'nuc': nuc, 'bg': bg}))
         return jobs
 
-    def estimate_sizes(self) -> bool:
-        """Fill the size ranges from a detection without size limits over all
-        images (kept until the images, roles or method change). False when
-        cancelled."""
-        src = self.item
-        if src is None:
-            return False
-        jobs = self._jobs(src)
-        p = replace(self.params(), min_cell_um2=10.0, max_cell_um2=0.0, min_nucleus_um2=2.0,
-                    max_nucleus_um2=0.0, fit_size=False, edge_mode='exclude')
-        key = (tuple((id(it), it.z, it.image.t, ro['bg'], ro['nuc']) for it, ro in jobs),
-               self.manual_mode(), self._man_value('cell'), self._man_value('nuc'),
-               p.saturation, p.smooth_um, p.nuc_threshold, p.cell_threshold)
-        if key == self._size_key:
-            return True
-        prog = QProgressDialog('크기 범위 추정 중…', '취소', 0, len(jobs), self.win)
-        prog.setWindowModality(Qt.WindowModality.WindowModal)
-        prog.setMinimumDuration(500)
-        cells, nucs = [], []
-        t0 = time.perf_counter()
-        for i, (it, ro) in enumerate(jobs):
-            if prog.wasCanceled():
-                return False
-            prog.setLabelText(f'크기 범위 추정 중: {it.label}')
-            prog.setValue(i)
-            QApplication.processEvents()
-            try:
-                rois = self._run(it, ro, p)
-            except Exception:
-                traceback.print_exc()
+    # ---- size range per image ---------------------------------------------
+
+    def _size_key(self, item, roles):
+        """What an image's automatic size range depends on."""
+        p = self.params()
+        return (id(item), id(item.planes()), item.z, item.image.t, roles['bg'], roles['nuc'],
+                self.manual_mode(), self._man_value('cell'), self._man_value('nuc'),
+                p.saturation, p.smooth_um, p.nuc_threshold, p.cell_threshold)
+
+    @classmethod
+    def _estimate_planes(cls, planes, px_um, roles, p, man):
+        """(cell range, nucleus range) in µm² for one image: a detection
+        without size limits (cells on the frame left out), then image_size_range."""
+        pe = replace(p, min_cell_um2=10.0, max_cell_um2=0.0, min_nucleus_um2=2.0,
+                     max_nucleus_um2=0.0, fit_size=False, edge_mode='exclude')
+        rois = cls._run_planes(planes, px_um, roles, pe, *man)
+        px2 = (rois.px_um or 0.1) ** 2
+        out = []
+        # nuclei are the seeds of the cells: a small (partial, dim) nucleus
+        # dropped hands its cell to a neighbour, so their minimum stays low
+        for lab, below in ((rois.labels, 4.0), (rois.nuclei, 20.0)):
+            if lab is None:
+                out.append(None)
                 continue
-            px2 = (rois.px_um or 0.1) ** 2
-            cl = np.bincount(rois.labels.ravel())[1:]
-            cells += (cl[cl > 0] * px2).tolist()
-            if rois.nuclei is not None:
-                nl = np.bincount(rois.nuclei.ravel())[1:]
-                nucs += (nl[nl > 0] * px2).tolist()
-        prog.setValue(len(jobs))
-        got = []
-        for (lo_w, hi_w), areas, name in (((self.min_cell, self.max_cell), cells, '세포'),
-                                          ((self.min_nuc, self.max_nuc), nucs, '핵')):
-            rng = size_range(areas)
-            if rng is None:
-                continue
-            lo_w.setValue(max(1.0, np.floor(rng[0] * 10) / 10))
-            hi_w.setValue(np.ceil(rng[1] * 10) / 10)
-            got.append(f'{name} {rng[0]:.0f}–{rng[1]:.0f} µm² ({len(areas)}개)')
-        self._size_key = key
-        self.status(f'크기 범위 자동 추정 (이미지 {len(jobs)}개, {time.perf_counter() - t0:.1f}초): '
-                    + (', '.join(got) if got else '검출된 세포 없음'))
-        return True
+            a = np.bincount(np.asarray(lab).ravel())[1:]
+            out.append(image_size_range(a[a > 0] * px2, below=below))
+        return tuple(out)
+
+    def _image_sizes(self, item, roles):
+        key = self._size_key(item, roles)
+        if key not in self._size_cache:
+            man = self.manual_mode(), self._man_value('cell'), self._man_value('nuc')
+            self._size_cache[key] = self._estimate_planes(
+                item.planes(), item.pixel_um, roles, self.params(), man)
+        return self._size_cache[key]
+
+    @staticmethod
+    def _sized(p, sizes):
+        """p with the size ranges of one image (None: keep p's)."""
+        cell, nuc = sizes
+        if cell is not None:
+            p = replace(p, min_cell_um2=cell[0], max_cell_um2=cell[1])
+        if nuc is not None:
+            p = replace(p, min_nucleus_um2=nuc[0], max_nucleus_um2=nuc[1])
+        return p
+
+    def _show_sizes(self, sizes):
+        """Show the range in use (automatic) in the fields."""
+        for (lo_w, hi_w), rng in zip(((self.min_cell, self.max_cell), (self.min_nuc, self.max_nuc)),
+                                     sizes):
+            if rng is not None:
+                lo_w.setValue(max(1.0, np.floor(rng[0] * 10) / 10))
+                hi_w.setValue(np.ceil(rng[1] * 10) / 10)
+
+    def _sizes_text(self, sizes):
+        names = ('세포', '핵')
+        return ', '.join(f'{n} {r[0]:.0f}–{r[1]:.0f} µm²' for n, r in zip(names, sizes) if r is not None)
 
     def _confirm_replace(self):
         r = QMessageBox.question(self, 'ROI 다시 검출', '이 이미지의 ROI(수정 포함)를 새로 검출한 결과로 바꿀까요?')
@@ -952,11 +990,28 @@ class RoiPanel(QWidget):
                 return
             if q == QMessageBox.StandardButton.No:
                 jobs = [(it, ro) for it, ro in jobs if it.cells is None]
-        if self.size_auto.isChecked() and not self.estimate_sizes():
-            return
+        sizes = None  # None: the fields (자동: each image's own range)
+        if not self.size_auto.isChecked() and len(jobs) > 1:
+            fixed = ((self.min_cell.value(), self.max_cell.value()),
+                     (self.min_nuc.value(), self.max_nuc.value()))
+
+            def txt(r):
+                return f"{r[0]:g}–{r[1]:g} µm²" if r[1] else f"{r[0]:g} µm² 이상"
+            q = QMessageBox.question(
+                self, '크기 범위',
+                f'모든 이미지에 같은 크기 범위를 적용할까요?\n'
+                f'세포 {txt(fixed[0])}, 핵 {txt(fixed[1])}\n\n'
+                '아니오: 이미지마다 크기 범위를 자동으로 추정해 씁니다.',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                | QMessageBox.StandardButton.Cancel)
+            if q == QMessageBox.StandardButton.Cancel:
+                return
+            per_image = q == QMessageBox.StandardButton.No
+        else:
+            per_image = self.size_auto.isChecked()
         prog = QProgressDialog('ROI 검출 중…', '취소', 0, len(jobs), self.win)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
-        errors, n, secs = [], 0, 0.0
+        errors, n, secs, ranges = [], 0, 0.0, []
         for i, (it, roles) in enumerate(jobs):
             if prog.wasCanceled():
                 break
@@ -965,7 +1020,13 @@ class RoiPanel(QWidget):
             QApplication.processEvents()
             try:
                 it.roi_roles = roles
-                it.cells = self._detect(it, roles)
+                if per_image:
+                    prog.setLabelText(f'크기 범위 추정 · ROI 검출 중: {it.label}')
+                    QApplication.processEvents()
+                    sizes = self._image_sizes(it, roles)
+                it.cells = self._detect(it, roles, sizes)
+                if per_image:
+                    ranges.append(f'{it.label}: {self._sizes_text(sizes)}')
                 secs += self.last_seconds
                 n += 1
             except Exception as exc:
@@ -977,6 +1038,10 @@ class RoiPanel(QWidget):
             f' (이미지당 평균 {secs / n:.1f}초).' if n else '.')
         if skipped:
             msg += f' (역할에 맞는 채널이 없거나 건너뛴 이미지 {skipped}개)'
+        if ranges:
+            msg += ' 이미지별 크기 범위: ' + '; '.join(ranges)
+            if src.cells is not None and per_image:
+                self._show_sizes(self._image_sizes(src, self.roles(src)))
         self.status(msg)
         if errors:
             QMessageBox.warning(self, '검출 실패', '\n'.join(errors))
