@@ -64,6 +64,8 @@ class RoiParams:
     neck_cut: bool = True            # cut cells joined to a neighbour by a thin neck
     neck_max_um: float = 6.0         # widest gap still counted as a neck
     neck_ratio: float = 2.0          # the part beyond must be this many times wider than the neck
+    nuc_local: bool = True           # re-draw each nucleus with its neighbourhood's contrast
+    nuc_local_k: float = 0.3         # local threshold: background + k × (nucleus - background)
     nucleus_split_um: float = 6.0    # min distance between nucleus centers when splitting
     nucleus_neck_um: float = 1.0     # how much narrower the neck between two touching nuclei must be
     edge_mode: str = 'trim'
@@ -101,9 +103,73 @@ def nucleus_threshold(s: np.ndarray, p: RoiParams) -> float:
     return float(p.nuc_threshold) if p.nuc_threshold is not None else float(filters.threshold_otsu(s))
 
 
+def _local_nuclei(s, thr, px_um, p: RoiParams) -> np.ndarray:
+    """Nucleus mask re-drawn around every seed with the contrast of its own
+    neighbourhood: a nucleus stain stands out from the background, but dim
+    nuclei fall below one threshold for the whole image and come out ragged
+    or not at all. Seeds are areas above a lower threshold (a quarter of the way from
+    the background to `thr`) holding pixels above 0.4 × `thr`'s step over the
+    background; in a window of about one nucleus around each, everything
+    above local background + `nuc_local_k` × (seed signal - local background)
+    that is joined to the seed is nucleus, the rest background. The result
+    must be compact (solidity >= 0.8, which bean shapes pass), else the seed keeps the image
+    threshold's area; seeds that never reach `thr` must also stand clearly
+    above their surroundings and be about as large (>= half the median) and
+    round (minor / major axis >= 0.4) as the image's other nuclei."""
+    below = s[s < thr]
+    bg = float(np.median(below)) if below.size else float(s.min())
+    se = morphology.disk(max(1, round(0.4 / px_um)))
+    low = ndi.binary_opening(s > bg + 0.25 * (thr - bg), se)
+    seeds = measure.label(low)
+    min_px = p.min_nucleus_um2 / px_um ** 2
+    out = np.zeros(s.shape, bool)
+    dim = []  # (slice, mask) of nuclei only the lower threshold found
+    for r in measure.regionprops(seeds, intensity_image=s):
+        if r.area < 0.5 * min_px or r.intensity_max < bg + 0.4 * (thr - bg):
+            continue
+        rad = int(max(np.sqrt(r.area / np.pi), 3 / px_um))
+        y0, x0, y1, x1 = r.bbox
+        sl = (slice(max(y0 - rad, 0), y1 + rad), slice(max(x0 - rad, 0), x1 + rad))
+        win = s[sl]
+        seed = seeds[sl] == r.label
+        around = ~ndi.binary_dilation(low[sl], iterations=max(1, int(1 / px_um)))
+        lbg = float(np.percentile(win[around], 50)) if around.any() else bg
+        sig = float(np.percentile(win[seed], 75))
+        t = lbg + p.nuc_local_k * (sig - lbg)
+        cand = ndi.binary_opening(win > t, se)
+        cc = measure.label(cand)
+        ids = np.unique(cc[seed & cand])
+        keep = ndi.binary_fill_holes(np.isin(cc, ids[ids > 0]))
+        # a nucleus is a compact, rounded blob clearly above its surroundings;
+        # a ragged result is a patch of cytoplasmic stain (or reached into it)
+        solid = keep.sum() / max(morphology.convex_hull_image(keep).sum(), 1) if keep.any() else 0
+        round_ = solid >= 0.8  # kidney / bean shapes included
+        if r.intensity_max < thr:  # only found by the lower threshold
+            if sig - lbg >= 0.5 * (thr - bg) and round_:
+                dim.append((sl, keep))
+            continue
+        if not round_:  # keep the image threshold's area for this seed
+            keep = ndi.binary_fill_holes(seed & (win > thr))
+        view = out[sl]
+        view |= keep
+    # dim nuclei: about as large and round as the bright ones of the image
+    sizes = [x.area for x in measure.regionprops(measure.label(out))]
+    typical = float(np.median(sizes)) if sizes else min_px
+    for sl, keep in dim:
+        x = max(measure.regionprops(measure.label(keep)), key=lambda q: q.area)
+        if x.area >= 0.5 * typical and x.axis_minor_length >= 0.4 * x.axis_major_length:
+            view = out[sl]
+            view |= keep
+    return out
+
+
 def segment_nuclei(nuc: np.ndarray, px_um: float, p: RoiParams) -> np.ndarray:
     s = nucleus_signal(nuc, px_um)
-    m = s > nucleus_threshold(s, p)
+    thr = nucleus_threshold(s, p)
+    if p.nuc_local:
+        m = _local_nuclei(s, thr, px_um, p)
+    else:
+        m = s > thr
     m = ndi.binary_opening(m, morphology.disk(max(1, round(0.4 / px_um))))
     m = ndi.binary_fill_holes(m)
     m = morphology.remove_small_objects(m, max_size=int(p.min_nucleus_um2 / px_um ** 2))
