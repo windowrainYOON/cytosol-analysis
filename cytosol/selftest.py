@@ -577,10 +577,11 @@ def run(out_dir) -> int:
         if tabs != ['LUT', '이미지 정보']:
             raise AssertionError(f'tabs at start: {tabs}')
         # side panes keep their widths: a wider window only widens the preview
-        win.resize(1200, 800)
+        # (start wide enough that the preview is above its minimum width)
+        win.resize(1500, 800)
         app.processEvents()
         before = win.main_split.sizes()
-        win.resize(1500, 800)
+        win.resize(1800, 800)
         app.processEvents()
         after = win.main_split.sizes()
         if after[0] != before[0] or after[2] != before[2] or after[1] <= before[1]:
