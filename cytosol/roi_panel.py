@@ -194,9 +194,10 @@ class RoiPanel(QWidget):
         self.neck_cut = QCheckBox('가는 목으로 붙은 세포 자르기')
         self.neck_cut.setToolTip(
             '핵에서 세포 안쪽으로 같은 거리의 고리를 넓혀 가다가, 고리가 좁은 틈(아래 목 폭 이하)을 '
-            '지나 다시 넓어지는(목보다 2.5배 이상) 곳을 목으로 보고, 목 부근에서 신호가 가장 어두운 '
+            '지나 다시 넓어지는(목보다 2배 이상) 곳을 목으로 보고, 목 부근에서 신호가 가장 어두운 '
             '경로로 자릅니다. 그런 목이 없으면 윤곽에서 깊게 파인 오목점 두 개를 잇는 가장 짧은 선으로 '
             '자릅니다. 잘린 쪽은 핵 없는 새 세포가 됩니다 (핵을 놓친 이웃 세포).')
+        self.neck_cut.setChecked(RoiParams.neck_cut)
         self.neck_max = QDoubleSpinBox()
         self.neck_max.setRange(0.5, 50)
         self.neck_max.setSingleStep(0.5)

@@ -61,9 +61,9 @@ class RoiParams:
     min_nucleus_um2: float = 15.0
     max_nucleus_um2: float = 0.0     # 0 = no upper limit
     fit_size: bool = False           # merge / split touching regions to fit the size range
-    neck_cut: bool = False           # cut cells joined to a neighbour by a thin neck
-    neck_max_um: float = 4.0         # widest gap still counted as a neck
-    neck_ratio: float = 2.5          # the part beyond must be this many times wider than the neck
+    neck_cut: bool = True            # cut cells joined to a neighbour by a thin neck
+    neck_max_um: float = 6.0         # widest gap still counted as a neck
+    neck_ratio: float = 2.0          # the part beyond must be this many times wider than the neck
     nucleus_split_um: float = 6.0    # min distance between nucleus centers when splitting
     nucleus_neck_um: float = 1.0     # how much narrower the neck between two touching nuclei must be
     edge_mode: str = 'trim'
