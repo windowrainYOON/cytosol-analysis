@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.25.0)
+## Window structure (v0.26.0)
 
 - **Left**: image list with group folders (`image_tree.py`, `groups.py`),
   buttons 파일 추가… / 폴더 불러오기… / groups.
@@ -58,6 +58,22 @@ owner writes in Korean, so reply in Korean.
     `save_csv`, ...) that the menus call. Option widgets that belong to a
     save (image export options `exp_box`, stack `save_box`) are shown in a
     dialog (`_options_dialog`). The Figure window keeps its own save buttons.
+- **세포질 ROI tab** (`roi_panel.py`): the **ROI 검출** box has sub-tabs
+  **자동** (`segment_cells`) and **수동 (threshold)** (`threshold_cells`);
+  `manual_mode()` says which one detection uses. Shared below them: cell /
+  nucleus size ranges (min–max with log sliders, `size_auto` estimates them
+  from all images), frame handling, and `live` (실시간 미리보기: debounced
+  background detection drawn as dashed ROIs, reused by ROI 검출). Hovering a
+  ROI shows its name and area (`Canvas.hover_info`).
+  - Rule from the owner (2026-10-27, v0.26): the plain manual threshold mode
+    (at or above the threshold = ROI, below = discarded, nothing else) must
+    always stay, whatever detection algorithms are added later; automatic
+    modes must also accept user-set thresholds into their algorithm.
+  - Rule from the owner (2026-10-27): every automatic setting is switched
+    with its own **자동** checkbox, and its value field always shows the
+    value actually used (filled in even while automatic). Sizes and
+    thresholds get sliders under their fields; live previews that cost
+    detection time sit behind a checkbox.
 - **Status bar**: `LoggingStatusBar` (`worklog.py`); every lasting message
   (`showMessage` without timeout) goes into the `WorkLog` and marks the
   project dirty. Use `statusBar().showMessage(...)` for anything the user
@@ -178,4 +194,5 @@ not affected.
 | #35 | 0.23 | CZI bleach ROIs, 이미지 정보 tab, CZI time / single-channel fixes |
 | #36 | | User manuals `docs/ko`, `docs/en` |
 | #37 | 0.24 | Project files (`.cyproj`), 파일 / Tool menus, 불러오기 with automatic detection, tabs opened from Tool, Crop tab, work log, settings (mouse sensitivity), `Cmd`+drag / `[` `]` zoom, wheel = time, this file |
-| this PR | 0.25 | One menu per feature next to 파일 (tab, saves, loads), markers fixed under the LUT tab, marker settings save/load, Tool menu removed |
+| #38 | 0.25 | One menu per feature next to 파일 (tab, saves, loads), markers fixed under the LUT tab, marker settings save/load, Tool menu removed |
+| this PR | 0.26 | 세포질 ROI: 자동 / 수동 (threshold) sub-tabs, cell and nucleus size ranges with sliders, split / merge touching cells to the range, size range estimated from all images, 자동 checkboxes showing the values in use, live detection preview, ROI hover label (name, area), detection time in the status bar |

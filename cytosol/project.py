@@ -70,7 +70,7 @@ def dumps(obj) -> str:
 def _leaf_state(w):
     from PySide6.QtGui import QAction
     from PySide6.QtWidgets import (QAbstractButton, QAbstractSlider, QAbstractSpinBox,
-                                   QComboBox, QGroupBox, QLineEdit)
+                                   QComboBox, QGroupBox, QLineEdit, QTabWidget)
 
     if isinstance(w, QAction):
         return {'checked': w.isChecked()} if w.isCheckable() else None
@@ -81,6 +81,8 @@ def _leaf_state(w):
         return {'index': w.currentIndex(), 'text': w.currentText(), 'data': data}
     if isinstance(w, QLineEdit):
         return {'text': w.text()}
+    if isinstance(w, QTabWidget):  # sub-tabs such as 자동 / 수동
+        return {'tab': w.currentIndex()}
     if isinstance(w, (QAbstractSpinBox, QAbstractSlider)) and hasattr(w, 'value'):
         return {'value': w.value()}
     if isinstance(w, QGroupBox):
@@ -141,6 +143,9 @@ def _set_leaf(w, st):
             w.setCurrentIndex(i)
     elif isinstance(w, QLineEdit):
         w.setText(st.get('text', ''))
+    elif 'tab' in st:
+        if 0 <= st['tab'] < w.count():
+            w.setCurrentIndex(st['tab'])
     elif 'value' in st:
         w.setValue(type(w.value())(st['value']))
 

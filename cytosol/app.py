@@ -271,6 +271,20 @@ class Canvas(QGraphicsView):
         # wheel_handler(steps) -> True when it used the wheel (steps may be 0)
         self.wheel_handler = None
         self._wheel_acc = 0.0
+        # hover_info(x, y) -> (text, (x, y) scene point to show it above) or None:
+        # a label over the ROI under the mouse (name and area)
+        self.hover_info = None
+        self._hover_key = None
+        self._hover_box = QGraphicsRectItem()
+        self._hover_box.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        self._hover_box.setBrush(QColor(0, 0, 0, 190))
+        self._hover_box.setPen(QPen(Qt.PenStyle.NoPen))
+        self._hover_box.setZValue(40)
+        self._hover_text = QGraphicsSimpleTextItem(self._hover_box)
+        self._hover_text.setBrush(QColor(255, 255, 255))
+        self._hover_box.hide()
+        self.scene().addItem(self._hover_box)
+        self.viewport().setMouseTracking(True)
 
     def set_image(self, qimg: QImage, refit=False):
         self.pix.setPixmap(QPixmap.fromImage(qimg))
@@ -615,7 +629,39 @@ class Canvas(QGraphicsView):
             self._press_view = event.position()
         super().mousePressEvent(event)
 
+    def _update_hover(self, event):
+        info = None
+        if self.hover_info is not None and not event.buttons() and self._lasso is None:
+            p = self.mapToScene(event.position().toPoint())
+            info = self.hover_info(p.x(), p.y())
+        key = info and (info[0], tuple(info[1]))
+        if key == self._hover_key:
+            return
+        self._hover_key = key
+        if info is None:
+            self._hover_box.hide()
+            return
+        text, (x, y) = info
+        self._hover_text.setText(text)
+        r = self._hover_text.boundingRect()
+        pad = 4
+        # centred above the anchor (screen pixels, the label does not scale)
+        self._hover_box.setRect(QRectF(-r.width() / 2 - pad, -r.height() - 2 * pad - 6,
+                                       r.width() + 2 * pad, r.height() + 2 * pad))
+        self._hover_text.setPos(-r.width() / 2, -r.height() - pad - 6)
+        self._hover_box.setPos(x, y)
+        self._hover_box.show()
+
+    def hide_hover(self):
+        self._hover_key = None
+        self._hover_box.hide()
+
+    def leaveEvent(self, event):
+        self.hide_hover()
+        super().leaveEvent(event)
+
     def mouseMoveEvent(self, event):
+        self._update_hover(event)
         if self._zoom_drag is not None:
             p, s0, anchor = self._zoom_drag
             dy = p.y() - event.position().y()  # up = zoom in
@@ -2777,6 +2823,8 @@ class MainWindow(QMainWindow):
         if not self._stack_on() and it is not None:
             it.image.release()
         self._sync_z_widgets()
+        if it is not None and self.tab_current('roi_tab'):
+            self.roi_panel.show_auto_values(it)
         self.update_preview(refit=True)
         self.roi_panel.measure.schedule()
         self.particle_panel.schedule()

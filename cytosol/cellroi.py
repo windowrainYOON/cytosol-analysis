@@ -18,9 +18,20 @@ Pipeline (segment_cells):
      cell-cell "valleys" (Sato filter) of the merged image. Without a nucleus
      channel, seeds come from the distance map and over-split regions whose
      shared border is not darker than their interiors are merged.
+  4b. optional size range (`fit_size`): regions larger than the maximum are
+     cut at the cell-cell valleys into as many pieces as fit the range
+     (seeds at distance-map maxima, k-means where there are too few), and
+     regions smaller than the minimum are merged with the neighbour across
+     the weakest border when the result fits; cells (and nuclei) still
+     outside [min, max] are then dropped
   5. cells cut by the image frame: by default the frame side is replaced by
      an inner border `edge_margin_um` inside the frame, so the ROI no longer
      runs along the frame ('trim'); 'exclude' drops them, 'keep' leaves them.
+
+threshold_cells is the plain manual mode: every connected area at or above
+a threshold in the background channel is a cell (holes filled), the nucleus
+is the largest area at or above the nucleus threshold inside it; nothing
+else. It stays available whatever the automatic pipeline becomes.
 
 CellRois holds the result as a label image and supports the GUI edits
 (add / subtract a drawn area, new cell, delete, undo) and ImageJ ROI I/O.
@@ -46,7 +57,10 @@ class RoiParams:
     smooth_um: float = 0.8           # Gaussian smoothing of the merged image
     fg_k: float = 1.0                # foreground threshold = Otsu * fg_k
     min_cell_um2: float = 80.0
+    max_cell_um2: float = 0.0        # 0 = no upper limit
     min_nucleus_um2: float = 15.0
+    max_nucleus_um2: float = 0.0     # 0 = no upper limit
+    fit_size: bool = False           # merge / split touching regions to fit the size range
     nucleus_split_um: float = 6.0    # min distance between nucleus centers when splitting
     nucleus_neck_um: float = 1.0     # how much narrower the neck between two touching nuclei must be
     edge_mode: str = 'trim'
@@ -112,11 +126,152 @@ def segment_nuclei(nuc: np.ndarray, px_um: float, p: RoiParams) -> np.ndarray:
             cy, cx = map(int, r.coords[np.argmax(dist[tuple(r.coords.T)])])
             markers[cy, cx] = markers.max() + 1
     lab = segmentation.watershed(-dist, markers, mask=m)
-    # drop fragments the split left too small
-    small = [r.label for r in measure.regionprops(lab) if r.area < p.min_nucleus_um2 / px_um ** 2]
-    if small:
-        lab[np.isin(lab, small)] = 0
+    lo, hi = p.min_nucleus_um2 / px_um ** 2, p.max_nucleus_um2 / px_um ** 2
+    if p.fit_size:
+        lab = fit_sizes(lab, s, lo, hi, min_border=max(2, int(0.5 / px_um)))
+    # drop fragments the split left too small (and nuclei above the maximum)
+    out = [r.label for r in measure.regionprops(lab) if r.area < lo or (hi and r.area > hi)]
+    if out:
+        lab[np.isin(lab, out)] = 0
     return segmentation.relabel_sequential(lab)[0]
+
+
+# ---------------------------------------------------------------------------
+# size range: split regions above it, merge regions below it
+# ---------------------------------------------------------------------------
+
+
+def _size_penalty(a, lo, hi) -> float:
+    """0 inside [lo, hi] (hi = 0: no maximum), else the log of how far outside."""
+    if lo and a < lo:
+        return float(np.log(lo / max(a, 1)))
+    if hi and a > hi:
+        return float(np.log(a / hi))
+    return 0.0
+
+
+def _split_seeds(m, dist, n, lo, method):
+    """n seed points (row, col) inside mask m."""
+    if method == 'peaks':
+        md = max(1, int(0.7 * np.sqrt(lo / np.pi))) if lo else 1
+        pk = feature.peak_local_max(dist, min_distance=md, num_peaks=n,
+                                    labels=m.astype(np.int32), exclude_border=False)
+        return pk if len(pk) == n else None
+    from scipy.cluster.vq import kmeans2
+    pts = np.argwhere(m).astype(float)
+    if len(pts) < n:
+        return None
+    cen, _ = kmeans2(pts, n, minit='++', seed=0)
+    # each center to its nearest pixel inside the mask
+    idx = [int(np.argmin(((pts - c) ** 2).sum(1))) for c in cen]
+    if len(set(idx)) < n:
+        return None
+    return pts[idx].astype(int)
+
+
+def _split_region(m, ridge, lo, hi, keep=None):
+    """Best split of one region (bool crop) into pieces fitting [lo, hi];
+    returns a label crop (1..n) or None when splitting does not help.
+    `keep` (bool crop, e.g. the nucleus) stays whole in piece 1."""
+    area = int(m.sum())
+    n_min = int(np.ceil(area / hi))
+    n_max = max(n_min, int(area // lo)) if lo else n_min
+    n_max = min(n_max, n_min + 3, 30)
+    dist = ndi.distance_transform_edt(m)
+    # compact watershed: pieces grow about evenly from their seeds (Voronoi-like)
+    # and bend toward the bright cell-cell ridges where there are any
+    cost = np.zeros(m.shape) if ridge is None else np.clip(ridge, 0, None) * m
+    best, best_score = None, _size_penalty(area, lo, hi)
+    for n in range(max(2, n_min), max(2, n_max) + 1):
+        compact = 0.5 / max(np.sqrt(area / n / np.pi), 1.0)
+        for method in ('peaks', 'kmeans'):
+            seeds = _split_seeds(m, dist, n, lo, method)
+            if seeds is None:
+                continue
+            markers = np.zeros(m.shape, np.int32)
+            if keep is not None and keep.any():
+                # the seed nearest the kept area is replaced by the area itself
+                c = np.argwhere(keep).mean(0)
+                seeds = np.delete(seeds, np.argmin(((seeds - c) ** 2).sum(1)), 0)
+                markers[tuple(seeds.T)] = np.arange(2, n + 1)
+                markers[keep] = 1
+            else:
+                markers[tuple(seeds.T)] = np.arange(1, n + 1)
+            lab = segmentation.watershed(cost, markers, mask=m, compactness=compact)
+            areas = np.bincount(lab.ravel(), minlength=n + 1)[1:]
+            score = sum(_size_penalty(a, lo, hi) for a in areas)
+            if score < best_score - 1e-6:
+                best, best_score = lab, score
+        if best is not None and best_score == 0:
+            break  # fewest pieces that all fit
+    return best
+
+
+def fit_sizes(lab, img, lo, hi, ridge=None, min_border=3, nuclei=None):
+    """Split labels larger than hi and merge labels smaller than lo with a
+    neighbour (areas in pixels; hi = 0: no maximum).
+
+    Splits follow `ridge` (bright = border between cells) when given, else the
+    distance map. Merges take the pair whose shared border is least darker
+    than their interiors in `img`, among those whose merged area fits better.
+    `nuclei` (labelled like lab) is kept in step: a split cell keeps its
+    nucleus in the piece holding most of it, merged cells' nuclei join.
+    """
+    lab = lab.copy()
+    nxt = int(lab.max()) + 1
+    if hi:
+        for r in measure.regionprops(lab):
+            if r.area <= hi:
+                continue
+            sl = tuple(slice(max(s.start - 1, 0), s.stop + 1) for s in r.slice)
+            m = lab[sl] == r.label
+            nm = None if nuclei is None else (nuclei[sl] == r.label) & m
+            sub = _split_region(m, None if ridge is None else ridge[sl], lo, hi, keep=nm)
+            if sub is None:
+                continue
+            keep = 1
+            view = lab[sl]
+            for k in range(1, int(sub.max()) + 1):
+                if k != keep:
+                    view[sub == k] = nxt
+                    nxt += 1
+            if nuclei is not None:
+                nv = nuclei[sl]
+                nv[(nv == r.label) & (view != r.label)] = 0
+    if lo:
+        area = dict(zip(*np.unique(lab[lab > 0], return_counts=True)))
+        area = {int(k): int(v) for k, v in area.items()}
+        med = {}
+        while True:
+            small = {l for l, a in area.items() if a < lo}
+            if not small:
+                break
+            best = None
+            for (a, b), (bmean, blen) in _border_stats(lab, img).items():
+                if blen < min_border or (a not in small and b not in small):
+                    continue
+                gain = (_size_penalty(area[a], lo, hi) + _size_penalty(area[b], lo, hi)
+                        - _size_penalty(area[a] + area[b], lo, hi))
+                if gain <= 1e-6:
+                    continue
+                for l in (a, b):
+                    if l not in med:
+                        med[l] = float(np.median(img[lab == l]))
+                contrast = min(med[a], med[b]) - bmean
+                if best is None or contrast < best[0]:
+                    best = (contrast, a, b)
+            if best is None:
+                break
+            _, a, b = best
+            if area[b] > area[a]:
+                a, b = b, a  # the larger keeps its label
+            lab[lab == b] = a
+            area[a] += area.pop(b)
+            med.pop(b, None)
+            med.pop(a, None)
+            if nuclei is not None:
+                nuclei[nuclei == b] = a
+    return lab
 
 
 def _border_stats(lab, img):
@@ -166,6 +321,23 @@ def _merge_regions(lab, img, contrast_tau, min_area, min_border):
         med.pop(b)
         med[a] = float(np.median(img[lab == a]))
     return segmentation.relabel_sequential(lab)[0]
+
+
+def _join_nuclei(nuclei, lab, radius):
+    """Nuclei of a cell in several pieces become one (closed, filled, largest)."""
+    out = nuclei * (nuclei == lab)
+    se = morphology.disk(radius)
+    for r in measure.regionprops(out):
+        sl = tuple(slice(max(s.start - radius - 1, 0), s.stop + radius + 1) for s in r.slice)
+        m = out[sl] == r.label
+        if measure.label(m).max() <= 1:
+            continue
+        j = ndi.binary_fill_holes(ndi.binary_closing(np.pad(m, radius + 1), se))
+        j = j[radius + 1:-radius - 1, radius + 1:-radius - 1] & (lab[sl] == r.label)
+        view = out[sl]
+        view[m] = 0
+        view[_largest(j)] = r.label
+    return out
 
 
 def _largest(mask):
@@ -328,13 +500,23 @@ def segment_cells(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
         lab = _smooth_labels(lab, max(1, round(0.6 / wpx)))
         nuclei = None
 
-    # drop small cells (and their nuclei)
+    max_cell = p.max_cell_um2 / wpx ** 2
+    if p.fit_size:
+        if nuclei is not None:
+            nuclei = nuclei * (lab == nuclei)
+        lab = fit_sizes(lab, dens, min_cell, max_cell, ridge=vn,
+                        min_border=max(3, int(1.5 / wpx)), nuclei=nuclei)
+        if nuclei is not None:  # merged cells: one nucleus from the joined pieces
+            nuclei = _join_nuclei(nuclei, lab, max(1, round(1.0 / wpx)))
+    # drop cells outside the size range (and their nuclei)
     for r in measure.regionprops(lab):
-        if r.area < min_cell:
+        if r.area < min_cell or (max_cell and r.area > max_cell):
             lab[lab == r.label] = 0
+    if nuclei is not None:
+        nuclei = nuclei * (lab == nuclei)
     lab, fw, _ = segmentation.relabel_sequential(lab)
     if nuclei is not None:
-        nuclei = np.asarray(fw[nuclei]) * (lab == np.asarray(fw[nuclei]))
+        nuclei = np.asarray(fw[nuclei])
 
     def up(a):
         if a is None:
@@ -357,6 +539,60 @@ def segment_cells(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
     rois = CellRois(lab.astype(np.int32), nuclei, px_um)
     rois.saturation = sat
     rois.nuc_threshold, rois.cell_threshold = nuc_thr, cell_thr
+    rois.apply_edge_mode(p.edge_mode, p.edge_margin_um, p.min_cell_um2)
+    return rois
+
+
+def size_range(areas, fence=1.5) -> tuple[float, float] | None:
+    """(smallest, largest) of the areas once outliers are set aside: Tukey
+    fences on log area, so debris and clumps of touching cells do not set the
+    range. None without areas."""
+    a = np.asarray([x for x in areas if x and x > 0], float)
+    if not len(a):
+        return None
+    if len(a) >= 4:
+        la = np.log(a)
+        q1, q3 = np.percentile(la, [25, 75])
+        keep = (la >= q1 - fence * (q3 - q1)) & (la <= q3 + fence * (q3 - q1))
+        if keep.any():
+            a = a[keep]
+    return float(a.min()), float(a.max())
+
+
+def threshold_cells(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
+                    cell_threshold: float, nuc_threshold: float | None = None,
+                    p: RoiParams | None = None) -> 'CellRois':
+    """Manual mode: cells = connected areas with bg >= cell_threshold (holes
+    filled, since ImageJ polygons hold none); nucleus = the largest area with
+    nuc >= nuc_threshold inside each cell. Only p's size ranges and frame
+    handling apply; no smoothing, no splitting."""
+    p = p or RoiParams()
+    px = px_um or 0.1
+    fg = ndi.binary_fill_holes(bg >= cell_threshold)
+    lab = measure.label(fg, connectivity=1).astype(np.int32)
+    lo, hi = p.min_cell_um2 / px ** 2, p.max_cell_um2 / px ** 2
+    out = [r.label for r in measure.regionprops(lab) if r.area < lo or (hi and r.area > hi)]
+    if out:
+        lab[np.isin(lab, out)] = 0
+    lab = segmentation.relabel_sequential(lab)[0].astype(np.int32)
+    nuclei = None
+    if nuc is not None and nuc_threshold is not None:
+        nlo, nhi = p.min_nucleus_um2 / px ** 2, p.max_nucleus_um2 / px ** 2
+        cand = measure.label((nuc >= nuc_threshold) & (lab > 0), connectivity=1)
+        nuclei = np.zeros_like(lab)
+        best = {}
+        for r in measure.regionprops(cand):
+            if r.area < nlo or (nhi and r.area > nhi):
+                continue
+            l = int(lab[tuple(r.coords[0])])
+            if r.area > best.get(l, (0, None))[0]:
+                best[l] = (r.area, r)
+        for l, (_, r) in best.items():
+            m = ndi.binary_fill_holes(r.image) & (lab[r.slice] == l)
+            nuclei[r.slice][m] = l
+    rois = CellRois(lab, nuclei, px_um)
+    rois.cell_threshold, rois.nuc_threshold = float(cell_threshold), (
+        None if nuclei is None else float(nuc_threshold))
     rois.apply_edge_mode(p.edge_mode, p.edge_margin_um, p.min_cell_um2)
     return rois
 
