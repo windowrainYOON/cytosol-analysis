@@ -5,6 +5,9 @@ on:
     branches: [main, 'claude/**']
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -23,6 +26,28 @@ jobs:
         with:
           name: ${{ env.BUILD_NAME }}
           path: dist/Cytosol Viewer/
+      # one GitHub release per version (tag v<version>) holding the exe zip of
+      # the newest main commit with that version; the Mac auto update
+      # (scripts/mac_auto_update.sh) copies it to the Desktop
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ver = ([regex]::Match((Get-Content cytosol\version.py -Raw), "__version__ = '(.+)'")).Groups[1].Value
+          $tag = "v$ver"
+          $zip = "dist\$env:BUILD_NAME.zip"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --target $env:GITHUB_SHA --title "Cytosol Viewer $ver" --notes "Windows build of $ver (main $env:GITHUB_SHA). Unzip and run Cytosol Viewer.exe."
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          } else {
+            $old = gh release view $tag --json assets --jq '.assets[].name' | Where-Object { $_ -like '*-Windows.zip' }
+            foreach ($a in $old) { gh release delete-asset $tag $a --yes }
+          }
+          gh release upload $tag $zip --clobber
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
