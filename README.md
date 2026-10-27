@@ -488,6 +488,17 @@ Package it: `./make_dmg.sh` → `~/Desktop/CytosolViewer-<version>-<commit>_<arc
 The version lives in `cytosol/version.py` (also shown in the window title);
 bump it there for a release.
 
+Automatic update on a Mac: `scripts/install_auto_update.sh` installs a launchd
+agent (at login and every 30 minutes) that runs `scripts/mac_auto_update.sh`.
+When `origin/main` has a new commit it builds the app in a separate worktree
+(`~/.cytosol-autoupdate/src`, the clone itself is not touched), runs its
+`--selftest`, and only if that passes swaps it into
+`/Applications/Cytosol Viewer.app` (after the running app quits; the old one
+goes to the Trash as `Cytosol Viewer <version>.app`). `MAKE_DMG=1` at install
+also writes the DMG to the Desktop each time. Log:
+`~/Library/Logs/CytosolViewer-autoupdate.log`; remove with
+`scripts/install_auto_update.sh --uninstall`.
+
 ### Windows build
 
 Every push to `main` (and `claude/**` branches) builds the Windows app on

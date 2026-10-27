@@ -157,6 +157,11 @@ not affected.
   `PYTHON=~/.local/bin/python3.12 ./build_mac.sh && ./make_dmg.sh` → DMG on the
   Desktop; also replace `/Applications/Cytosol Viewer.app`. Intel MacBook:
   `~/Developer/cytosol-analysis`, Homebrew python3.12.
+- Auto update (2026-10-27): `scripts/install_auto_update.sh` (launchd
+  agent, every 30 min) runs `scripts/mac_auto_update.sh`, which builds new
+  `origin/main` commits in `~/.cytosol-autoupdate/src`, runs the selftest and
+  replaces `/Applications/Cytosol Viewer.app`. Once installed on a Mac, merged
+  PRs reach that Mac's /Applications without a manual build.
 - Windows exe: built by GitHub Actions (`build_windows.ps1`), artifact
   `CytosolViewer-<ver>-<sha>-Windows`.
 - Docs: update both `docs/ko` and `docs/en` whenever the UI changes.
@@ -195,4 +200,5 @@ not affected.
 | #36 | | User manuals `docs/ko`, `docs/en` |
 | #37 | 0.24 | Project files (`.cyproj`), 파일 / Tool menus, 불러오기 with automatic detection, tabs opened from Tool, Crop tab, work log, settings (mouse sensitivity), `Cmd`+drag / `[` `]` zoom, wheel = time, this file |
 | #38 | 0.25 | One menu per feature next to 파일 (tab, saves, loads), markers fixed under the LUT tab, marker settings save/load, Tool menu removed |
-| this PR | 0.26 | 세포질 ROI: 자동 / 수동 (threshold) sub-tabs, cell and nucleus size ranges with sliders, split / merge touching cells to the range, size range estimated from all images, 자동 checkboxes showing the values in use, live detection preview, ROI hover label (name, area), detection time in the status bar |
+| #39 | 0.26 | 세포질 ROI: 자동 / 수동 (threshold) sub-tabs, cell and nucleus size ranges with sliders, split / merge touching cells to the range, size range estimated from all images, 자동 checkboxes showing the values in use, live detection preview, ROI hover label (name, area), detection time in the status bar |
+| this PR | | Mac auto update: launchd agent builds, self-tests and installs new `main` commits into /Applications |
