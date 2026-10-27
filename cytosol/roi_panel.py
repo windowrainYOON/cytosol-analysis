@@ -62,6 +62,7 @@ TOOLS = [
     ('add', '더하기', 'A', '드래그로 영역을 그려 선택한 세포에 더하기'),
     ('sub', '빼기', 'S', '드래그로 영역을 그려 선택한 세포에서 빼기 (선택 없으면 모든 세포에서)'),
     ('new', '새 세포', 'N', '드래그로 그린 영역을 새 세포로 추가'),
+    ('cut', '자르기', 'C', '선을 그어 세포를 둘로 자르기 (선택한 세포, 선택이 없으면 선이 지나는 모든 세포)'),
 ]
 THR_STEPS = 1000
 THRESHOLDS = [
@@ -190,6 +191,18 @@ class RoiPanel(QWidget):
             '최대보다 큰 덩어리는 세포 사이 어두운 골을 따라 범위에 맞는 개수로 나누고, '
             '최소보다 작은 조각은 경계가 가장 약한 이웃과 합칩니다 (합친 크기가 범위에 더 맞을 때만). '
             '핵 크기 범위에도 똑같이 적용합니다. 그래도 범위 밖이면 버립니다.')
+        self.neck_cut = QCheckBox('가는 목으로 붙은 세포 자르기')
+        self.neck_cut.setToolTip(
+            '핵에서 세포 안쪽으로 같은 거리의 고리를 넓혀 가다가, 고리가 좁은 틈(아래 목 폭 이하)을 '
+            '지나 다시 넓어지는(목보다 2.5배 이상) 곳을 목으로 보고, 목 부근에서 신호가 가장 어두운 '
+            '경로로 자릅니다. 그런 목이 없으면 윤곽에서 깊게 파인 오목점 두 개를 잇는 가장 짧은 선으로 '
+            '자릅니다. 잘린 쪽은 핵 없는 새 세포가 됩니다 (핵을 놓친 이웃 세포).')
+        self.neck_max = QDoubleSpinBox()
+        self.neck_max.setRange(0.5, 50)
+        self.neck_max.setSingleStep(0.5)
+        self.neck_max.setValue(RoiParams.neck_max_um)
+        self.neck_max.setSuffix(' µm')
+        self.neck_max.setToolTip('이 폭 이하의 좁은 연결만 목으로 봅니다.')
         self.smooth = QDoubleSpinBox()
         self.smooth.setRange(0.1, 20)
         self.smooth.setSingleStep(0.1)
@@ -221,6 +234,11 @@ class RoiPanel(QWidget):
         dl.addRow(self.thr_view)
         dl.addRow('스무딩', self.smooth)
         dl.addRow(self.fit_size)
+        row = QHBoxLayout()
+        row.addWidget(self.neck_cut)
+        row.addWidget(QLabel('목 폭 ≤'))
+        row.addWidget(self.neck_max)
+        dl.addRow(row)
 
         # 수동 sub-tab: threshold only (at or above = ROI, below = discarded)
         manual = QWidget()
@@ -312,9 +330,9 @@ class RoiPanel(QWidget):
         self._live_timer.timeout.connect(self._live_start)
         self.liveDone.connect(self._live_finished)
         for w in (self.min_cell, self.max_cell, self.min_nuc, self.max_nuc, self.smooth,
-                  self.edge_margin, self.sat):
+                  self.edge_margin, self.sat, self.neck_max):
             w.valueChanged.connect(self.live_changed)
-        for w in (self.fit_size, self.sat_auto):
+        for w in (self.fit_size, self.sat_auto, self.neck_cut):
             w.toggled.connect(self.live_changed)
         self.edge_combo.currentIndexChanged.connect(self.live_changed)
         self.mode_tabs.currentChanged.connect(self.live_changed)
@@ -438,6 +456,8 @@ class RoiPanel(QWidget):
             min_nucleus_um2=self.min_nuc.value(),
             max_nucleus_um2=self.max_nuc.value(),
             fit_size=self.fit_size.isChecked(),
+            neck_cut=self.neck_cut.isChecked(),
+            neck_max_um=self.neck_max.value(),
             edge_mode=self.edge_combo.currentData(),
             edge_margin_um=self.edge_margin.value(),
             nuc_threshold=self._thr_value('nuc'),
@@ -1163,6 +1183,15 @@ class RoiPanel(QWidget):
     def _lasso(self, tool, pts):
         c = self._ensure_cells()
         if c is None:
+            return
+        if tool == 'cut':
+            new = c.cut(pts, self.selected or None)
+            if not new:
+                self.status('자를 세포가 없습니다. 선이 세포를 완전히 가로지르도록 그려주세요.')
+            else:
+                self.status(f'세포를 잘라 {", ".join(f"cell{l:03d}" for l in new)}을(를) 새로 만들었습니다.')
+            self.refresh_list()
+            self.draw_overlay()
             return
         mask = c.polygon_mask(pts)
         if not mask.any():

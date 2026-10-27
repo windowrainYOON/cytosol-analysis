@@ -208,7 +208,31 @@ def run(out_dir) -> int:
         from .cellroi import image_size_range
         if not np.allclose(image_size_range([1000]), (250.0, 3000.0)):
             raise AssertionError(f'image_size_range of one cell: {image_size_range([1000])}')
-        return f'touching cells 1 -> 2 ({a[0]:.0f}, {a[1]:.0f} µm²), manual threshold ROI'
+        # two cells joined by a thin neck, one nucleus missed: cut at the neck
+        from .cellroi import CellRois, cut_necks
+        yy, xx = np.mgrid[0:300, 0:400]
+        two = (((yy - 150) ** 2 + (xx - 110) ** 2 < 75 ** 2) | ((yy - 150) ** 2 + (xx - 290) ** 2 < 75 ** 2)
+               | ((abs(yy - 150) < 6) & (xx > 150) & (xx < 250)))
+        one_nuc = (((yy - 150) ** 2 + (xx - 110) ** 2) < 30 ** 2).astype(np.int32)
+        for nn in (one_nuc, None):
+            cut = cut_necks(two.astype(np.int32), nn, two * 1.0, 0.2, RoiParams(neck_cut=True))
+            sizes = sorted(np.bincount(cut.ravel())[1:].tolist())
+            if len(sizes) != 2 or not 0.8 < sizes[0] / sizes[1] <= 1:
+                raise AssertionError(f'neck cut {"with" if nn is not None else "without"} nucleus: {sizes}')
+        if cut_necks(one_nuc, one_nuc, one_nuc * 1.0, 0.2, RoiParams(neck_cut=True)).max() != 1:
+            raise AssertionError('neck cut split a round cell')
+        # manual cut line
+        cr = CellRois(two.astype(np.int32), one_nuc.copy(), 0.2)
+        new = cr.cut([(200, 120), (200, 180)])
+        if len(new) != 1 or len(cr) != 2 or (cr.nuclei == 1).sum() != (one_nuc > 0).sum():
+            raise AssertionError(f'manual cut: new {new}, cells {len(cr)}')
+        if (cr.labels > 0).sum() != two.sum():
+            raise AssertionError('manual cut lost pixels')
+        cr.undo()
+        if len(cr) != 1:
+            raise AssertionError('manual cut not undone')
+        return (f'touching cells 1 -> 2 ({a[0]:.0f}, {a[1]:.0f} µm²), manual threshold ROI, '
+                'neck cut, manual cut line')
 
     def coloc2():
         from .coloc import Coloc2Settings, ValueType, run_coloc2
@@ -938,6 +962,16 @@ def run(out_dir) -> int:
                 it.cells, it.roi_roles = cells, roles
             rp.refresh_list()
         rp.size_auto.setChecked(False)
+        # 자르기 tool: a line across a cell splits it, undo restores it
+        n0 = len(own.cells)
+        cx, cy = own.cells.centroid(own.cells.ids()[0])
+        rp.selected = 0
+        rp._lasso('cut', np.array([(cx - 60, cy + 25), (cx + 60, cy + 25)]))
+        if len(own.cells) != n0 + 1:
+            raise AssertionError(f'자르기 tool: {n0} -> {len(own.cells)} cells')
+        rp.undo()
+        if len(own.cells) != n0:
+            raise AssertionError('자르기 not undone')
         rp.min_cell.setValue(80)
         rp.max_cell.setValue(0)
         rp.min_nuc.setValue(15)
