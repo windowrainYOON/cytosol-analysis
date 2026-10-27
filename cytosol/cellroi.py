@@ -65,7 +65,8 @@ class RoiParams:
     neck_max_um: float = 6.0         # widest gap still counted as a neck
     neck_ratio: float = 2.0          # the part beyond must be this many times wider than the neck
     nuc_local: bool = True           # re-draw each nucleus with its neighbourhood's contrast
-    nuc_local_k: float = 0.3         # local threshold: background + k × (nucleus - background)
+    nuc_local_k: float = 0.3         # local threshold when the window has no Otsu value
+    nuc_edge: float = 0.22           # dim nuclei: mean of their 1 µm outer ring on their own LUT
     nucleus_split_um: float = 6.0    # min distance between nucleus centers when splitting
     nucleus_neck_um: float = 1.0     # how much narrower the neck between two touching nuclei must be
     edge_mode: str = 'trim'
@@ -109,19 +110,29 @@ def _local_nuclei(s, thr, px_um, p: RoiParams) -> np.ndarray:
     nuclei fall below one threshold for the whole image and come out ragged
     or not at all. Seeds are areas above a lower threshold (a quarter of the way from
     the background to `thr`) holding pixels above 0.4 × `thr`'s step over the
-    background; in a window of about one nucleus around each, everything
-    above local background + `nuc_local_k` × (seed signal - local background)
-    that is joined to the seed is nucleus, the rest background. The result
+    background; in a window of about one nucleus around each, the signal is
+    stretched from the local background to the seed's bright end (its own
+    LUT) and thresholded by that window's own Otsu value (held within 15 -
+    60 % of the stretch); what is joined to the seed is nucleus, the rest
+    background; a result over twice the image's typical nucleus area has
+    spread into cytoplasmic stain, so the seed keeps the image threshold's
+    area (a dim one is dropped). The result
     must be compact (solidity >= 0.8, which bean shapes pass), else the seed keeps the image
     threshold's area; seeds that never reach `thr` must also stand clearly
-    above their surroundings and be about as large (>= half the median) and
-    round (minor / major axis >= 0.4) as the image's other nuclei."""
+    above their surroundings, be compact (solidity >= 0.85), drop off sharply
+    at their edge (their 1 µm outer ring below `nuc_edge` on their own LUT;
+    a plateau of cytoplasmic stain fades out instead) and be about as large (>= half the median) and
+    round (minor / major axis >= 0.3) as the image's other nuclei."""
     below = s[s < thr]
     bg = float(np.median(below)) if below.size else float(s.min())
     se = morphology.disk(max(1, round(0.4 / px_um)))
     low = ndi.binary_opening(s > bg + 0.25 * (thr - bg), se)
     seeds = measure.label(low)
     min_px = p.min_nucleus_um2 / px_um ** 2
+    # typical nucleus area from the image threshold (a leak is far larger)
+    first = measure.label(ndi.binary_opening(s > thr, se))
+    big = [x.area for x in measure.regionprops(first) if x.area >= min_px]
+    typical = float(np.median(big)) if big else 50 * min_px
     out = np.zeros(s.shape, bool)
     dim = []  # (slice, mask) of nuclei only the lower threshold found
     for r in measure.regionprops(seeds, intensity_image=s):
@@ -135,17 +146,33 @@ def _local_nuclei(s, thr, px_um, p: RoiParams) -> np.ndarray:
         around = ~ndi.binary_dilation(low[sl], iterations=max(1, int(1 / px_um)))
         lbg = float(np.percentile(win[around], 50)) if around.any() else bg
         sig = float(np.percentile(win[seed], 75))
-        t = lbg + p.nuc_local_k * (sig - lbg)
-        cand = ndi.binary_opening(win > t, se)
+        # this nucleus' own LUT: local background -> 0, its bright end -> 1;
+        # then its own Otsu threshold, held within 15 - 60 % of that range
+        top = float(np.percentile(win[seed], 99))
+        lut = np.clip((win - lbg) / max(top - lbg, 1e-9), 0, 1)
+        try:
+            t01 = float(filters.threshold_otsu(lut))
+        except ValueError:
+            t01 = p.nuc_local_k
+        t01 = min(max(t01, 0.15), 0.6)
+        cand = ndi.binary_opening(lut > t01, se)
         cc = measure.label(cand)
         ids = np.unique(cc[seed & cand])
         keep = ndi.binary_fill_holes(np.isin(cc, ids[ids > 0]))
+        if keep.sum() > 2.5 * typical:  # spread into the cytoplasm: not a nucleus outline
+            if r.intensity_max < thr:
+                continue
+            keep = ndi.binary_fill_holes(seed & (win > thr))
         # a nucleus is a compact, rounded blob clearly above its surroundings;
         # a ragged result is a patch of cytoplasmic stain (or reached into it)
         solid = keep.sum() / max(morphology.convex_hull_image(keep).sum(), 1) if keep.any() else 0
         round_ = solid >= 0.8  # kidney / bean shapes included
-        if r.intensity_max < thr:  # only found by the lower threshold
-            if sig - lbg >= 0.5 * (thr - bg) and round_:
+        if (seed & (win > thr)).sum() < min_px:  # the image threshold alone found no nucleus here
+            # a nucleus drops off sharply at its edge; a plateau of stain
+            # fades into its surroundings
+            ring = ndi.binary_dilation(keep, iterations=max(1, int(1 / px_um))) & ~keep
+            edge = float(np.mean(lut[ring])) if ring.any() else 1.0
+            if sig - lbg >= 0.25 * (thr - bg) and solid >= 0.85 and edge < p.nuc_edge:
                 dim.append((sl, keep))
             continue
         if not round_:  # keep the image threshold's area for this seed
@@ -153,11 +180,11 @@ def _local_nuclei(s, thr, px_um, p: RoiParams) -> np.ndarray:
         view = out[sl]
         view |= keep
     # dim nuclei: about as large and round as the bright ones of the image
-    sizes = [x.area for x in measure.regionprops(measure.label(out))]
-    typical = float(np.median(sizes)) if sizes else min_px
+    sizes = [x.area for x in measure.regionprops(measure.label(out)) if x.area >= min_px]
+    typical = float(np.median(sizes)) if sizes else typical
     for sl, keep in dim:
         x = max(measure.regionprops(measure.label(keep)), key=lambda q: q.area)
-        if x.area >= 0.5 * typical and x.axis_minor_length >= 0.4 * x.axis_major_length:
+        if x.area >= 0.5 * typical and x.axis_minor_length >= 0.3 * x.axis_major_length:
             view = out[sl]
             view |= keep
     return out
