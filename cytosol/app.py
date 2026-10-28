@@ -2071,6 +2071,10 @@ class MainWindow(QMainWindow):
             cur = self._tab_name(self.right_tabs.currentWidget())
             data['tab_current'] = cur or self.right_tabs.currentIndex()
             data['panels'] = self._panel_state()
+            # channels switched off for measuring, by channel name
+            data['measure_channels_off'] = {key: sorted(obj.channels_off)
+                                            for key, obj in self._panel_objects().items()
+                                            if obj in self._measure_boxes()}
             data['batch_rows'] = {key: box.batch_rows for key, box in
                                   (('roi', self.roi_panel.measure),
                                    ('particle', self.particle_panel.measure),
@@ -2102,6 +2106,7 @@ class MainWindow(QMainWindow):
         for box in self._measure_boxes():
             box.batch_rows = []
             box.rows = []
+            box.set_channels_off(())
             box._fill_table()
 
     def open_project(self, path) -> bool:
@@ -2163,6 +2168,10 @@ class MainWindow(QMainWindow):
         # settings of every tab, then the tabs that were open
         for key, obj in self._panel_objects().items():
             restore_widgets(obj, (data.get('panels') or {}).get(key, {}))
+        off = data.get('measure_channels_off') or {}
+        for key, obj in self._panel_objects().items():
+            if obj in self._measure_boxes():
+                obj.set_channels_off(off.get(key, ()))
         for name in list(self.tab_pages):
             if name in data.get('tabs', []):
                 self.show_tab(name, focus=False)

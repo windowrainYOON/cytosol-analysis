@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .flow import FlowLayout
 from .groups import GROUP_FILE, summarize, write_groups
 from .intensity import STATS, measure_cells, overlay_image, region_names, write_rows
 from .lut import item_folder, item_stem
@@ -89,6 +90,18 @@ class MeasureBox(QWidget):
             row.addWidget(b)
         row.addStretch()
         vl.addLayout(row)
+        # channels measured: one check box per channel of the current image;
+        # what is switched off is kept by channel name, so it holds for every
+        # image with that channel (and in projects)
+        self.channels_off: set[str] = set()
+        self._chan_boxes: list[QCheckBox] = []
+        lab = QLabel('측정할 채널:')
+        lab.setToolTip('체크한 채널만 표와 CSV에 들어갑니다. 끈 채널은 이름으로 기억해서 '
+                       '같은 이름의 채널이 있는 모든 이미지에 적용됩니다 (검출에 쓰는 채널과는 별개).')
+        vl.addWidget(lab)
+        self._chan_holder = QWidget()
+        self._chan_flow = FlowLayout(self._chan_holder)
+        vl.addWidget(self._chan_holder)
         self.only_visible = QCheckBox('LUT에서 숨긴 채널 제외')
         self.only_visible.toggled.connect(self.schedule)
         vl.addWidget(self.only_visible)
@@ -168,10 +181,41 @@ class MeasureBox(QWidget):
         return tuple(k for k in STATS if self.stat_boxes[k].isChecked()) or ('Mean',)
 
     def channels_for(self, item) -> list[int]:
-        idx = list(range(len(item.channels)))
+        idx = [i for i, name in enumerate(item.channels) if name not in self.channels_off]
         if self.only_visible.isChecked():
             idx = [i for i in idx if i >= len(item.luts) or item.luts[i].visible]
         return idx
+
+    def set_channels_off(self, names):
+        self.channels_off = set(names or ())
+        self._build_channel_boxes()
+        self.schedule()
+
+    def _build_channel_boxes(self):
+        """One check box per channel of the current image."""
+        while self._chan_flow.count():
+            w = self._chan_flow.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        self._chan_boxes = []
+        it = self.win.current
+        names = list(it.channels) if it is not None else []
+        for name in names:
+            b = QCheckBox(name)
+            b.setChecked(name not in self.channels_off)
+            b.toggled.connect(lambda on, n=name: self._channel_toggled(n, on))
+            self._chan_flow.addWidget(b)
+            self._chan_boxes.append(b)
+        if not names:
+            self._chan_flow.addWidget(QLabel('(이미지 없음)'))
+        self._chan_holder.updateGeometry()
+
+    def _channel_toggled(self, name, on):
+        if on:
+            self.channels_off.discard(name)
+        else:
+            self.channels_off.add(name)
+        self.schedule()
 
     def has_rois(self, it) -> bool:
         cells = self.cells(it)
@@ -190,7 +234,7 @@ class MeasureBox(QWidget):
         if cells is None or not len(cells):
             return []
         regions = self.regions(it)
-        if not regions:
+        if not regions or not self.channels_for(it):
             return []
         particles = self.particles_for(it) if uses_particles(regions) else None
         rows = None
@@ -249,6 +293,7 @@ class MeasureBox(QWidget):
         self._fill_table()
 
     def bind(self, item):
+        self._build_channel_boxes()
         self._sig = None
         self.rows = []
         self.refresh(force=self.visible_tab())
@@ -330,6 +375,8 @@ class MeasureBox(QWidget):
                     self.info.setText(f'{what} · {rows[0]["plane"]}{t} · {len(rows)}행')
                 elif not self.regions(it):
                     self.info.setText('측정할 영역이 없습니다.')
+                elif not self.channels_for(it):
+                    self.info.setText('측정할 채널을 하나 이상 체크하세요.')
                 else:
                     self.info.setText('')
 
