@@ -91,6 +91,12 @@ The 세포질 ROI, 입자 ROI and 강도 측정 tabs share the same measurement 
 - **Mean** (on by default), **StdDev**, **Min**, **Max**, **IntDen**,
   **RawIntDen**: the ImageJ Measure definitions, on the raw data of the
   current Z plane (or MIP) and timepoint. Area is always included.
+- **측정할 채널** (channels to measure): one check box per channel of the
+  current image; only checked channels go into the table and the CSVs (all
+  checked by default). A channel switched off is remembered by name, so it
+  stays off for every image with that channel, in all-image runs and saves,
+  and in projects. Each tab has its own choice, independent of the channels
+  detection uses (nucleus, background, particle channel).
 - **LUT에서 숨긴 채널 제외**: leave out channels hidden in the LUT tab.
 
 ### 강도 측정 결과 — results

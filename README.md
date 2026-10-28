@@ -187,7 +187,9 @@ A GUI for working on a whole set of images at once:
 - **Intensity measurement** (ImageJ Measure on every cell ROI) sits in three
   tabs, each with its own table, all-image run and saving: per cell and
   region, per channel Mean (and optionally StdDev, Min, Max, IntDen,
-  RawIntDen) of the raw values on the current Z (or MIP) and timepoint. The
+  RawIntDen) of the raw values on the current Z (or MIP) and timepoint, for
+  the channels checked under **측정할 채널** (kept by channel name, per tab,
+  saved in projects). The
   table follows every ROI edit, plane change and setting; a row selects its
   cell. **CSV 저장** writes the current image's rows plus `<name>_RoiSet.zip`,
   the particle/region ROIs it used and `<name>_image.png` with the outlines;

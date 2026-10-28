@@ -874,7 +874,7 @@ def write_curve_csv(path, curve: FrapCurve) -> str:
         for k, v in curve.properties.items():
             f.write(f'# {k} = {v}\n')
         f.write(f'# channel = {curve.channel}\n# bleach_frame = {curve.bleach_frame + 1}\n')
-        f.write(f'# value = (bleach - background) / (control - background)'
+        f.write('# value = (bleach - background) / (control - background)'
                 + {'first': ', / first frame', 'pre': ', / mean of pre-bleach frames'}.get(curve.normalize, '')
                 + '\n')
         for n in ROI_NAMES:
