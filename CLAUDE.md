@@ -114,7 +114,7 @@ owner writes in Korean, so reply in Korean.
 | `measure_box.py` | Measurement table shared by the three measuring tabs |
 | `coloc.py`, `coloc_panel.py` | Fiji Coloc 2 port, per cell |
 | `lineprofile.py`, `profile_panel.py` | Line profile (ImageJ RGB Profiler) |
-| `frap.py`, `frap_panel.py` | FRAP 측정 tab: bleach / control / background ROIs (`FrapState` per image in `ImageItem.frap`, auto placement, dragged on the canvas via `Canvas.show_frap` / `frapMoved`), (B−BG)/(C−BG) curves, ImageJ-equal ROI masks, exponential recovery fit, group means, summary CSV / figures |
+| `frap.py`, `frap_panel.py` | FRAP 측정 tab: bleach / control / background ROIs (`FrapState` per image in `ImageItem.frap`, auto placement, dragged on the canvas via `Canvas.show_frap` / `frapMoved`), (B−BG)/(C−BG) curves, ImageJ-equal ROI masks, exponential recovery fit, drift correction (ROIs follow each frame's movement, `track_drift`), group means, summary CSV / figures |
 | `stack.py`, `stack_panel.py` | Z projections (2D) and 3D rotation views |
 | `marker_panel.py` | Scale bar, time stamp, bleach ROI display |
 | `figure.py`, `figure_window.py` | Figure window (image table, insets, scale bars, PNG/TIFF/PDF/SVG) |
@@ -232,4 +232,5 @@ not affected.
 | #48 | 0.32 | Nucleus outline per seed: own LUT stretch + own Otsu threshold (`_local_nuclei`), dim nuclei kept when compact with a sharp edge; FV3000 dim nuclei found, PRD 24h cell IoU 0.733 |
 | #47 | 0.33 | Side panes keep their width (only the preview grows, dragged widths remembered), pane contents reflow to the width (`flow.py`), long image names wrap in the list |
 | #51 | 0.35 | 측정할 채널 check boxes in the measurement block of 세포질 ROI, 입자 ROI and 강도 측정 (`MeasureBox.channels_off`, by channel name, saved in projects as `measure_channels_off`) |
-| this PR | 0.36 | FRAP 측정 tab and menu: bleach ROI from the file (CZI bleach regions, OIR stimulation regions now read too) or detected, control in the unbleached part of the condensate (else another unbleached condensate), background of the bleach ROI's size; drag ROIs with live update; (B−BG)/(C−BG) normalized to the first / pre-bleach frames; ImageJ Exponential recovery fit (mobile fraction, t½, k, plateau); group mean ± SD/SEM; one-step summary save (CSV + figures); verified against ij 1.54f |
+| #52 | 0.36 | FRAP 측정 tab and menu: bleach ROI from the file (CZI bleach regions, OIR stimulation regions now read too) or detected, control in the unbleached part of the condensate (else another unbleached condensate), background of the bleach ROI's size; drag ROIs with live update; (B−BG)/(C−BG) normalized to the first / pre-bleach frames; ImageJ Exponential recovery fit (mobile fraction, t½, k, plateau); group mean ± SD/SEM; one-step summary save (CSV + figures); verified against ij 1.54f |
+| this PR | 0.37 | FRAP drift correction (on by default): ROIs follow the movement of each frame (`frap.track_drift`, sub-pixel cross-correlation with a key frame, around the ROIs or the whole field; window size with 자동), drawn where measured on the frame shown, per-frame movement in the CSV, `max_drift_px` in the summary |
