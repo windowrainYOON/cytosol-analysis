@@ -808,6 +808,7 @@ def run(out_dir) -> int:
         it.particle_settings = ParticleSettings(channel=it.channels[1], k=2.5)
         win.intensity_panel.expr.setText('cyto - particle')
         win.particle_panel.measure.batch_rows = [{'image': it.label, 'value': 1.5}]
+        win.particle_panel.measure.set_channels_off([it.channels[0]])
         win.statusBar().showMessage('selftest step')
         n_coloc = len(it.coloc)
         win.open_figure()
@@ -837,6 +838,10 @@ def run(out_dir) -> int:
             raise AssertionError('project Coloc 2 results / tab settings')
         if win.particle_panel.measure.batch_rows != [{'image': it.label, 'value': 1.5}]:
             raise AssertionError('project measurement table')
+        if win.particle_panel.measure.channels_off != {it.channels[0]} \
+                or win.roi_panel.measure.channels_off:
+            raise AssertionError('project measured channels')
+        win.particle_panel.measure.set_channels_off(())
         if not win.tab_open('crop_tab') or win.tab_open('coloc_tab'):
             raise AssertionError(f'project tabs {win.open_tabs()}')
         if len(win.worklog.entries) < n_log or not any(
@@ -935,6 +940,25 @@ def run(out_dir) -> int:
         cm.refresh(force=True)
         if len(cm.rows) != 3 * len(own.cells):
             raise AssertionError(f'cell intensity rows {len(cm.rows)} for {len(own.cells)} cells')
+        # measured channels: one check box per channel, only checked ones in the rows
+        names = list(own.channels)
+        if [b.text() for b in cm._chan_boxes] != names:
+            raise AssertionError(f'channel check boxes {[b.text() for b in cm._chan_boxes]}')
+        cm._chan_boxes[0].setChecked(False)
+        cm.refresh(force=True)
+        cols = ' '.join(cm.rows[0])
+        if names[0] in cols or names[1] not in cols or cm.channels_off != {names[0]}:
+            raise AssertionError(f'unchecked channel still measured: {list(cm.rows[0])}')
+        for b in cm._chan_boxes:
+            b.setChecked(False)
+        cm.refresh(force=True)
+        if cm.rows or '채널' not in cm.info.text():
+            raise AssertionError('rows measured with no channel checked')
+        for b in cm._chan_boxes:
+            b.setChecked(True)
+        cm.refresh(force=True)
+        if cm.channels_off or len(cm.rows) != 3 * len(own.cells):
+            raise AssertionError('channels not measured again after re-checking')
         # 세포질 ROI: hover label, 자동 fields hold the values in use, 수동 mode,
         # size range estimated from every image
         rp = win.roi_panel
