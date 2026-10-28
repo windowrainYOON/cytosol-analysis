@@ -69,6 +69,7 @@ class FrapPanel(QWidget):
         self._binding = False
         self._stacks = {}  # (id(item), channel, z) -> (T, Y, X) float32, the latest few
         self._curves = {}  # id(item) -> (key, FrapCurve)
+        self._tracks = {}  # (id(item), channel, z, mode, centre, window) -> (T, 2) movement
         self._drag = None  # (name, dx, dy) while a ROI is dragged
         self.curve: FrapCurve | None = None
         lay = QVBoxLayout(self)
@@ -106,6 +107,34 @@ class FrapPanel(QWidget):
         self._bf.valueChanged.connect(self._bf_changed)
         self._bf_auto.toggled.connect(self._bf_auto_toggled)
         fl.addRow('bleach 후 첫 프레임', _row(self._bf, self._bf_auto))
+        self.drift = QCheckBox('드리프트 보정 (ROI가 움직임을 따라감)')
+        self.drift.setChecked(True)
+        self.drift.setToolTip('시간에 따라 응집체나 시야가 움직이면 프레임마다 그 움직임을 찾아 ROI를 '
+                              '함께 옮겨 측정합니다 (이미지는 바꾸지 않음). 끄면 ROI가 모든 프레임에서 '
+                              '같은 자리에 있습니다.')
+        self.drift_mode = QComboBox()
+        self.drift_mode.addItem('ROI 주변 추적', 'roi')
+        self.drift_mode.addItem('전체 이미지', 'image')
+        self.drift_mode.setToolTip('ROI 주변 추적: Bleach ROI 둘레(Control이 다른 응집체면 그 둘레도 따로)의 '
+                                   '움직임을 따라감 (응집체가 움직일 때).\n전체 이미지: 시야 전체의 움직임 '
+                                   '(스테이지·시료 드리프트).')
+        self.drift_win = QSpinBox()
+        self.drift_win.setRange(16, 4096)
+        self.drift_win.setSuffix(' px')
+        self.drift_win.setToolTip('움직임을 찾는 정사각형 창의 한 변 (ROI 주변 추적)')
+        self.drift_win_auto = _auto('ROI 크기의 8배, 최소 128 px')
+        self.drift_win_auto.setChecked(True)
+        for w in (self.drift, self.drift_win_auto):
+            w.toggled.connect(self._drift_changed)
+        self.drift_mode.currentIndexChanged.connect(self._drift_changed)
+        self.drift_win.valueChanged.connect(self._drift_changed)
+        fl.addRow(self.drift)
+        fl.addRow(_row(self.drift_mode))
+        fl.addRow('추적 창', _row(self.drift_win, self.drift_win_auto))
+        self._drift_info = QLabel()
+        self._drift_info.setWordWrap(True)
+        self._drift_info.setStyleSheet('color: gray; font-size: 11px;')
+        fl.addRow(self._drift_info)
         lay.addWidget(data)
 
         # ---- ROIs of the current image ----
@@ -220,6 +249,9 @@ class FrapPanel(QWidget):
         self._timer.setSingleShot(True)
         self._timer.setInterval(40)  # live updates while a ROI is dragged
         self._timer.timeout.connect(self._update_live)
+        self._binding = True
+        self._drift_changed()
+        self._binding = False
         self._show_empty('이미지를 추가하세요.')
 
     # ---- binding -----------------------------------------------------------
@@ -290,9 +322,11 @@ class FrapPanel(QWidget):
         if item is None:
             self._stacks.clear()
             self._curves.clear()
+            self._tracks.clear()
             return
-        for k in [k for k in self._stacks if k[0] == id(item)]:
-            del self._stacks[k]
+        for cache in (self._stacks, self._tracks):
+            for k in [k for k in cache if k[0] == id(item)]:
+                del cache[k]
         self._curves.pop(id(item), None)
 
     def state_for(self, item, stack=None) -> FrapState:
@@ -307,7 +341,53 @@ class FrapPanel(QWidget):
 
     def _key(self, item, st) -> str:
         return json.dumps([self.channel_index(item), str(item.z), self._norm(),
-                           st.to_dict()], sort_keys=True)
+                           self._drift_key(), st.to_dict()], sort_keys=True)
+
+    def _drift_key(self):
+        if not self.drift.isChecked():
+            return None
+        return [self.drift_mode.currentData(),
+                None if self.drift_win_auto.isChecked() else self.drift_win.value()]
+
+    def drift_for(self, item, rois: dict, stack=None) -> dict:
+        """ROI name -> (T, 2) x, y movement of each frame against the first (px),
+        or {} with drift correction off. Background follows the Bleach ROI;
+        Control has its own track when it sits away from the Bleach ROI."""
+        if not self.drift.isChecked() or 'bleach' not in rois:
+            return {}
+        if stack is None:
+            stack = self.stack_for(item)
+        mode = self.drift_mode.currentData()
+        c = self.channel_index(item)
+        if mode == 'image':
+            H, W = stack.shape[1:]
+            side = min(512, H, W)  # the middle of the field is enough and keeps it quick
+            key = (id(item), c, item.z, 'image', side)
+            if key not in self._tracks:
+                self._tracks[key] = frap.track_drift(stack, (W / 2, H / 2), side)
+            d = self._tracks[key]
+            return {n: d for n in ROI_NAMES}
+        size = None if self.drift_win_auto.isChecked() else self.drift_win.value()
+        b = rois['bleach']
+        side = frap.drift_window(b, stack.shape[1:], size)
+
+        def track(roi):
+            cx, cy = (int(round(v)) for v in roi.center())
+            key = (id(item), c, item.z, 'roi', (cx, cy), side)
+            if key not in self._tracks:
+                while len(self._tracks) > 40:
+                    self._tracks.pop(next(iter(self._tracks)))
+                self._tracks[key] = frap.track_drift(stack, (cx, cy), side)
+            return self._tracks[key]
+
+        db = track(b)
+        out = {'bleach': db, 'background': db, 'control': db}
+        ctl = rois.get('control')
+        if ctl is not None:
+            (bx, by), (cx, cy) = b.center(), ctl.center()
+            if max(abs(cx - bx), abs(cy - by)) > side / 4:
+                out['control'] = track(ctl)
+        return out
 
     def _norm(self) -> str:
         return self.norm_ref.currentData() if self.normalize.isChecked() else ''
@@ -325,7 +405,9 @@ class FrapPanel(QWidget):
         key = self._key(item, st) if rois is None else None
         use = dict(st.rois)
         use.update(rois or {})
-        means = {n: frap.roi_means(stack, use[n]) for n in ROI_NAMES}
+        # while a ROI is dragged its track is the one of where it was (re-tracked when let go)
+        drift = self.drift_for(item, st.rois, stack)
+        means = {n: frap.roi_means_tracked(stack, use[n], drift.get(n)) for n in ROI_NAMES}
         b = use['bleach']
         r_um = None
         if b.kind == 'oval' and b.w == b.h and item.pixel_um:
@@ -337,7 +419,8 @@ class FrapPanel(QWidget):
         curve = FrapCurve(item.label, item.group or NO_GROUP, times, st.bleach_frame, means,
                           self._norm(), item.channels[self.channel_index(item)],
                           {n: use[n].describe(px) for n in ROI_NAMES}, r_um,
-                          dict(item.id_properties(), plane=self._plane_text(item)))
+                          dict(item.id_properties(), plane=self._plane_text(item)),
+                          drift=drift, drift_mode=self.drift_mode.currentData() if drift else '')
         curve.do_fit()
         if key is not None:
             self._curves[id(item)] = (key, curve)
@@ -369,6 +452,7 @@ class FrapPanel(QWidget):
             self._show_empty(f'FRAP 측정 실패: {exc}')
             return
         self._sync_widgets(it.frap)
+        self._show_drift(self.curve)
         self._replot()
         self.win.draw_frap()
 
@@ -562,6 +646,11 @@ class FrapPanel(QWidget):
                 or not isinstance(it.frap, FrapState) or it.nt < 2):
             return []
         rois = dict(it.frap.rois)
+        drift = self.curve.drift if self.curve is not None and self.item is it else {}
+        t = min(max(int(it.t), 0), it.nt - 1)
+        for n in rois:
+            if n in drift and t < len(drift[n]):
+                rois[n] = rois[n].moved(*np.rint(drift[n][t]))
         if self._drag is not None:
             n, dx, dy = self._drag
             if n in rois:
@@ -690,6 +779,42 @@ class FrapPanel(QWidget):
     def _settings_changed(self, *_):
         self.win.set_dirty()
         self.refresh()
+
+    def _drift_changed(self, *_):
+        on = self.drift.isChecked()
+        self.drift_mode.setEnabled(on)
+        roi = on and self.drift_mode.currentData() == 'roi'
+        self.drift_win_auto.setEnabled(roi)
+        self.drift_win.setEnabled(roi and not self.drift_win_auto.isChecked())
+        if self._binding:
+            return
+        self.win.set_dirty()
+        self.refresh()
+
+    def _show_drift(self, curve):
+        """The window in use (filled in while automatic) and how far the ROIs moved."""
+        it = self.item
+        b = it.frap.rois.get('bleach') if it is not None and isinstance(it.frap, FrapState) else None
+        stack = self._stacks.get((id(it), self.channel_index(it), it.z)) if it is not None else None
+        if self.drift_win_auto.isChecked() and b is not None and stack is not None:
+            self._binding = True
+            try:
+                self.drift_win.setValue(frap.drift_window(b, stack.shape[1:]))
+            finally:
+                self._binding = False
+        if curve is None or not curve.drift:
+            self._drift_info.setText('드리프트 보정 꺼짐' if not self.drift.isChecked() else '')
+            return
+        px = it.pixel_um if it is not None else None
+        parts = []
+        names = ['bleach'] + (['control'] if curve.drift['control'] is not curve.drift['bleach'] else [])
+        for n in names:
+            m = curve.max_drift(n)
+            um = f' ({m * px:.2f} µm)' if px else ''
+            parts.append(f'{frap.ROI_TITLES[n]} {m:.1f} px{um}')
+        last = curve.drift['bleach'][-1]
+        self._drift_info.setText('최대 이동: ' + ', '.join(parts)
+                                 + f' · 마지막 프레임 ({last[0]:+.1f}, {last[1]:+.1f}) px')
 
     def reset_auto(self):
         it = self.item

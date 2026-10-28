@@ -73,9 +73,12 @@ def _synthetic_tcf(path, nt=2):
                 d.attrs['Time'] = 60.0 * t
 
 
-def _frap_item(label, mobile=0.7, k=0.15, file_roi=False, seed=0):
+def _frap_item(label, mobile=0.7, k=0.15, file_roi=False, seed=0, drift=None):
     """Time series with condensates; one is bleached at frame 6 and recovers
-    as (1 - mobile) + mobile * (1 - exp(-k t)) of its pre-bleach signal."""
+    as (1 - mobile) + mobile * (1 - exp(-k t)) of its pre-bleach signal.
+    drift: (x, y) px per frame the whole field moves by."""
+    from scipy import ndimage as ndi
+
     from .imageinfo import BleachRoi
     from .io import Image
     from .lut import ImageItem
@@ -94,6 +97,8 @@ def _frap_item(label, mobile=0.7, k=0.15, file_roi=False, seed=0):
         if t >= bf:
             frac = 0.1 + mobile * 0.9 * (1 - np.exp(-k * (times[t] - times[bf])))
             img[spot] = 100 + (img[spot] - 100) * frac
+        if drift is not None:
+            img = ndi.shift(ndi.gaussian_filter(img, 1.0), (drift[1] * t, drift[0] * t), order=1, mode='nearest')
         frames.append((img + rng.normal(0, 4, (H, W)))[None, None].astype(np.float32))
     image = Image(frames[0], ['mCherry'], {'Z': None, 'Y': 0.1, 'X': 0.1},
                   times=list(times), loader=lambda t: frames[t],
@@ -1402,10 +1407,42 @@ def run(out_dir) -> int:
         if back.rois['bleach'].to_dict() != items[0].frap.rois['bleach'].to_dict():
             raise AssertionError('FRAP state not kept in the project')
         fp.view.setCurrentIndex(0)
+        # drift correction: the ROIs follow a field that moves 0.35, -0.25 px per frame
+        drifting = _frap_item('frapD', 0.7, 0.15, seed=3, drift=(0.35, -0.25))
+        drifting.group = 'Drift'
+        win._add_item(drifting)
+        win.file_list.setCurrentRow(win.items.index(drifting))
+        app.processEvents()
+        if not fp.drift.isChecked():
+            raise AssertionError('drift correction should be on by default')
+        cd = fp.curve
+        last = cd.drift['bleach'][-1]
+        if abs(last[0] - 0.35 * 23) > 0.4 or abs(last[1] + 0.25 * 23) > 0.4:
+            raise AssertionError(f'FRAP drift found {last}')
+        mf_d = cd.summary()['mobile_fraction']
+        if abs(mf_d - 0.7) > 0.06:
+            raise AssertionError(f'FRAP Mf with drift correction {mf_d}')
+        drifting.set_t(drifting.nt - 1)
+        win.draw_frap()
+        moved = dict((n, xy) for n, xy, _ in fp.rois_for_view())
+        dx = moved['bleach'][:, 0].mean() - drifting.frap.rois['bleach'].outline()[:, 0].mean()
+        if abs(dx - round(last[0])) > 0.01:
+            raise AssertionError(f'FRAP ROI drawn {dx} px from its first-frame place')
+        drifting.set_t(0)
+        csv_d = frap.write_curve_csv(out / 'frap' / 'frapD_frap.csv', cd)
+        if 'bleach_dx_px' not in Path(csv_d).read_text(encoding='utf-8'):
+            raise AssertionError('FRAP CSV without the drift columns')
+        fp.drift.setChecked(False)
+        app.processEvents()
+        mf_off = fp.curve.summary()['mobile_fraction']
+        if fp.curve.drift or (np.isfinite(mf_off) and abs(mf_off - 0.7) < abs(mf_d - 0.7)):
+            raise AssertionError(f'FRAP without drift correction: Mf {mf_off} vs {mf_d}')
+        fp.drift.setChecked(True)
         win.tool_actions['frap_tab'].setChecked(False)
         win.set_dirty(False)
         win.close()
-        return f'Mf {s1["mobile_fraction"]:.3f}, t½ {s1["half_time_s"]:.2f} s, group Mf {mf:.3f}'
+        return (f'Mf {s1["mobile_fraction"]:.3f}, t½ {s1["half_time_s"]:.2f} s, group Mf {mf:.3f}, '
+                f'drift {np.hypot(*last):.1f} px: Mf {mf_d:.3f} (uncorrected {mf_off:.3f})')
 
     step('readers import', readers)
     step('HDF5 non-ASCII path', hdf5_unicode_path)

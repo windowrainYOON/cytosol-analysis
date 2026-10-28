@@ -16,6 +16,10 @@ ImageJ Measure means (oval masks as ImageJ's OvalRoi, polygons by pixel
 centre). The frames from the bleach on are fitted with ImageJ's "Exponential
 recovery" y = a * (1 - exp(-b * x)) + c (x: s since the first post-bleach
 frame), which gives the plateau, mobile / immobile fraction, k and t½.
+
+When the condensate or the field moves during the series, the ROIs follow it
+(track_drift: cross-correlation of each frame with a key frame in a window
+around the ROI, or of the whole field); the image itself is never resampled.
 """
 
 from __future__ import annotations
@@ -248,6 +252,87 @@ def roi_means(stack: np.ndarray, roi: FrapRoi) -> np.ndarray:
     if not sub.any():
         return np.full(T, np.nan)
     return stack[:, ys, xs][:, sub].astype(np.float64).mean(axis=1)
+
+
+def drift_window(roi: FrapRoi, shape, size=None) -> int:
+    """Side of the square tracked around a ROI (automatic: 8 x the ROI, at least 128 px)."""
+    if size:
+        return int(min(max(16, size), max(shape)))
+    w, h = roi.size()
+    return int(min(max(128, 8 * max(w, h)), max(shape)))
+
+
+def _shift(a, b, max_step) -> np.ndarray | None:
+    """(x, y) movement from image a to image b (cross-correlation peak, 1/100 px;
+    None when the images are flat, or the movement exceeds max_step)."""
+    from skimage.registration import phase_cross_correlation
+
+    a = a - a.mean()
+    b = b - b.mean()
+    if not (a.std() > 0 and b.std() > 0):
+        return None
+    try:
+        s = phase_cross_correlation(a, b, upsample_factor=100, normalization=None)[0]
+    except Exception:
+        return None
+    step = -np.array([s[1], s[0]], float)
+    return step if np.isfinite(step).all() and np.hypot(*step) <= max_step else None
+
+
+def track_drift(stack: np.ndarray, center=None, size=None, max_step=None, tol=0.5) -> np.ndarray:
+    """(T, 2) x, y movement of every frame against the first one (px, sub-pixel).
+
+    Each frame is matched by cross-correlation (1/100 px) in a
+    square of `size` px around `center`, which follows the movement found so
+    far; without a center the whole image is used (drift of the stage or the
+    field). Frames are matched to a key frame (the first one) so that errors
+    do not add up; when the key frame and the previous frame disagree by more
+    than `tol` px (the condensate changed shape, was bleached, ...), the
+    previous frame's match is used and the frame becomes the new key frame.
+    A step larger than max_step (default size / 4) counts as no movement."""
+    T, H, W = stack.shape
+    out = np.zeros((T, 2))
+    if T < 2:
+        return out
+    side = int(min(size or max(H, W), H, W)) if center is not None else None
+    max_step = max_step or (side or min(H, W)) / 4
+
+    def crop(t, pos):
+        if side is None:
+            return stack[t]
+        x = min(max(int(round(center[0] + pos[0] - side / 2)), 0), W - side)
+        y = min(max(int(round(center[1] + pos[1] - side / 2)), 0), H - side)
+        return stack[t, y:y + side, x:x + side]
+
+    key = 0
+    for t in range(1, T):
+        pos = out[t - 1]
+        prev = _shift(crop(t - 1, pos), crop(t, pos), max_step)
+        by_prev = pos + (prev if prev is not None else 0)
+        if key == t - 1:
+            out[t] = by_prev
+            continue
+        k = _shift(crop(key, pos), crop(t, pos), max_step + np.hypot(*(pos - out[key])))
+        by_key = None if k is None else out[key] + k
+        if by_key is not None and np.hypot(*(by_key - by_prev)) <= tol:
+            out[t] = by_key
+        else:
+            out[t] = by_prev
+            key = t
+    return out
+
+
+def roi_means_tracked(stack: np.ndarray, roi: FrapRoi, shifts=None) -> np.ndarray:
+    """roi_means with the ROI moved by shifts[t] (rounded to whole pixels, as a
+    hand-moved ImageJ ROI) on frame t."""
+    if shifts is None:
+        return roi_means(stack, roi)
+    s = np.rint(np.asarray(shifts, float)).astype(int)
+    out = np.empty(len(stack))
+    for d in {tuple(v) for v in s}:
+        idx = np.nonzero((s == d).all(axis=1))[0]
+        out[idx] = roi_means(stack[idx], roi.moved(*d))
+    return out
 
 
 def detect_bleach_frame(curve) -> int | None:
@@ -588,6 +673,13 @@ class FrapCurve:
     bleach_radius_um: float | None = None  # circular bleach ROI: for the D estimate
     properties: dict = field(default_factory=dict)
     fit: FrapFit | None = None
+    drift: dict = field(default_factory=dict)  # roi name -> (T, 2) x, y movement (px); {} = not corrected
+    drift_mode: str = ''  # 'roi' (tracked around the ROIs), 'image' (whole field) or '' (off)
+
+    def max_drift(self, name='bleach') -> float:
+        """Largest distance (px) the ROI was moved from its place on the first frame."""
+        d = self.drift.get(name)
+        return float(np.hypot(d[:, 0], d[:, 1]).max()) if d is not None and len(d) else 0.0
 
     @property
     def ratio(self) -> np.ndarray:
@@ -874,20 +966,26 @@ def write_curve_csv(path, curve: FrapCurve) -> str:
         for k, v in curve.properties.items():
             f.write(f'# {k} = {v}\n')
         f.write(f'# channel = {curve.channel}\n# bleach_frame = {curve.bleach_frame + 1}\n')
+        f.write('# drift_correction = ' + {'roi': 'tracked around the ROIs', 'image': 'whole image'}
+                .get(curve.drift_mode, 'off') + (' (ROIs moved by dx, dy on each frame, rounded to whole '
+                                                 'pixels)' if curve.drift else '') + '\n')
         f.write('# value = (bleach - background) / (control - background)'
                 + {'first': ', / first frame', 'pre': ', / mean of pre-bleach frames'}.get(curve.normalize, '')
                 + '\n')
         for n in ROI_NAMES:
             f.write(f'# {n}_roi = {curve.roi_text.get(n, "")}\n')
         w = csv.writer(f)
+        moved = [n for n in ('bleach', 'control') if n in curve.drift]
         w.writerow(['frame', 'time_s', 'time_after_bleach_s', 'bleach_mean', 'control_mean',
-                    'background_mean', 'ratio', 'recovery', 'fit'])
+                    'background_mean', 'ratio', 'recovery', 'fit']
+                   + [f'{n}_{a}_px' for n in moved for a in ('dx', 'dy')])
         fit = curve.fit
         for i, t in enumerate(curve.times):
             tr = curve.t_rel[i]
             w.writerow([i + 1, _f(t), _f(tr)] + [_f(curve.means[n][i]) for n in ROI_NAMES]
                        + [_f(curve.ratio[i]), _f(curve.values[i]),
-                          _f(fit.value(tr)) if fit is not None and i >= curve.bleach_frame else ''])
+                          _f(fit.value(tr)) if fit is not None and i >= curve.bleach_frame else '']
+                       + [f'{curve.drift[n][i][k]:.2f}' for n in moved for k in (0, 1)])
     return str(path)
 
 
@@ -901,24 +999,26 @@ def write_summary_csv(path, curves: list[FrapCurve], groups: list[GroupCurve] = 
         f.write('# value = (bleach - background) / (control - background); fit y = a*(1-exp(-k*t)) + c '
                 'over the frames from the bleach on (t: s after the first post-bleach frame)\n')
         w = csv.writer(f)
-        w.writerow(['row', 'group', 'image', 'n', 'stat', 'channel', 'bleach_frame', 'frames'] + keys)
+        w.writerow(['row', 'group', 'image', 'n', 'stat', 'channel', 'bleach_frame', 'frames',
+                    'max_drift_px'] + keys)
         for c in curves:
             s = c.summary()
             w.writerow(['image', c.group, c.label, 1, 'value', c.channel, c.bleach_frame + 1,
-                        len(c.times)] + [_f(s[k]) for k in keys])
+                        len(c.times), f'{c.max_drift():.2f}' if c.drift else ''] + [_f(s[k]) for k in keys])
         for g in groups:
             gs = group_summary(g)
             for j, stat in enumerate(('mean', 'sd', 'sem')):
-                w.writerow(['group', g.name, '', len(g.members), stat, '', '', '']
+                w.writerow(['group', g.name, '', len(g.members), stat, '', '', '', '']
                            + [_f(gs[k][j]) for k in keys])
             pre = 1.0 if g.members and g.members[0].normalize else g.fit.pre if g.fit else float('nan')
             r_um = [c.bleach_radius_um for c in g.members if c.bleach_radius_um]
             fs = summary_values(g.mean, int(np.argmax(g.offset >= 0)), g.fit, g.t, pre,
                                 float(np.mean(r_um)) if r_um else None)
-            w.writerow(['group', g.name, '', len(g.members), 'fit of mean curve', '', '', '']
+            w.writerow(['group', g.name, '', len(g.members), 'fit of mean curve', '', '', '', '']
                        + [_f(fs[k]) for k in keys])
         w.writerow([])
         w.writerow(['column', 'meaning'])
+        w.writerow(['max_drift_px', 'Bleach ROI가 드리프트 보정으로 가장 멀리 옮겨진 거리 (px, 비어 있으면 보정 꺼짐)'])
         for k, text in SUMMARY_KEYS:
             w.writerow([k, text])
     return str(path)

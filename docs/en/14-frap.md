@@ -38,6 +38,35 @@ check box turns off. Turning **자동** on again puts it back at the automatic
 position. **모두 자동 배치** (Place all automatically) resets this image's
 ROIs, frame and threshold. Positions and settings are kept per image.
 
+## Drift correction
+
+When the condensate or the whole field moves during the series (slow stage
+or sample drift, a condensate that floats), **드리프트 보정 (ROI가 움직임을
+따라감)** (drift correction: the ROIs follow the movement, on by default) moves
+the three ROIs with it on every frame. The image itself is not changed. The
+movement of each frame is found by sub-pixel cross-correlation with a key frame
+(the first one; when a later frame no longer matches it, the previous frame
+becomes the key), and the ROIs are shifted by it rounded to whole pixels, as
+if moved by hand in ImageJ.
+
+| Setting | Meaning |
+|---|---|
+| **ROI 주변 추적** (track around the ROIs) | The movement in a square around the Bleach ROI (Background follows it too). When Control sits on another condensate, that condensate gets its own track |
+| **전체 이미지** (whole image) | The movement of the field (middle 512 px): stage or sample drift |
+| **추적 창** (tracking window) + **자동** | Side of the tracked square. Auto: 8 × the Bleach ROI, at least 128 px |
+
+The line below shows how far the ROIs moved (px, µm) and the movement on the
+last frame. On the image the ROIs are drawn where they are measured on the
+frame shown, so moving the T slider shows them following. A ROI dragged on any
+frame keeps that offset on every frame. The per-image CSV gets the movement of
+each frame (`bleach_dx_px`, `bleach_dy_px`, and `control_…` when Control has
+its own track), `frap_summary.csv` the largest movement (`max_drift_px`).
+
+Only movement in the image plane can be followed. A single-plane series whose
+focus drifts loses signal everywhere; the Control ROI's normalization makes up
+for an even loss. For Z-stacks, measure on the MIP (Z slider) so the focus
+does not matter.
+
 ## Settings
 
 | Setting | Meaning |

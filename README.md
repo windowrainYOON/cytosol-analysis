@@ -35,8 +35,10 @@ feature is added; keep the bracketed words only when the 입자 ROI tab's
 > condensate (or, when the whole condensate was bleached, a neighbouring
 > unbleached one), each after subtracting a background region of the bleach
 > region's size, normalised to the pre-bleach value (double normalisation,
-> Phair et al., 2004), with ROI means as in ImageJ's Measure function, and
-> fitted with ImageJ's Curve Fitter "Exponential recovery" function
+> Phair et al., 2004), with ROI means as in ImageJ's Measure function and
+> the ROIs moved on every frame by the lateral drift found by sub-pixel
+> cross-correlation with a key frame (as in Fiji's Correct 3D Drift plugin),
+> and fitted with ImageJ's Curve Fitter "Exponential recovery" function
 > y = a(1 − e^(−kt)) + c to give the mobile fraction a/(1 − c) and the
 > half-time t½ = ln 2/k.
 
