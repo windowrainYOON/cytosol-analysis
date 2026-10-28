@@ -28,6 +28,9 @@ fibre input; the actual power at the sample is not in any file.
   duration, number of bleaches, the frames that follow each bleach, the
   pre-bleach frames, and each bleach ROI's position and size (the ROIs
   themselves are drawn by the [마커 tab](05-markers.md)).
+- For OIR with stimulation (FRAP): the stimulating laser and intensity, the
+  repeat count, the pre-bleach frames and the stimulation regions. The
+  [FRAP 측정 tab](14-frap.md) uses these bleach regions and frames.
 
 ## What each format gives
 

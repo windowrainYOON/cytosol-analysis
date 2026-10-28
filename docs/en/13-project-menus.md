@@ -4,7 +4,7 @@
 
 The menu bar has one menu per feature next to **파일** (File): **LUT**,
 **마커** (Markers), **Crop**, **세포질 ROI**, **입자 ROI**, **강도 측정**,
-**Coloc 2**, **라인 프로파일**, **스택**, **이미지 정보** and **Figure**. Each
+**Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**, **이미지 정보** and **Figure**. Each
 feature menu opens that feature's tab and holds the saves and loads that
 belong to it. Projects, loading with automatic detection and saving
 everything at once are in the **파일** menu.
@@ -45,6 +45,7 @@ hidden, and the open tabs are saved in the project.
 | **강도 측정** | **강도 측정 탭 열기**, measurement CSVs (current / all images) |
 | **Coloc 2** | **Coloc 2 탭 열기**, CSV (current image), all images' CSVs (folder), plots, PDF report |
 | **라인 프로파일** | **라인 프로파일 탭 열기**, CSV, graph (PNG / PDF / SVG / TIFF), **선 ROI 불러오기…** (load line ROI) |
+| **FRAP 측정** | **FRAP 측정 탭 열기**, **요약 저장: 모든 이미지·그룹 CSV + 그래프 (폴더)…** (save summary), CSV, graph, **FRAP ROI 저장 / 불러오기…** ([FRAP 측정 tab](14-frap.md)) |
 | **스택** | **스택 탭 열기**, save the current projection / 3D rotation series: an options window (full resolution, all timepoints, fps, rotation range), then the file name |
 | **이미지 정보** | CSV, raw metadata (the tab is always open) |
 | **Figure** | **Figure 창 열기…** (`Ctrl+Shift+F`). Saving the figure and inset ROIs stays inside the [Figure window](11-figure.md). |
@@ -66,6 +67,7 @@ can be chosen at once).
 | Particle ROIs (`<name>_particles.zip`) | As particle ROIs (with their settings when stored) |
 | Crops (`<name>_crops.zip`) | As crop regions |
 | Line (`<name>_line.roi`) | As the line-profile line |
+| FRAP ROIs (`<name>_frap_rois.zip`) | As the FRAP tab's Bleach / Control / Background ROIs |
 | Bleach ROIs (`<name>_bleach_rois.zip`) | As bleach regions |
 | LUT preset (`.json`) | Applied to every image |
 | Marker settings (`.json`) | Applied to the marker settings |

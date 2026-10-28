@@ -86,6 +86,8 @@ class ImageItem:
     profile_line: tuple | None = None
     # Coloc 2 results (cytosol.coloc_panel.ColocRecord), newest run
     coloc: list = field(default_factory=list)
+    # FRAP measurement ROIs and settings (cytosol.frap.FrapState), None until measured
+    frap: object = None
     # particle ROIs (cytosol.intensity): the settings that make them per cell
     # (None: none, or loaded as fixed outlines) and the current plane's particles
     particle_settings: object = None

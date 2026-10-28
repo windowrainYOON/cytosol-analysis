@@ -42,7 +42,7 @@ owner writes in Korean, so reply in Korean.
 - **Right tabs**: `LUT` (channel LUTs on top, `MarkerPanel` fixed below in a
   vertical splitter) and `이미지 정보` are always present. The other tabs
   live in `MainWindow.tab_pages` (crop_tab, roi_tab, particle_tab,
-  intensity_tab, coloc_tab, profile_tab, stack_tab) and are shown / hidden
+  intensity_tab, coloc_tab, profile_tab, frap_tab, stack_tab) and are shown / hidden
   by the "… 탭 열기" check action in each feature's menu (`tool_actions`,
   `show_tab`, `hide_tab`, `tab_open`, `tab_current`). Panels ask
   `win.tab_current('<name>')` to know whether they are the visible tab
@@ -54,7 +54,7 @@ owner writes in Korean, so reply in Korean.
   - One menu per feature: **LUT** (이미지 내보내기, LUT 프리셋 저장/불러오기),
     **마커** (설정 저장/불러오기, JSON with `format: cytosol-viewer-markers`),
     **Crop**, **세포질 ROI**, **입자 ROI**, **강도 측정**, **Coloc 2**,
-    **라인 프로파일**, **스택**, **이미지 정보**, **Figure**. Each holds its tab
+    **라인 프로파일**, **FRAP 측정**, **스택**, **이미지 정보**, **Figure**. Each holds its tab
     action, its saves and its loads (`import_kind_dialog(kind)`, kinds in
     `IMPORT_KINDS`; it only pre-filters the file chooser, `import_paths`
     still detects by content).
@@ -114,6 +114,7 @@ owner writes in Korean, so reply in Korean.
 | `measure_box.py` | Measurement table shared by the three measuring tabs |
 | `coloc.py`, `coloc_panel.py` | Fiji Coloc 2 port, per cell |
 | `lineprofile.py`, `profile_panel.py` | Line profile (ImageJ RGB Profiler) |
+| `frap.py`, `frap_panel.py` | FRAP 측정 tab: bleach / control / background ROIs (`FrapState` per image in `ImageItem.frap`, auto placement, dragged on the canvas via `Canvas.show_frap` / `frapMoved`), (B−BG)/(C−BG) curves, ImageJ-equal ROI masks, exponential recovery fit, group means, summary CSV / figures |
 | `stack.py`, `stack_panel.py` | Z projections (2D) and 3D rotation views |
 | `marker_panel.py` | Scale bar, time stamp, bleach ROI display |
 | `figure.py`, `figure_window.py` | Figure window (image table, insets, scale bars, PNG/TIFF/PDF/SVG) |
@@ -229,4 +230,5 @@ not affected.
 | #45 | 0.30 | Nucleus split kept only when the shape says two nuclei (`_split_ok`: notches at both ends, convex pieces / non-convex pair, short cut, centres apart); bean nuclei stay whole (FV3000: 19 split blobs → 7) |
 | #46 | 0.31 | Wedge-shaped cell ROIs around dim nuclei fixed: nucleus patches < 2 µm apart are joined before splitting (`nucleus_gap_um`), auto size range gets 10 % slack; 자동 checkbox per value (cell / nucleus size separately, smoothing, neck, margin), all on and filled when an image is picked; Shift+click multi-select, 합치기 (M), Option+drag cut |
 | #48 | 0.32 | Nucleus outline per seed: own LUT stretch + own Otsu threshold (`_local_nuclei`), dim nuclei kept when compact with a sharp edge; FV3000 dim nuclei found, PRD 24h cell IoU 0.733 |
-| this PR | 0.33 | Side panes keep their width (only the preview grows, dragged widths remembered), pane contents reflow to the width (`flow.py`), long image names wrap in the list |
+| #47 | 0.33 | Side panes keep their width (only the preview grows, dragged widths remembered), pane contents reflow to the width (`flow.py`), long image names wrap in the list |
+| this PR | 0.34 | FRAP 측정 tab and menu: bleach ROI from the file (CZI bleach regions, OIR stimulation regions now read too) or detected, control in the unbleached part of the condensate (else another unbleached condensate), background of the bleach ROI's size; drag ROIs with live update; (B−BG)/(C−BG) normalized to the first / pre-bleach frames; ImageJ Exponential recovery fit (mobile fraction, t½, k, plateau); group mean ± SD/SEM; one-step summary save (CSV + figures); verified against ij 1.54f |

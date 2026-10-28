@@ -1,0 +1,112 @@
+# FRAP 측정 탭 (bleach 후 회복 곡선)
+
+[← 설명서 목차](README.md) · [English](../en/14-frap.md)
+
+메뉴 막대의 **FRAP 측정 › FRAP 측정 탭 열기**로 오른쪽에 이 탭을 열고 닫습니다. 이 탭의
+저장과 불러오기도 같은 **FRAP 측정** 메뉴에 있습니다.
+
+시간축(T)이 있는 bleach 실험에서, bleach한 곳의 강도가 시간에 따라 얼마나 회복되는지
+측정해 그래프로 그리고, mobile fraction, t½ 같은 FRAP 수치를 계산합니다. 탭을 열면
+현재 이미지가 바로 측정됩니다.
+
+## 측정값
+
+프레임마다
+
+> 값 = (Bleach − Background) / (Control − Background)
+
+이고, 세 값은 각 ROI 안의 평균 강도(ImageJ Measure의 Mean과 같음)입니다.
+
+| ROI | 색 | 자동 위치 |
+|---|---|---|
+| **Bleach** (B) | 빨강 | 파일에 기록된 bleach 영역 (Zeiss CZI의 bleach 영역, Olympus/Evident OIR의 stimulation 영역). 기록이 없으면 앞 프레임들보다 계속 어두워진 곳 중 가장 크게 어두워진 곳 (이미지 가장자리 4 %는 제외) |
+| **Control** (C) | 초록 | bleach한 응집체에서 bleach 영역 밖의 가장 안쪽 (크기는 Bleach와 달라도 됨). 응집체가 통째로 bleach됐으면 bleach되지 않은 가장 가까운 다른 응집체 (촬영 중 bleaching 보정용) |
+| **Background** (BG) | 파랑 | Bleach ROI와 같은 모양·크기로, 응집체 신호가 없는 가장 가까운 곳 |
+
+Control은 bleach 프레임에서 신호가 30 % 넘게 떨어지는 곳(같이 bleach된 곳)을 건너뜁니다.
+자동 위치가 알맞지 않을 때 쓰는 안내는 ROI 칸 아래 주황색 글로 나옵니다.
+
+## ROI 옮기기
+
+ROI는 이미지 위에 B / C / BG 글자와 함께 표시됩니다(**ROI 표시**로 끄고 켬). 이미지
+위에서 ROI를 끌면 끄는 동안에도 값과 그래프가 바로 바뀌고, 놓으면 그 자리에 고정되며
+그 ROI의 **자동**이 꺼집니다. **자동**을 다시 켜면 자동 위치로 돌아갑니다.
+**모두 자동 배치**는 이 이미지의 ROI, 프레임, threshold를 모두 자동으로 되돌립니다.
+ROI 위치와 설정은 이미지마다 따로 저장됩니다.
+
+## 설정
+
+| 항목 | 의미 |
+|---|---|
+| **채널** | 측정할 채널 (모든 이미지에 같은 이름의 채널) |
+| **bleach 전 강도로 정규화** (기본 켬) | 값을 bleach 전 값으로 나눔 (bleach 전 = 1). 기준은 **첫 프레임** 또는 **bleach 전 프레임 평균**. Phair 등(2004)의 double normalization과 같습니다 |
+| **bleach 후 첫 프레임** + **자동** | bleach 바로 다음 프레임 (1부터). 자동: 파일의 bleach 기록(CZI bleach 이벤트, OIR pre-bleach 프레임 수), 없으면 Bleach ROI 강도가 가장 크게 떨어진 프레임 |
+| Bleach **지름** + **자동** | 파일 기록이 없을 때 찾은 원의 지름 (자동: 어두워진 영역의 넓이와 같은 원). 파일의 bleach 영역은 그 모양 그대로 |
+| Control **지름** + **자동** | Control 원의 지름 (자동: Bleach ROI 크기까지, 응집체 안에 들어가는 가장 큰 원) |
+| **응집체 threshold** + **자동** (슬라이더) | bleach 전 이미지(σ 1 px 가우시안)에서 이 값 이상이 응집체 신호. Control과 Background 자동 위치에 씀. 자동: Bleach ROI 둘레 창 안의 Otsu |
+
+## 그래프
+
+**그래프** 목록에서 고릅니다.
+
+- **회복 곡선 (현재 이미지)**: 값을 bleach 뒤 시간(s, 0 = bleach 후 첫 프레임)에 대해.
+  **지수 회복 피팅**을 켜면 피팅 곡선도.
+- **ROI 평균 강도 (현재 이미지)**: Bleach, Control, Background의 원래 평균 강도.
+- **그룹 평균 ± 에러바**: 이미지 그룹([그룹](01-getting-started.md))마다 평균 곡선과
+  **SEM** 또는 **SD** 에러바. 프레임은 bleach 프레임에 맞춰 정렬합니다. 그룹에 넣지 않은
+  이미지는 `No group` 한 묶음입니다. **개별 곡선도 표시**로 이미지마다 곡선도 흐리게.
+  에러바에는 그룹마다 3개 이상의 이미지를 권장합니다(3개 미만이면 표시).
+
+그래프 아래에 FRAP 수치가 나옵니다.
+
+## FRAP 수치
+
+bleach 후 프레임을 ImageJ Curve Fitter의 **Exponential recovery**
+`y = a·(1 − e^(−k·t)) + c`로 피팅합니다(t: bleach 후 첫 프레임부터의 s).
+pre는 bleach 전 값(정규화하면 1)입니다.
+
+| 열 | 의미 |
+|---|---|
+| `pre_bleach` | bleach 전 값 |
+| `post_bleach` | bleach 직후 값 (bleach 후 첫 프레임) |
+| `bleach_depth` | 1 − 직후 / 전 |
+| `final`, `final_recovery` | 마지막 프레임 값, (마지막 − 직후) / (전 − 직후). 피팅 없이 구한 회복률 |
+| `plateau` | 피팅이 수렴하는 값 a + c |
+| `mobile_fraction` | a / (전 − c): 회복할 수 있는 비율 |
+| `immobile_fraction` | 1 − mobile fraction |
+| `k_per_s`, `tau_s`, `half_time_s` | 회복 속도 상수 k, τ = 1/k, 반감기 t½ = ln 2 / k |
+| `initial_rate_per_s` | 처음 회복 속도 a·k |
+| `fit_r2` | 피팅 R² |
+| `fit_ok` | 1 = 피팅 사용 가능. 0 = 회복이 없거나(a ≤ 0) t½가 관찰 시간보다 길어 피팅값을 비움 (그때는 `final_recovery`를 보세요) |
+| `D_um2_per_s` | 원형 bleach일 때 확산계수 참고값 D ≈ 0.224 · r² / t½ (Soumpasis 1983). 실제 회복이 확산만으로 정해질 때만 의미가 있습니다 |
+
+## 저장
+
+메뉴 막대의 **FRAP 측정** 메뉴에서:
+
+- **요약 저장: 모든 이미지·그룹 CSV + 그래프 (폴더)…**: 시간축이 있는 모든 이미지를
+  측정해 한 번에 저장합니다.
+  - `frap_summary.csv`: 이미지마다 한 행(위 FRAP 수치), 그룹마다 mean / sd / sem 행
+    (n은 값이 있는 이미지 수)과 그룹 평균 곡선을 피팅한 행, 끝에 열 설명.
+  - `frap_group_curves.csv`: 그룹 평균 곡선 (bleach 기준 프레임, 시간, mean, SD, SEM, n, 피팅값).
+  - `frap_groups.png` / `.pdf`: 그룹 평균 ± 에러바 그래프.
+  - `frap_summary.png`: 그룹별 mobile fraction, t½, 최종 회복률 막대(평균 ± 에러바)와 이미지마다 점.
+  - 이미지마다 `<이름>_frap.csv`(프레임별 시간, 세 ROI 평균, 비율, 값, 피팅),
+    `<이름>_frap.png`, `<이름>_frap_rois.zip`. **파일 › 이미지별 폴더에 나눠 저장**이 켜져
+    있으면 이미지별 폴더에.
+- **CSV 저장 (현재 이미지)…**: `<이름>_frap.csv` (ROI 함께 저장 옵션이 켜져 있으면 `_rois.zip`도).
+- **그래프 저장 (PNG / PDF / SVG / TIFF)…**: 탭에 보이는 그래프.
+- **FRAP ROI 저장 (현재 이미지)…** / **FRAP ROI 불러오기…**: ImageJ ROI
+  (`frap_bleach`, `frap_control`, `frap_background`). 불러온 ROI는 그 자리에 고정됩니다.
+
+**파일 › 모든 분석 결과 통합 저장**은 FRAP 탭에서 측정한 이미지마다 `<이름>_frap.csv`와
+`_frap_rois.zip`을, 전체 폴더에 `frap_summary.csv`, `frap_group_curves.csv`,
+`frap_groups.png`, `frap_summary.png`를 씁니다. FRAP ROI와 설정은 프로젝트 파일에도
+저장됩니다.
+
+## ImageJ와의 일치
+
+ROI 평균은 ImageJ(1.54f)와 같습니다: 원/타원 ROI는 `OvalRoi` 마스크, 사각형은 모든 픽셀,
+다각형은 `PolygonFiller`(서브픽셀 좌표 포함)와 같은 규칙. 지수 회복 피팅은 ImageJ
+`CurveFitter`의 Exponential recovery와 계수가 상대 10⁻⁵ 이내로 같습니다
+(`scripts/imagej_reference/compare_frap.py`).

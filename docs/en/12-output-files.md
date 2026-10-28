@@ -30,6 +30,7 @@ you chose. Every TIFF, ROI and CSV carries the image ID (see
 | `<name>_regions.zip` | 강도 측정 tab | `rgnCCC-R`, the expression in the `region` property |
 | `<name>_bleach_rois.zip` | every export (CZI with bleach regions) | Ovals or polygons |
 | `<name>_line.roi` | 라인 프로파일 tab | Straight line with its width |
+| `<name>_frap_rois.zip` | FRAP 측정 tab, save all results | `frap_bleach`, `frap_control`, `frap_background` |
 | `<name>_crops.zip` | image export, Crop › Crop 영역 ROI 저장, save all results | `cropN` rectangles (property `crop_region`) |
 | inset `.roi` / `.zip` | Figure window | Rectangles in original-image coordinates |
 
@@ -44,6 +45,7 @@ you chose. Every TIFF, ROI and CSV carries the image ID (see
 | `<name>_<suffix>_summary.csv` | `<suffix>_summary_image.csv`, `<suffix>_summary_group.csv` | 입자 ROI tab summaries |
 | `<name>_intensity.csv` | `intensity.csv` | 강도 측정 tab |
 | `<name>_coloc2.csv` | `coloc2.csv` | Coloc 2 tab |
+| `<name>_frap.csv` | `frap_summary.csv`, `frap_group_curves.csv` | FRAP 측정 tab: curve per frame, FRAP numbers per image and group, group mean curves (graphs `frap_groups.png`, `frap_summary.png`) |
 | `<name>_info.csv` | — | 이미지 정보 tab (save all results) |
 | — | `image_groups.csv` | Image, image ID, group |
 | line profile `.csv` | — | Distance + one column per channel |

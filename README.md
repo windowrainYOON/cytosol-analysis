@@ -30,7 +30,15 @@ feature is added; keep the bracketed words only when the 입자 ROI tab's
 > median + 3 × MAD, and delineated by marker-controlled watershed (as in the
 > MorphoLibJ plugin) on the background-subtracted image (grey opening, as in
 > ImageJ's Subtract Background) down to 30% of each spot's peak (or by a
-> manual threshold).
+> manual threshold); FRAP recovery was quantified as the mean intensity of
+> the bleached region relative to an unbleached reference region of the same
+> condensate (or, when the whole condensate was bleached, a neighbouring
+> unbleached one), each after subtracting a background region of the bleach
+> region's size, normalised to the pre-bleach value (double normalisation,
+> Phair et al., 2004), with ROI means as in ImageJ's Measure function, and
+> fitted with ImageJ's Curve Fitter "Exponential recovery" function
+> y = a(1 − e^(−kt)) + c to give the mobile fraction a/(1 − c) and the
+> half-time t½ = ln 2/k.
 
 ## Reading raw files
 
@@ -44,7 +52,7 @@ the detector maximum), read from the metadata.
 |---|---|---|
 | TCF (HDF5) | `h5py` | `modality='3D'` (default) or `'2DMIP'` gives refractive index (stored uint16 / 10000); `'3DFL'` / `'2DFLMIP'` gives fluorescence per channel. HT and FL have different XY pixel sizes and Z ranges (`Data/3DFL` `OffsetZ`). |
 | CZI | `czifile` | `scene=` selects a scene in multi-scene files. Frame times come from the `TimeStamps` attachment; bleach regions and events (`metadata['bleach_rois']`, `metadata['bleach']`) from the experiment XML and the `EventList` attachment. |
-| OIR | `oirfile` | |
+| OIR | `oirfile` | Stimulation (bleach) regions, laser and pre-bleach frame count (`metadata['bleach_rois']`, `metadata['bleach']`) from the `stimulationParam` and synchronized-acquisition XML. |
 | TIFF | `tifffile` | ImageJ hyperstacks and OME-TIFF keep T/Z/C, pixel size, channel names and colors (ImageJ LUTs, OME `Color`). A plain multi-page TIFF is a Z stack; an RGB TIFF gives channels R/G/B. |
 
 Value range per format: CZI `ComponentBitCount`, OIR bits per sample,

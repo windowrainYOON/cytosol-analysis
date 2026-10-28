@@ -241,6 +241,7 @@ def image_entry(it, base: Path) -> dict:
         'particle_settings': asdict(it.particle_settings) if it.particle_settings is not None
         else None,
         'linked': [_rel(Path(f).resolve(), base) for f in it.linked],
+        'frap': it.frap.to_dict() if hasattr(it.frap, 'to_dict') else None,
     }
 
 

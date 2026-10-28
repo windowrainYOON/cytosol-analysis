@@ -17,6 +17,9 @@ and print the differences.
   or `labels.npy`).
 - `ProfileReference.java` gets ImageJ's line profile (`ProfilePlot`, what
   Plot Profile and RGB Profiler plot) for `compare_profile.py`.
+- `FrapReference.java` gives ImageJ's Measure mean of oval / polygon ROIs on
+  every slice of a float stack and the `CurveFitter` "Exponential recovery"
+  fit for `compare_frap.py` (needs only `ij.jar`).
 
 Build: compile the sources of
 [Colocalisation_Analysis](https://github.com/fiji/Colocalisation_Analysis)
@@ -29,6 +32,7 @@ multithreading helpers) and these two files against `ij-1.54f.jar` and
     python scripts/imagej_reference/compare_profile.py ij.jar:imglib2.jar:build
     python scripts/imagej_reference/compare_intensity.py ij.jar:build
     python scripts/imagej_reference/compare_shape.py ij.jar:build
+    python scripts/imagej_reference/compare_frap.py ij.jar:build
 
 `COLOC2_REAL=<dir>` (with `a.npy`, `b.npy`, `masks.npz`) adds a real image
 and its ROI masks to the Coloc 2 cases.
