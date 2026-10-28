@@ -1118,6 +1118,28 @@ class RoiPanel(QWidget):
             per_image = q == QMessageBox.StandardButton.No
         else:
             per_image = self._any_size_auto()
+        n, secs, ranges, errors = self.detect_jobs(jobs, per_image, sizes)
+        skipped = len(self.win.items) - len(jobs)
+        msg = f'이미지 {n}개에서 ROI를 검출했습니다' + (
+            f' (이미지당 평균 {secs / n:.1f}초).' if n else '.')
+        if skipped:
+            msg += f' (역할에 맞는 채널이 없거나 건너뛴 이미지 {skipped}개)'
+        if ranges:
+            msg += ' 이미지별 크기 범위: ' + '; '.join(ranges)
+            if src.cells is not None and per_image:
+                self._show_sizes(self._auto_sizes(self._image_sizes(src, self.roles(src)))
+                                 if self._any_size_auto() else self._image_sizes(src, self.roles(src)))
+        self.status(msg)
+        if errors:
+            QMessageBox.warning(self, '검출 실패', '\n'.join(errors))
+        self.selected = 0
+        self.refresh_list()
+        self.win.update_preview()
+
+    def detect_jobs(self, jobs, per_image, sizes=None):
+        """Detect the ROIs of (image, roles) jobs (also used by 일괄 분석).
+        per_image: each image its own size range; else sizes (None = the
+        fields). Returns (images done, seconds, size ranges used, errors)."""
         prog = QProgressDialog('ROI 검출 중…', '취소', 0, len(jobs), self.win)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
         errors, n, secs, ranges = [], 0, 0.0, []
@@ -1144,22 +1166,7 @@ class RoiPanel(QWidget):
                 errors.append(f'{it.label}: {exc}')
                 traceback.print_exc()
         prog.setValue(len(jobs))
-        skipped = len(self.win.items) - len(jobs)
-        msg = f'이미지 {n}개에서 ROI를 검출했습니다' + (
-            f' (이미지당 평균 {secs / n:.1f}초).' if n else '.')
-        if skipped:
-            msg += f' (역할에 맞는 채널이 없거나 건너뛴 이미지 {skipped}개)'
-        if ranges:
-            msg += ' 이미지별 크기 범위: ' + '; '.join(ranges)
-            if src.cells is not None and per_image:
-                self._show_sizes(self._auto_sizes(self._image_sizes(src, self.roles(src)))
-                                 if self._any_size_auto() else self._image_sizes(src, self.roles(src)))
-        self.status(msg)
-        if errors:
-            QMessageBox.warning(self, '검출 실패', '\n'.join(errors))
-        self.selected = 0
-        self.refresh_list()
-        self.win.update_preview()
+        return n, secs, ranges, errors
 
     # ---- list / overlay ---------------------------------------------------
 

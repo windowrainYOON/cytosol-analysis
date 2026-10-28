@@ -22,10 +22,14 @@ hidden, and the open tabs are saved in the project.
 | **새 프로젝트** (New project) | `Ctrl+N` | Closes every image and starts again (asks first about unsaved changes) |
 | **불러오기 (자동 인식)…** (Load, detected automatically) | `Ctrl+O` | See [Loading](#loading) |
 | **불러오기 (폴더)…** (Load folder) | `Ctrl+Shift+O` | Loads the images and exports in a folder, paired by image ID |
-| **최근 프로젝트** (Recent projects) | | |
+| **최근 프로젝트** (Recent projects) | | Asks whether to load everything or only the settings |
+| **프로젝트에서 설정(파이프라인)만 불러오기…** (Load settings only) | | Keeps the open images; takes only the tab settings and batch choice of a project or batch settings file ([more](15-batch.md#loading-only-the-settings-pipeline-of-a-project)) |
 | **프로젝트 저장** (Save project) | `Ctrl+S` | Saves all the work as a `.cyproj` file (asks where the first time) |
 | **프로젝트 다른 이름으로 저장…** (Save project as) | `Ctrl+Shift+S` | |
 | **모든 분석 결과 통합 저장 (이미지별 폴더)…** (Save all results) | `Ctrl+Shift+E` | One folder per image with its TIFFs, ROIs and measurement CSVs, and `project.cyproj` at the top |
+| **일괄 분석 실행…** / **일괄 분석 결과 보기…** (Batch analysis / results) | `Ctrl+B` / `Ctrl+Shift+B` | Tick groups and analyses, run them at once, review and fix per image ([Batch analysis](15-batch.md)) |
+| **일괄 분석 결과 저장 (폴더)…** (Save batch results) | | Only the batch's analyses and settings |
+| **일괄 분석 설정 저장…** / **불러오기…** (Save / load batch settings) | | Analysis and group choice plus the settings of those tabs (JSON) |
 | **이미지별 폴더에 나눠 저장** (check item) | | Every folder save: a subfolder `<name>_<image ID>/` per image |
 | **측정·프로파일 저장 시 ROI와 ROI가 그려진 이미지(.png)도 함께** (check item) | | Next to measurement CSVs and line profiles also `<name>_RoiSet.zip`, `<name>_particles.zip`, `<name>_line.roi`, `<name>_image.png` |
 | **작업 기록 보기…** (Work log) | `Ctrl+Shift+L` | The [work log](#work-log) window |
@@ -95,7 +99,11 @@ editing and analysing.
   expressions, markers, export options, …) and which tabs were open
 - The all-image results of the measurement tables
 - The Figure window's table (image, region and channels per cell, insets, layout)
+- The batch analysis choice (analyses, groups) and its results table
 - The work log
+
+Opening a project asks whether to load everything (images and results) or only
+the settings (pipeline); see [Batch analysis](15-batch.md#loading-only-the-settings-pipeline-of-a-project).
 
 Image files are not copied, only where they are: the path relative to the
 project file and the absolute path are both stored, so the project and its

@@ -2,7 +2,7 @@
 
 [한국어 설명서](../ko/README.md)
 
-Cytosol Viewer (v0.25) opens Tomocube TCF, Zeiss CZI, Olympus/Evident OIR and
+Cytosol Viewer (v0.38) opens Tomocube TCF, Zeiss CZI, Olympus/Evident OIR and
 TIFF images, finds cell, nucleus and cytosol ROIs, measures them the way
 ImageJ/Fiji does and exports images, ROIs, tables and figures.
 
@@ -30,6 +30,7 @@ appears on screen, followed by its meaning in parentheses, e.g.
 | Manual | Covers |
 |---|---|
 | [Getting started: images, viewing, groups](01-getting-started.md) | Adding files and folders, image list, groups, TCF HT/FL alignment, Z/T navigation, zoom, crops, image ID |
+| [Batch analysis](15-batch.md) | Pick groups and tick analyses to run them all at once, review / fix / measure again, save only the batch results and settings, load only a project's settings |
 | [Menus, project files and the work log](13-project-menus.md) | File menu and feature menus, loading with automatic detection, saving and opening projects, work log, mouse sensitivity |
 | [LUT tab and image export](02-lut-export.md) | Channel display (LUT), batch LUT, presets, TIFF/MP4 export, saving all results |
 | [세포질 ROI tab](03-cytosol-roi.md) | Automatic cell/nucleus/cytosol ROI detection, editing, ImageJ ROI files, cell intensity |
@@ -57,6 +58,7 @@ tab's results.
 | New project / save project / save as | `Ctrl+N` / `Ctrl+S` / `Ctrl+Shift+S` |
 | Image export (TIFF / MP4) | `Ctrl+E` |
 | Save all results (one folder per image) | `Ctrl+Shift+E` |
+| Batch analysis / batch results | `Ctrl+B` / `Ctrl+Shift+B` |
 | Figure window | `Ctrl+Shift+F`; inside it, save with `Ctrl+S` |
 | Work log | `Ctrl+Shift+L` |
 | Zoom | `Cmd` (Windows `Ctrl`) + drag up/down, `]` in / `[` out; **영역 확대** (zoom to area) or `Shift`+drag a rectangle; **화면 맞춤** (fit) to reset. Sensitivity in **파일 › 설정…** |

@@ -108,7 +108,9 @@ A GUI for working on a whole set of images at once:
   project continues where it was left), **불러오기** (load files or a folder;
   projects, images, cell / particle / crop / line ROIs, LUT presets, marker
   settings and `image_groups.csv` are recognised automatically and attached to
-  the matching open image), **모든 분석 결과 통합 저장** (save all results), the
+  the matching open image; opening a project asks whether to load everything
+  or only its settings), **일괄 분석** (batch analysis per group, see below),
+  **모든 분석 결과 통합 저장** (save all results), the
   work log (every lasting status message with time and image) and the
   settings (mouse sensitivity). Next to it every feature has its own menu
   (LUT, 마커, Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, 스택,
@@ -383,6 +385,22 @@ A GUI for working on a whole set of images at once:
 - **모든 분석 결과 통합 저장** (File menu, Ctrl+Shift+E): for every image, one folder
   holding its TIFFs, crop / cell / particle / region ROIs and measurement
   CSVs, plus the combined tables and `project.cyproj` at the top.
+- **일괄 분석** (batch analysis, File menu, Ctrl+B): after loading and
+  grouping a set of images, tick the groups and the analyses (cell ROI
+  detection, particle ROI detection, cell ROI / particle / logic-region
+  intensity, nucleus → membrane bands, Coloc 2, FRAP); they run one after the
+  other on every image of those groups with each tab's current settings
+  (images that already have ROIs are left alone unless asked). A results
+  window lists per image the cell / particle counts, measurement rows, Coloc 2
+  ROIs and FRAP mobile fraction / t½; double-clicking opens the image in that
+  analysis's tab to fix it, and **다시 측정** measures again keeping the edited
+  ROIs. **일괄 분석 결과 저장** saves only those analyses of those images
+  (per-image folders, combined CSVs and summaries, `batch_summary.csv`,
+  `batch_settings.json`); **일괄 분석 설정 저장 / 불러오기** keeps the analysis and
+  group choice plus the tab settings as JSON (`format: cytosol-viewer-batch`)
+  to run the same pipeline on another image set. Opening a project asks
+  whether to load everything (images, ROIs, results) or only its settings
+  (pipeline) for the images already open.
 
 ### Image ID and folder loading
 

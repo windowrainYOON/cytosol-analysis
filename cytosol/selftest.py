@@ -119,8 +119,12 @@ def run(out_dir) -> int:
     log = []
     ok = True
 
+    only = os.environ.get('CYTOSOL_SELFTEST_ONLY')  # run just these steps (comma separated)
+
     def step(name, fn):
         nonlocal ok
+        if only and name not in only.split(','):
+            return
         try:
             res = fn()
             log.append(f'ok    {name}' + (f': {res}' if res is not None else ''))
@@ -1444,6 +1448,97 @@ def run(out_dir) -> int:
         return (f'Mf {s1["mobile_fraction"]:.3f}, t½ {s1["half_time_s"]:.2f} s, group Mf {mf:.3f}, '
                 f'drift {np.hypot(*last):.1f} px: Mf {mf_d:.3f} (uncorrected {mf_off:.3f})')
 
+    def batch_step():
+        import json
+
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+
+        from . import batch
+        from .app import MainWindow
+
+        app = QApplication.instance() or QApplication([sys.argv[0]])
+        win = MainWindow()
+        win.show()
+        items = [_synthetic_item() for _ in range(3)]
+        for k, (it, g) in enumerate(zip(items, ('A', 'A', 'B'))):
+            it.label, it.group = f'batch{k}', g
+            win._add_item(it)
+        win.file_list.setCurrentRow(0)
+        app.processEvents()
+        # the setup dialog: groups and analyses as check boxes
+        dlg = batch.BatchDialog(win)
+        if dlg.groups() != ['A', 'B'] or 'cells' not in dlg.steps():
+            raise AssertionError(f'batch dialog defaults: {dlg.groups()}, {dlg.steps()}')
+        dlg.group_list.item(1).setCheckState(Qt.CheckState.Unchecked)
+        for k in ('particles', 'particle_measure', 'coloc'):
+            dlg.step_boxes[k].setChecked(True)
+        dlg._accept()
+        st = win.batch
+        if st.groups != ['A'] or st.steps != ['cells', 'particles', 'roi_measure',
+                                              'particle_measure', 'coloc']:
+            raise AssertionError(f'batch choice: {st.groups}, {st.steps}')
+        win.run_batch()
+        app.processEvents()
+        if st.images != ['batch0', 'batch1'] or items[2].cells is not None:
+            raise AssertionError(f'batch ran on {st.images}, group B cells {items[2].cells}')
+        for it in items[:2]:
+            r = st.results.get(it.label, {})
+            if it.cells is None or len(it.cells) != 3 or not r.get('roi_measure') \
+                    or r.get('particles') is None or not it.coloc:
+                raise AssertionError(f'batch results of {it.label}: {r}, coloc {it.coloc and len(it.coloc)}')
+        if st.errors:
+            raise AssertionError(f'batch errors: {st.errors}')
+        res = win.batch_win
+        if res is None or res.table.rowCount() != 2:
+            raise AssertionError('batch results window')
+        # fix one image (drop a cell), measure again: the edit is kept
+        before = st.results['batch1']['roi_measure']
+        items[1].cells.delete(items[1].cells.ids()[0])
+        res.open_cell(1, 2)
+        if win.current is not items[1] or not win.tab_current('roi_tab'):
+            raise AssertionError('double-click did not open the image in its tab')
+        res.remeasure()
+        if len(items[1].cells) != 2 or st.results['batch1']['roi_measure'] >= before:
+            raise AssertionError(f're-measure: {len(items[1].cells)} cells, '
+                                 f"{st.results['batch1']['roi_measure']} vs {before} rows")
+        # only the batch results and settings
+        files = win.save_batch_results(out / 'batch')
+        names = {Path(f).name for f in files}
+        need = {'batch_summary.csv', 'batch_settings.json', 'cell_rois.csv', 'coloc2.csv',
+                f'{win.roi_panel.measure.suffix}.csv', f'{win.particle_panel.measure.suffix}.csv'}
+        if not need <= names or any('batch2' in n for n in names):
+            raise AssertionError(f'batch save: {sorted(names)}')
+        # settings file: steps, groups and tab settings come back
+        win.particle_panel.min_px.setValue(win.particle_panel.min_px.value() + 3)
+        want = win.particle_panel.min_px.value()
+        batch.save_settings(win, out / 'batch' / 'pipeline.json')
+        win.particle_panel.min_px.setValue(want - 2)
+        st.steps = ['cells']
+        win.import_paths([out / 'batch' / 'pipeline.json'])
+        if win.batch.steps[-1] != 'coloc' or win.particle_panel.min_px.value() != want:
+            raise AssertionError('batch settings file not applied')
+        # a project's settings (pipeline) only: images and results stay
+        proj = out / 'batch' / 'batch.cyproj'
+        win.write_project_to(proj)
+        if json.loads(Path(out / 'batch' / 'batch_settings.json').read_text(
+                encoding='utf-8'))['format'] != batch.FORMAT:
+            raise AssertionError('batch_settings.json format')
+        win.batch.steps = ['frap']
+        win.particle_panel.min_px.setValue(want - 1)
+        if not win.open_project(proj, settings_only=True):
+            raise AssertionError('settings-only project open')
+        if len(win.items) != 3 or win.batch.steps[-1] != 'coloc' \
+                or win.particle_panel.min_px.value() != want or len(items[1].cells) != 2:
+            raise AssertionError('settings-only open changed images or missed settings')
+        from .project import read_project
+        if batch.BatchState.from_dict(read_project(proj)[0].get('batch')).images != ['batch0', 'batch1']:
+            raise AssertionError('batch state not kept in the project')
+        win.batch_win and win.batch_win.close()
+        win.set_dirty(False)
+        win.close()
+        return f'{len(st.images)} images, {len(files)} files'
+
     step('readers import', readers)
     step('HDF5 non-ASCII path', hdf5_unicode_path)
     step('TIFF export', tiff_export)
@@ -1462,6 +1557,7 @@ def run(out_dir) -> int:
     step('Z-stack projections', projections)
     step('bleach ROIs + image info', bleach_info)
     step('FRAP measurement', frap_step)
+    step('batch analysis', batch_step)
     step('main window', window)
 
     text = '\n'.join(log) + f'\n\n{"PASSED" if ok else "FAILED"}\n'

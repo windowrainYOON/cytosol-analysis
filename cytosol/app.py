@@ -6,6 +6,7 @@ Run with ``python -m cytosol.app`` (or the built app).
 from __future__ import annotations
 
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -67,6 +68,8 @@ from .lut import (
     save_preset,
     unique_stems,
 )
+from . import batch
+from .batch import BatchDialog, BatchResults, BatchState
 from .coloc_panel import ColocPanel, write_coloc_csv
 from .intensity import is_contour_file, is_particle_file, is_region_file, write_rows
 from .groups import GROUP_FILE, apply_groups, auto_groups, read_groups, suggest_name, write_groups
@@ -1578,6 +1581,8 @@ class MainWindow(QMainWindow):
 
         self.figure_win = None
         self.log_win = None
+        self.batch = BatchState()  # 일괄 분석: steps, groups, results per image
+        self.batch_win = None
         self._build_menus()
         self.statusBar().showMessage('파일을 추가하세요.', 5000)
 
@@ -1626,9 +1631,24 @@ class MainWindow(QMainWindow):
             '이미 열린 이미지에는 ROI·Crop·라인을 붙입니다.')
         self.recent_menu = m.addMenu('최근 프로젝트')
         self.recent_menu.aboutToShow.connect(self._fill_recent)
+        act(m, '프로젝트에서 설정(파이프라인)만 불러오기…', self.import_settings_dialog,
+            tip='프로젝트(.cyproj)나 일괄 분석 설정(.json)에서 각 탭의 설정과 일괄 분석 구성만 가져옵니다. '
+                '지금 열린 이미지와 분석 값은 그대로 둡니다.')
         m.addSeparator()
         act(m, '프로젝트 저장', self.save_project, QKeySequence.StandardKey.Save)
         act(m, '프로젝트 다른 이름으로 저장…', lambda: self.save_project(ask=True), 'Ctrl+Shift+S')
+        m.addSeparator()
+        act(m, '일괄 분석 실행…', self.batch_dialog, 'Ctrl+B',
+            '그룹을 고르고 수행할 분석(세포질 ROI, 입자, 강도 측정, Coloc 2, FRAP …)을 체크해 '
+            '그 그룹의 모든 이미지에 한 번에 실행합니다.')
+        act(m, '일괄 분석 결과 보기…', self.show_batch_results, 'Ctrl+Shift+B',
+            '이미지별 결과를 보고, 이미지를 열어 ROI를 고친 뒤 다시 측정합니다.')
+        act(m, '일괄 분석 결과 저장 (폴더)…', self.save_batch_results,
+            tip='일괄 분석에서 고른 분석의 결과만 (고친 내용 반영, 이미지별 폴더 + 전체 CSV + '
+                'batch_summary.csv + batch_settings.json) 저장합니다.')
+        act(m, '일괄 분석 설정 저장…', self.save_batch_settings,
+            tip='고른 분석·그룹과 그 분석들의 탭 설정을 JSON 파일로 저장합니다 (다른 이미지셋에 다시 쓰기).')
+        act(m, '일괄 분석 설정 불러오기…', self.load_batch_settings_dialog)
         m.addSeparator()
         act(m, '모든 분석 결과 통합 저장 (이미지별 폴더)…', self.export_everything, 'Ctrl+Shift+E',
             '이미지마다 폴더를 하나씩 만들어 그 이미지의 TIFF, Crop·세포·입자·논리 영역 ROI, '
@@ -1742,7 +1762,7 @@ class MainWindow(QMainWindow):
         self.recent_menu.clear()
         files = [p for p in view_settings.recent() if Path(p).exists()]
         for p in files:
-            self.recent_menu.addAction(Path(p).name, lambda p=p: self.open_project(Path(p)))
+            self.recent_menu.addAction(Path(p).name, lambda p=p: self.open_project_dialog(Path(p)))
         if not files:
             self.recent_menu.addAction('(없음)').setEnabled(False)
         else:
@@ -1928,9 +1948,13 @@ class MainWindow(QMainWindow):
         paths = [Path(p) for p in paths]
         projects = [p for p in paths if is_project_file(p)]
         if projects:
-            if not self.open_project(projects[0]):
+            if not self.open_project_dialog(projects[0]):
                 return
             paths = [p for p in paths if p not in projects]
+        batches = [p for p in paths if p.suffix.lower() == '.json' and batch.is_batch_file(p)]
+        for p in batches:
+            self.load_batch_settings(p)
+        paths = [p for p in paths if p not in batches]
         folders = [p for p in paths if p.is_dir()]
         presets = [p for p in paths if p.suffix.lower() == '.json' and self._is_preset(p)]
         markers = [p for p in paths if p.suffix.lower() == '.json' and self._is_marker_file(p)]
@@ -2176,6 +2200,7 @@ class MainWindow(QMainWindow):
                 data['figure'] = figure_dict(self.figure_win.spec, self.items, files)
                 data['figure_widgets'] = widget_state(self.figure_win)
             data['log'] = self.worklog.entries
+            data['batch'] = self.batch.to_dict()
             write_project(path, data, files)
 
     def new_project(self):
@@ -2201,9 +2226,65 @@ class MainWindow(QMainWindow):
             box.rows = []
             box.set_channels_off(())
             box._fill_table()
+        self.batch = BatchState()
+        if self.batch_win is not None:
+            self.batch_win.close()
 
-    def open_project(self, path) -> bool:
-        from .project import read_project, resolve_image, restore_widgets, temp_dir
+    def _apply_project_settings(self, data):
+        """Settings of every tab, the tabs that were open and the 일괄 분석
+        choice (steps, groups) of a project: its pipeline without images."""
+        from .project import restore_widgets
+
+        for key, obj in self._panel_objects().items():
+            restore_widgets(obj, (data.get('panels') or {}).get(key, {}))
+        off = data.get('measure_channels_off') or {}
+        for key, obj in self._panel_objects().items():
+            if obj in self._measure_boxes():
+                obj.set_channels_off(off.get(key, ()))
+        for name in list(self.tab_pages):
+            if name in data.get('tabs', []):
+                self.show_tab(name, focus=False)
+            else:
+                self.hide_tab(name)
+        b = BatchState.from_dict(data.get('batch'))
+        self.batch.steps, self.batch.groups, self.batch.redo = b.steps, b.groups, b.redo
+
+    def open_project_dialog(self, path) -> bool:
+        """Ask whether the whole project (images, ROIs, results) or only its
+        settings (pipeline) are loaded."""
+        box = QMessageBox(self)
+        box.setWindowTitle('프로젝트 불러오기')
+        box.setText(f'{Path(path).name}에서 무엇을 불러올까요?')
+        box.setInformativeText(
+            '전체: 이미지, ROI, 분석 값과 설정을 모두 불러옵니다 (지금 작업은 닫힙니다).\n'
+            '설정만: 각 탭의 설정과 일괄 분석 구성(파이프라인)만 가져와 지금 열린 이미지에 씁니다.')
+        full = box.addButton('전체 (이미지 + 분석 값)', QMessageBox.ButtonRole.AcceptRole)
+        only = box.addButton('설정(파이프라인)만', QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(full)
+        box.exec()
+        if box.clickedButton() is full:
+            return self.open_project(path)
+        if box.clickedButton() is only:
+            return self.open_project(path, settings_only=True)
+        return False
+
+    def import_settings_dialog(self):
+        from .project import EXT
+
+        start = str(self.project_path.parent) if self.project_path else ''
+        name, _ = QFileDialog.getOpenFileName(
+            self, '설정(파이프라인) 불러오기', start,
+            f'프로젝트 · 일괄 분석 설정 (*{EXT} *.json);;All files (*)')
+        if not name:
+            return
+        if batch.is_batch_file(name):
+            self.load_batch_settings(name)
+        else:
+            self.open_project(name, settings_only=True)
+
+    def open_project(self, path, settings_only=False) -> bool:
+        from .project import read_project, resolve_image, temp_dir
 
         path = Path(path)
         try:
@@ -2211,6 +2292,13 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, '프로젝트 열기 실패', f'{path.name}: {exc}')
             return False
+        if settings_only:
+            self._apply_project_settings(data)
+            if self.current is not None:
+                self._select(self.items.index(self.current))
+            self.set_dirty()
+            self.statusBar().showMessage(f'프로젝트 설정(파이프라인)만 불러옴: {path.name}')
+            return True
         if not self._maybe_save():
             return False
         self._clear_all()
@@ -2258,18 +2346,8 @@ class MainWindow(QMainWindow):
         for row in range(len(self.items)):
             self._update_tooltip(row)
         self.file_list.blockSignals(False)
-        # settings of every tab, then the tabs that were open
-        for key, obj in self._panel_objects().items():
-            restore_widgets(obj, (data.get('panels') or {}).get(key, {}))
-        off = data.get('measure_channels_off') or {}
-        for key, obj in self._panel_objects().items():
-            if obj in self._measure_boxes():
-                obj.set_channels_off(off.get(key, ()))
-        for name in list(self.tab_pages):
-            if name in data.get('tabs', []):
-                self.show_tab(name, focus=False)
-            else:
-                self.hide_tab(name)
+        self._apply_project_settings(data)
+        self.batch = BatchState.from_dict(data.get('batch'))
         rows = data.get('batch_rows') or {}
         for key, box in (('roi', self.roi_panel.measure), ('particle', self.particle_panel.measure),
                          ('intensity', self.intensity_panel.measure)):
@@ -3402,6 +3480,101 @@ class MainWindow(QMainWindow):
         if errors:
             msg += '\n\n실패:\n' + '\n'.join(errors)
         QMessageBox.information(self, '저장 완료', msg)
+
+    # ---- 일괄 분석 ----------------------------------------------------------------
+
+    def batch_dialog(self):
+        if not self.items:
+            QMessageBox.information(self, '일괄 분석', '먼저 이미지를 불러오세요.')
+            return
+        if BatchDialog(self).exec():
+            self.run_batch()
+
+    def run_batch(self, detect=True):
+        """Run self.batch on its groups' images (detect=False: measure the
+        images it ran on again, keeping their edited ROIs)."""
+        st = self.batch
+        items = batch.items_of(self, st.groups) if detect else batch.ran_items(self, st)
+        if not items or not st.steps:
+            QMessageBox.information(self, '일괄 분석', '실행할 이미지나 분석이 없습니다.')
+            return
+        t0 = time.perf_counter()
+        try:
+            errors = batch.run(self, st, items, detect=detect)
+        except Exception as exc:
+            traceback.print_exc()
+            QMessageBox.warning(self, '일괄 분석 실패', str(exc))
+            return
+        if detect:
+            st.images = [it.label for it in items]
+        st.ran_at = batch.stamp()
+        what = '일괄 분석' if detect else '일괄 분석 다시 측정'
+        self.statusBar().showMessage(
+            f'{what}: 이미지 {len(items)}개, ' + ', '.join(batch.TITLES[k] for k in st.steps)
+            + f' ({time.perf_counter() - t0:.0f}초' + (f', 문제 {len(errors)}건)' if errors else ')'))
+        self.set_dirty()
+        self.show_batch_results()
+
+    def show_batch_results(self):
+        if not self.batch.ran_at:
+            QMessageBox.information(self, '일괄 분석', '아직 실행한 일괄 분석이 없습니다.')
+            return
+        if self.batch_win is None:
+            self.batch_win = BatchResults(self)
+        self.batch_win.refresh()
+        self.batch_win.show()
+        self.batch_win.raise_()
+
+    def save_batch_results(self, out=None):
+        if not self.batch.ran_at or not batch.ran_items(self, self.batch):
+            QMessageBox.information(self, '일괄 분석', '저장할 일괄 분석 결과가 없습니다.')
+            return None
+        ask = out is None
+        if ask:
+            out = QFileDialog.getExistingDirectory(self, '일괄 분석 결과를 저장할 폴더')
+            if not out:
+                return None
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            files, errors = batch.save_results(self, out)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if self.batch_win is not None:
+            self.batch_win.refresh()
+        self.statusBar().showMessage(f'일괄 분석 결과 저장: 파일 {len(files)}개 → {out}')
+        if ask:
+            msg = f'일괄 분석 결과 파일 {len(files)}개를 저장했습니다.\n{out}'
+            if errors:
+                msg += '\n\n실패:\n' + '\n'.join(errors[:20])
+            QMessageBox.information(self, '저장 완료', msg)
+        return files
+
+    def save_batch_settings(self):
+        path, _ = QFileDialog.getSaveFileName(self, '일괄 분석 설정 저장', 'batch_settings.json',
+                                              'JSON (*.json)')
+        if not path:
+            return
+        batch.save_settings(self, path)
+        self.statusBar().showMessage(f'일괄 분석 설정 저장: {Path(path).name}')
+
+    def load_batch_settings_dialog(self):
+        path, _ = QFileDialog.getOpenFileName(self, '일괄 분석 설정 불러오기', '',
+                                              'JSON (*.json);;All files (*)')
+        if path:
+            self.load_batch_settings(path)
+
+    def load_batch_settings(self, path):
+        try:
+            st = batch.load_settings(self, path)
+        except Exception as exc:
+            traceback.print_exc()
+            QMessageBox.warning(self, '일괄 분석 설정', f'{Path(path).name}: {exc}')
+            return
+        if self.current is not None:
+            self._select(self.items.index(self.current))
+        self.set_dirty()
+        self.statusBar().showMessage(
+            f'일괄 분석 설정 불러옴: {Path(path).name} (' + ', '.join(batch.TITLES[k] for k in st.steps) + ')')
 
     def _measure_boxes(self):
         return [self.roi_panel.measure, self.particle_panel.measure, self.intensity_panel.measure,
