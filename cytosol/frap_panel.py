@@ -567,9 +567,10 @@ class FrapPanel(QWidget):
             lines.append('피팅 실패 (bleach 후 프레임이 너무 적거나 회복이 없음)')
         return '\n'.join(lines)
 
-    def groups(self, progress=True) -> list:
-        """GroupCurve per image group (images without a group: one set)."""
-        items = [it for it in self.win.items if it.nt > 1]
+    def groups(self, progress=True, items=None) -> list:
+        """GroupCurve per image group (images without a group: one set);
+        items: only these images (default all)."""
+        items = [it for it in (self.win.items if items is None else items) if it.nt > 1]
         if not items:
             return []
         prog = None
@@ -909,7 +910,7 @@ class FrapPanel(QWidget):
             frap.save_rois(path, it.frap.rois, it.id_properties())
             self.win.statusBar().showMessage(f'FRAP ROI 저장: {path}')
 
-    def save_all(self, out=None, ask=True) -> list[str]:
+    def save_all(self, out=None, ask=True, items=None) -> list[str]:
         """요약 저장: every image measured; per image the curve CSV, graph and
         ROIs, and for the set frap_summary.csv (FRAP numbers per image and
         group), frap_group_curves.csv, frap_groups.png/.pdf (mean ± error)
@@ -919,19 +920,19 @@ class FrapPanel(QWidget):
             if not out:
                 return []
         out = Path(out)
-        gs = [g for g in self.groups() if g is not None]
+        gs = [g for g in self.groups(items=items) if g is not None]
         if not gs:
             if ask:
                 QMessageBox.information(self, 'FRAP 측정', '시간축(T)이 있는 이미지가 없습니다.')
             return []
         written = []
         per_image = self.win.opt_per_image.isChecked()
-        items = {it.label: it for it in self.win.items}
+        by_label = {it.label: it for it in self.win.items}
         curves = [c for g in gs for c in g.members]
         fit, raw = self.fit.isChecked(), False
         try:
             for c in curves:
-                it = items.get(c.label)
+                it = by_label.get(c.label)
                 folder = out / item_folder(it) if (per_image and it is not None) else out
                 stem = item_stem(it) if it is not None else c.label
                 written.append(frap.write_curve_csv(folder / f'{stem}_frap.csv', c))

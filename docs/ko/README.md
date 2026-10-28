@@ -2,7 +2,7 @@
 
 [English manual](../en/README.md)
 
-Cytosol Viewer(v0.25)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
+Cytosol Viewer(v0.38)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
 이미지를 열어 세포·핵·세포질 ROI를 찾고, ImageJ/Fiji와 같은 방식으로 측정한
 뒤 이미지, ROI, 표, figure로 내보내는 프로그램입니다.
 
@@ -25,6 +25,7 @@ Cytosol Viewer(v0.25)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
 | 설명서 | 내용 |
 |---|---|
 | [시작하기: 이미지 열기·보기·그룹](01-getting-started.md) | 파일·폴더 추가, 이미지 목록, 그룹, TCF HT/FL 정렬, Z/T 이동, 확대, Crop, 이미지 ID |
+| [일괄 분석](15-batch.md) | 그룹을 고르고 분석을 체크해 한 번에 실행, 결과 확인·수정·다시 측정, 결과·설정만 저장, 프로젝트에서 설정만 불러오기 |
 | [메뉴, 프로젝트 파일, 작업 기록](13-project-menus.md) | 파일 메뉴와 기능별 메뉴, 자동 인식 불러오기, 프로젝트 저장·열기, 작업 기록, 마우스 민감도 |
 | [LUT 탭과 이미지 내보내기](02-lut-export.md) | 채널 표시(LUT), 일괄 LUT 적용, 프리셋, TIFF/MP4 내보내기, 모든 분석 결과 통합 저장 |
 | [세포질 ROI 탭](03-cytosol-roi.md) | 세포·핵·세포질 ROI 자동 검출과 수정, ImageJ ROI 파일, 세포 강도 측정 |
@@ -51,6 +52,7 @@ Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, FR
 | 새 프로젝트 / 프로젝트 저장 / 다른 이름으로 저장 | `Ctrl+N` / `Ctrl+S` / `Ctrl+Shift+S` |
 | 이미지 내보내기 (TIFF / MP4) | `Ctrl+E` |
 | 모든 분석 결과 통합 저장 (이미지별 폴더) | `Ctrl+Shift+E` |
+| 일괄 분석 실행 / 결과 보기 | `Ctrl+B` / `Ctrl+Shift+B` |
 | Figure 창 | `Ctrl+Shift+F`, 창 안에서 저장은 `Ctrl+S` |
 | 작업 기록 보기 | `Ctrl+Shift+L` |
 | 확대·축소 | `Cmd`(Windows `Ctrl`) + 위/아래 드래그, `]` 확대 / `[` 축소, **영역 확대** 또는 `Shift`+드래그로 사각형, 원래대로는 **화면 맞춤**. 민감도는 **파일 › 설정…** |

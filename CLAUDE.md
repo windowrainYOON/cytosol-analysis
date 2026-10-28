@@ -49,8 +49,23 @@ owner writes in Korean, so reply in Korean.
   (don't compare `right_tabs.currentIndex()` to fixed numbers).
 - **Menus** (`MainWindow._build_menus`), in this order:
   - **파일**: 새 프로젝트, 불러오기 (자동 인식) / (폴더), 최근 프로젝트,
-    프로젝트 저장 / 다른 이름으로, 모든 분석 결과 통합 저장, the shared options
-    `opt_per_image` and `opt_with_roi`, 작업 기록 보기 / 저장, 설정, 종료.
+    프로젝트에서 설정(파이프라인)만 불러오기, 프로젝트 저장 / 다른 이름으로,
+    일괄 분석 실행 / 결과 보기 / 결과 저장 / 설정 저장·불러오기, 모든 분석 결과
+    통합 저장, the shared options `opt_per_image` and `opt_with_roi`, 작업 기록
+    보기 / 저장, 설정, 종료. Opening a project from 불러오기 / 최근 프로젝트 goes
+    through `open_project_dialog` (전체 or 설정만 → `open_project(path,
+    settings_only=True)`, which only runs `_apply_project_settings`).
+  - **일괄 분석** (`batch.py`, v0.38, owner request 2026-10-28): `BatchDialog`
+    (groups + analysis check boxes from `batch.STEPS`), `MainWindow.run_batch`
+    → `batch.run` (uses each tab's current settings and the panels' own
+    methods: `RoiPanel.detect_jobs`, particle settings + `particles_for`,
+    `MeasureBox.measure_items`, `ColocPanel._run`, `FrapPanel.groups(items=)`),
+    `BatchResults` window (double-click opens the image in the step's tab,
+    다시 측정 = `run(detect=False)`), `batch.save_results` (only those steps and
+    images), settings JSON `format: cytosol-viewer-batch`. State in
+    `MainWindow.batch` (`BatchState`), saved in projects as `batch`. A new
+    analysis feature should get a `STEPS` entry and a branch in `batch.run` /
+    `save_results`.
   - One menu per feature: **LUT** (이미지 내보내기, LUT 프리셋 저장/불러오기),
     **마커** (설정 저장/불러오기, JSON with `format: cytosol-viewer-markers`),
     **Crop**, **세포질 ROI**, **입자 ROI**, **강도 측정**, **Coloc 2**,
@@ -123,7 +138,8 @@ owner writes in Korean, so reply in Korean.
 | `project.py` | `.cyproj` project files (see below) |
 | `settings.py` | `QSettings` preferences: mouse sensitivities, recent projects; `SettingsDialog` |
 | `worklog.py` | `WorkLog`, `LoggingStatusBar`, `LogWindow` |
-| `selftest.py` | Headless smoke test of the whole app (CI and built apps) |
+| `batch.py` | 일괄 분석: steps × groups run on all images, results window, batch-only save, batch settings JSON |
+| `selftest.py` | Headless smoke test of the whole app (CI and built apps; `CYTOSOL_SELFTEST_ONLY='step name,…'` runs only some steps) |
 | `version.py` | `__version__`, the single version source |
 | `app.py` | `MainWindow`, `Canvas`, menus, loading (`import_paths`, `add_files`, `_attach_file`), projects |
 
@@ -233,4 +249,5 @@ not affected.
 | #47 | 0.33 | Side panes keep their width (only the preview grows, dragged widths remembered), pane contents reflow to the width (`flow.py`), long image names wrap in the list |
 | #51 | 0.35 | 측정할 채널 check boxes in the measurement block of 세포질 ROI, 입자 ROI and 강도 측정 (`MeasureBox.channels_off`, by channel name, saved in projects as `measure_channels_off`) |
 | #52 | 0.36 | FRAP 측정 tab and menu: bleach ROI from the file (CZI bleach regions, OIR stimulation regions now read too) or detected, control in the unbleached part of the condensate (else another unbleached condensate), background of the bleach ROI's size; drag ROIs with live update; (B−BG)/(C−BG) normalized to the first / pre-bleach frames; ImageJ Exponential recovery fit (mobile fraction, t½, k, plateau); group mean ± SD/SEM; one-step summary save (CSV + figures); verified against ij 1.54f |
-| this PR | 0.37 | FRAP drift correction (on by default): ROIs follow the movement of each frame (`frap.track_drift`, sub-pixel cross-correlation with a key frame, around the ROIs or the whole field; window size with 자동), drawn where measured on the frame shown, per-frame movement in the CSV, `max_drift_px` in the summary |
+| #53 | 0.37 | FRAP drift correction (on by default): ROIs follow the movement of each frame (`frap.track_drift`, sub-pixel cross-correlation with a key frame, around the ROIs or the whole field; window size with 자동), drawn where measured on the frame shown, per-frame movement in the CSV, `max_drift_px` in the summary |
+| this PR | 0.38 | 일괄 분석 (File menu): pick groups and analyses with check boxes, run them on all images of those groups, results window to open / fix / measure again, save only the batch results and settings (`batch_settings.json`, `format: cytosol-viewer-batch`); opening a project asks 전체 or 설정(파이프라인)만 |
