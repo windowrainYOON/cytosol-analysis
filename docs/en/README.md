@@ -21,7 +21,7 @@ appears on screen, followed by its meaning in parentheses, e.g.
 - **Menu bar**: **파일** (File: projects, loading with automatic detection,
   saving all results, work log, settings), then one menu per feature
   (**LUT**, **마커**, **Crop**, **세포질 ROI**, **입자 ROI**, **강도 측정**,
-  **Coloc 2**, **라인 프로파일**, **스택**, **이미지 정보**, **Figure**), each with
+  **Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**, **이미지 정보**, **Figure**), each with
   that feature's tab and its saves and loads. See
   [Menus, project files and the work log](13-project-menus.md).
 
@@ -37,13 +37,14 @@ appears on screen, followed by its meaning in parentheses, e.g.
 | [마커 (Markers, in the LUT tab)](05-markers.md) | Scale bar, time stamp, CZI bleach ROIs, saving and loading the settings |
 | [스택 tab](06-stack.md) | 2D Z projections and 3D rotation views, saving them |
 | [라인 프로파일 tab](07-line-profile.md) | Intensity profile along a line (ImageJ RGB Profiler) |
+| [FRAP 측정 tab](14-frap.md) | Recovery after photobleaching, group means ± error bars, mobile fraction / t½ summary |
 | [Coloc 2 tab](08-coloc2.md) | Per-cell colocalization (Fiji Coloc 2) |
 | [강도 측정 tab](09-intensity.md) | Intensity in regions defined by logic (e.g. `cyto - particle`), and the measurement table shared by all measuring tabs |
 | [이미지 정보 tab](10-image-info.md) | Acquisition metadata (lasers, detectors, objective, bleaching) |
 | [Figure window](11-figure.md) | Figure tables with labels, zoom insets, scale bars; PNG/TIFF/PDF/SVG |
 | [Output files](12-output-files.md) | Every file the program writes, and folder loading |
 
-The Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일 and 스택 tabs
+The Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, FRAP 측정 and 스택 tabs
 are opened from the menu of the same name, which also saves and loads that
 tab's results.
 

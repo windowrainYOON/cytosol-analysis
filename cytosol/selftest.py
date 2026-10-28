@@ -73,6 +73,41 @@ def _synthetic_tcf(path, nt=2):
                 d.attrs['Time'] = 60.0 * t
 
 
+def _frap_item(label, mobile=0.7, k=0.15, file_roi=False, seed=0):
+    """Time series with condensates; one is bleached at frame 6 and recovers
+    as (1 - mobile) + mobile * (1 - exp(-k t)) of its pre-bleach signal."""
+    from .imageinfo import BleachRoi
+    from .io import Image
+    from .lut import ImageItem
+
+    rng = np.random.default_rng(seed)
+    H, W, T, bf = 160, 180, 24, 5
+    yy, xx = np.mgrid[0:H, 0:W]
+    base = np.full((H, W), 100.0)
+    for cx, cy, r in ((90, 80, 20), (40, 40, 10), (140, 125, 7)):
+        base += 900 * ((xx - cx) ** 2 + (yy - cy) ** 2 <= r * r)
+    spot = (xx - 98) ** 2 + (yy - 80) ** 2 <= 5 ** 2
+    times = np.arange(T) * 2.0
+    frames = []
+    for t in range(T):
+        img = base.copy()
+        if t >= bf:
+            frac = 0.1 + mobile * 0.9 * (1 - np.exp(-k * (times[t] - times[bf])))
+            img[spot] = 100 + (img[spot] - 100) * frac
+        frames.append((img + rng.normal(0, 4, (H, W)))[None, None].astype(np.float32))
+    image = Image(frames[0], ['mCherry'], {'Z': None, 'Y': 0.1, 'X': 0.1},
+                  times=list(times), loader=lambda t: frames[t],
+                  metadata={'image_id': f'FRAP-{label}'})
+    if file_roi:
+        a = np.linspace(0, 2 * np.pi, 64, endpoint=False)
+        image.metadata['bleach_rois'] = [BleachRoi('Region 1', 'circle',
+                                                   [np.c_[98.5 + 5.5 * np.cos(a), 80.5 + 5.5 * np.sin(a)]])]
+        image.metadata['bleach'] = {'frames_after': [bf]}
+    item = ImageItem(path=Path(f'{label}.czi'), image=image, label=label)
+    item.reset_luts()
+    return item
+
+
 def run(out_dir) -> int:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -771,7 +806,7 @@ def run(out_dir) -> int:
         # one menu per feature next to 파일; the markers sit fixed in the LUT tab
         menus = [a.text() for a in win.menuBar().actions()]
         want = ['파일', 'LUT', '마커', 'Crop', '세포질 ROI', '입자 ROI', '강도 측정', 'Coloc 2',
-                '라인 프로파일', '스택', '이미지 정보', 'Figure']
+                '라인 프로파일', 'FRAP 측정', '스택', '이미지 정보', 'Figure']
         if menus != want or 'marker_tab' in win.tab_pages:
             raise AssertionError(f'menus: {menus}')
         lut_page = win.right_tabs.widget(0)
@@ -1281,6 +1316,97 @@ def run(out_dir) -> int:
             raise AssertionError('bleach ROI missing from the summary')
         return f'{len(s.general)} info rows, {Path(zips[0]).name}'
 
+    def frap_step():
+        import csv
+
+        from PySide6.QtWidgets import QApplication
+
+        from . import frap
+        from .app import MainWindow
+        from .project import image_entry
+
+        # ImageJ OvalRoi.getMask (ij 1.54f) of makeOval(3, 4, 7, 7)
+        m = frap.FrapRoi('oval', 3, 4, 7, 7).local_mask()[2]
+        if ''.join('1' if v else '0' for v in m.ravel()) != \
+                '0011100011111011111111111111111111101111100011100':
+            raise AssertionError('oval mask differs from ImageJ')
+        app = QApplication.instance() or QApplication([sys.argv[0]])
+        win = MainWindow()
+        win.show()
+        items = [_frap_item('frapA', 0.7, 0.15, file_roi=True),
+                 _frap_item('frapB', 0.6, 0.2, seed=1), _frap_item('frapC', 0.8, 0.1, seed=2)]
+        for it in items:
+            it.group = 'WT'
+            win._add_item(it)
+        win.file_list.setCurrentRow(0)
+        app.processEvents()
+        win.tool_actions['frap_tab'].setChecked(True)
+        app.processEvents()
+        fp = win.frap_panel
+        c = fp.curve
+        if c is None or c.fit is None:
+            raise AssertionError('FRAP curve not measured when the tab opened')
+        st = items[0].frap
+        if st.source != 'file' or st.bleach_frame != 5 or set(st.rois) != set(frap.ROI_NAMES):
+            raise AssertionError(f'FRAP auto placement: {st.source}, frame {st.bleach_frame}, {list(st.rois)}')
+        s1 = c.summary()
+        if abs(s1['mobile_fraction'] - 0.7) > 0.05 or abs(s1['k_per_s'] - 0.15) > 0.03:
+            raise AssertionError(f'FRAP fit: {s1}')
+        if len(win.canvas._frap) != 3:
+            raise AssertionError('FRAP ROIs not drawn on the image')
+        # the background is the bleach ROI's size, away from the condensates
+        b, g = st.rois['bleach'], st.rois['background']
+        if g.size() != b.size() or c.means['background'][0] > 150:
+            raise AssertionError(f'FRAP background: {g}, {c.means["background"][0]}')
+        # dragging a ROI: values follow, its 자동 turns off
+        before = c.means['control'].copy()
+        win.canvas.frapDragging.emit('control', 40, 0)
+        win.canvas.frapMoved.emit('control', 40, 0)
+        app.processEvents()
+        if st.auto['control'] or np.allclose(fp.curve.means['control'], before):
+            raise AssertionError('moving the control ROI did not update the values')
+        fp.reset_auto()
+        app.processEvents()
+        # detected bleach (no file record) on another image
+        win.file_list.setCurrentRow(1)
+        app.processEvents()
+        st2 = items[1].frap
+        if st2 is None or st2.source != 'detected' or st2.bleach_frame != 5:
+            raise AssertionError(f'FRAP bleach detection: {st2 and (st2.source, st2.bleach_frame)}')
+        bx, by = st2.rois['bleach'].center()
+        if abs(bx - 98.5) > 2 or abs(by - 80.5) > 2:
+            raise AssertionError(f'FRAP detected bleach at {bx, by}')
+        # group mean with error bars and the one-step summary save
+        fp.view.setCurrentIndex(fp.view.findData('groups'))
+        app.processEvents()
+        if 'n=3' not in fp.summary.text():
+            raise AssertionError(f'FRAP group summary: {fp.summary.text()}')
+        files = fp.save_all(out / 'frap', ask=False)
+        names = {Path(f).name for f in files}
+        need = {'frap_summary.csv', 'frap_summary.png', 'frap_groups.png', 'frap_group_curves.csv',
+                'frapA_frap.csv', 'frapA_frap_rois.zip'}
+        if not need <= names:
+            raise AssertionError(f'FRAP summary save: {sorted(names)}')
+        with open(out / 'frap' / 'frap_summary.csv', encoding='utf-8') as f:
+            rows = [r for r in csv.reader(f) if r and not r[0].startswith('#')]
+        head = rows[0]
+        mean = next(r for r in rows if r[0] == 'group' and r[4] == 'mean')
+        mf = float(mean[head.index('mobile_fraction')])
+        if abs(mf - 0.7) > 0.06 or not mean[head.index('half_time_s')]:
+            raise AssertionError(f'FRAP group mobile fraction {mf}')
+        roi_zip = next(f for f in files if f.endswith('frapA_frap_rois.zip'))
+        if not frap.is_frap_file(roi_zip) or set(frap.load_rois(roi_zip)) != set(frap.ROI_NAMES):
+            raise AssertionError('FRAP ROI file')
+        e = image_entry(items[0], out)
+        back = frap.FrapState.from_dict(e['frap'])
+        if back.rois['bleach'].to_dict() != items[0].frap.rois['bleach'].to_dict():
+            raise AssertionError('FRAP state not kept in the project')
+        fp.view.setCurrentIndex(0)
+        win.tool_actions['frap_tab'].setChecked(False)
+        win.set_dirty(False)
+        win.close()
+        return f'Mf {s1["mobile_fraction"]:.3f}, t½ {s1["half_time_s"]:.2f} s, group Mf {mf:.3f}'
+
     step('readers import', readers)
     step('HDF5 non-ASCII path', hdf5_unicode_path)
     step('TIFF export', tiff_export)
@@ -1298,6 +1424,7 @@ def run(out_dir) -> int:
     step('time-series read-ahead', read_ahead)
     step('Z-stack projections', projections)
     step('bleach ROIs + image info', bleach_info)
+    step('FRAP measurement', frap_step)
     step('main window', window)
 
     text = '\n'.join(log) + f'\n\n{"PASSED" if ok else "FAILED"}\n'

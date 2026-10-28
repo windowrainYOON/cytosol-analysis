@@ -71,6 +71,9 @@ from .coloc_panel import ColocPanel, write_coloc_csv
 from .intensity import is_contour_file, is_particle_file, is_region_file, write_rows
 from .groups import GROUP_FILE, apply_groups, auto_groups, read_groups, suggest_name, write_groups
 from .flow import reflow
+from . import frap
+from .frap import is_frap_file, load_rois as load_frap_rois
+from .frap_panel import FrapPanel
 from .image_tree import ImageTree
 from .intensity_panel import IntensityPanel
 from .imageid import ROI_EXT, match_roi, plan_pairing
@@ -108,6 +111,7 @@ IMPORT_KINDS = {
     'cell': ('세포질 ROI', 'ImageJ ROI (*.zip *.roi)'),
     'particle': ('입자 ROI', '입자 ROI (*_particles.zip *.zip)'),
     'line': ('라인 프로파일 선 ROI', '선 ROI (*_line.roi *.roi)'),
+    'frap': ('FRAP ROI', 'FRAP ROI (*_frap_rois.zip *.zip)'),
 }
 
 
@@ -222,6 +226,8 @@ class Canvas(QGraphicsView):
     scrubStarted = Signal()
     scrubDragged = Signal(float, float)  # screen pixels from the press (x right, y down)
     scrubEnded = Signal()
+    frapDragging = Signal(str, int, int)  # FRAP ROI name, dx, dy (image px) while dragged
+    frapMoved = Signal(str, int, int)  # ... when let go
 
     def __init__(self):
         super().__init__()
@@ -271,6 +277,9 @@ class Canvas(QGraphicsView):
         self._crop_sel = None
         self._crop_shapes = {}  # index -> (rect item, text item, text origin)
         self._crop_drag = None  # [index, press scene pos, moved]
+        # FRAP ROIs shown (dragging one moves it): name -> (outline xy, items)
+        self._frap = {}
+        self._frap_drag = None  # [name, press scene pos, dx, dy]
         # rectangle zoom
         self.zoom_mode = False
         self._zoom_origin = None
@@ -508,6 +517,46 @@ class Canvas(QGraphicsView):
             self.scene().addItem(it)
             self._line_items.append(it)
 
+    def show_frap(self, rois):
+        """rois: (name, outline xy, rgb) of the FRAP measurement ROIs; each can be dragged."""
+        for _, items in self._frap.values():
+            for it in items:
+                self.scene().removeItem(it)
+        self._frap = {}
+        for name, xy, rgb in rois:
+            col = QColor(*rgb)
+            pen = QPen(col)
+            pen.setCosmetic(True)
+            pen.setWidthF(2)
+            r = QGraphicsPathItem(polygon_path(np.asarray(xy, float)))
+            r.setPen(pen)
+            fill = QColor(col)
+            fill.setAlpha(35)
+            r.setBrush(fill)
+            r.setZValue(26)
+            t = QGraphicsSimpleTextItem({'bleach': 'B', 'control': 'C'}.get(name, 'BG'))
+            t.setBrush(col)
+            t.setFlag(QGraphicsSimpleTextItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            font = t.font()
+            font.setPointSize(11)
+            font.setBold(True)
+            t.setFont(font)
+            x0, y0 = np.asarray(xy, float).min(0)
+            t.setPos(float(x0), float(y0) - 2)
+            t.setZValue(27)
+            for it in (r, t):
+                self.scene().addItem(it)
+            self._frap[name] = (np.asarray(xy, float), [r, t])
+
+    def _frap_at(self, pos):
+        """Name of the FRAP ROI under a scene point (small ones first)."""
+        hits = []
+        for name, (xy, items) in self._frap.items():
+            if items[0].path().contains(pos):
+                span = np.ptp(xy, axis=0)
+                hits.append((span[0] * span[1], name))
+        return min(hits)[1] if hits else None
+
     def set_line_mode(self, on: bool):
         self.line_mode = on
         self._apply_mode()
@@ -651,6 +700,12 @@ class Canvas(QGraphicsView):
             self._lasso_item.setPath(QPainterPath())
             self._lasso_item.show()
             return
+        if btn == Qt.MouseButton.LeftButton and not self._drawing() and self._frap:
+            name = self._frap_at(pos)
+            if name is not None:
+                self._frap_drag = [name, pos, 0, 0]
+                self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+                return
         if btn == Qt.MouseButton.LeftButton and not self._drawing():
             k = self._crop_at(pos)
             if k is not None:
@@ -718,6 +773,18 @@ class Canvas(QGraphicsView):
             p = self.mapToScene(event.position().toPoint())
             self.zoom_item.setRect(QRectF(self._zoom_origin, p).normalized())
             return
+        if self._frap_drag is not None:
+            name, start, _, _ = self._frap_drag
+            p = self.mapToScene(event.position().toPoint())
+            dx, dy = round(p.x() - start.x()), round(p.y() - start.y())
+            if (dx, dy) != tuple(self._frap_drag[2:]):
+                self._frap_drag[2:] = [dx, dy]
+                xy, (shape, label) = self._frap[name]
+                x0, y0 = xy.min(0)
+                shape.setPos(dx, dy)
+                label.setPos(float(x0) + dx, float(y0) - 2 + dy)
+                self.frapDragging.emit(name, dx, dy)
+            return
         if self._crop_drag is not None:
             k, start, _ = self._crop_drag
             p = self.mapToScene(event.position().toPoint())
@@ -727,10 +794,11 @@ class Canvas(QGraphicsView):
             r.setPos(dx, dy)
             t.setPos(origin + QPointF(dx, dy))
             return
-        if (not event.buttons() and not self._drawing() and self._crops
+        if (not event.buttons() and not self._drawing() and (self._crops or self._frap)
                 and self._pan_from is None):
             p = self.mapToScene(event.position().toPoint())
-            over = self._crop_at(p) is not None
+            over = (self._crops and self._crop_at(p) is not None) or (
+                self._frap and self._frap_at(p) is not None)
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor if over
                                       else Qt.CursorShape.OpenHandCursor)
         if self._pan_from is not None:
@@ -804,6 +872,12 @@ class Canvas(QGraphicsView):
                 self.cellShiftClicked.emit(r.center().x(), r.center().y())  # Shift+click
                 return
             self.zoomDone.emit()
+            return
+        if self._frap_drag is not None:
+            name, _, dx, dy = self._frap_drag
+            self._frap_drag = None
+            self._apply_mode()
+            self.frapMoved.emit(name, int(dx), int(dy))
             return
         if self._crop_drag is not None:
             k, start, moved = self._crop_drag
@@ -1451,6 +1525,9 @@ class MainWindow(QMainWindow):
         self.profile_panel.with_roi = self.opt_with_roi
         self.profile_panel.changed.connect(self._draw_profile_line)
         self.coloc_panel = ColocPanel(self)
+        self.frap_panel = FrapPanel(self)
+        self.canvas.frapDragging.connect(self.frap_panel.drag_preview)
+        self.canvas.frapMoved.connect(self.frap_panel.move_roi)
         self.intensity_panel = IntensityPanel(self)
         self.info_panel = InfoPanel()
         right = QTabWidget()
@@ -1470,6 +1547,7 @@ class MainWindow(QMainWindow):
             'intensity_tab': (scrolled(self.intensity_panel), '강도 측정'),
             'coloc_tab': (scrolled(self.coloc_panel), 'Coloc 2'),
             'profile_tab': (self.profile_panel, '라인 프로파일'),
+            'frap_tab': (scrolled(self.frap_panel), 'FRAP 측정'),
             'stack_tab': (scrolled(self.stack_panel), '스택'),
         }
         self.canvas.lineDrawn.connect(self._line_drawn)
@@ -1627,6 +1705,20 @@ class MainWindow(QMainWindow):
         act(sub, 'CSV 저장…', self.profile_panel.save_csv)
         act(sub, '그래프 저장 (PNG / PDF / SVG / TIFF)…', self.profile_panel.save_plot)
         load_action(sub, '선 ROI 불러오기…', 'line')
+
+        fp = self.frap_panel
+        sub = mb.addMenu('FRAP 측정')
+        tab_action(sub, 'frap_tab')
+        act(sub, '요약 저장: 모든 이미지·그룹 CSV + 그래프 (폴더)…', fp.save_all, tip=(
+            'bleach 기록이 있는 모든 이미지를 측정해 frap_summary.csv (이미지·그룹별 mobile fraction, '
+            't½, k, plateau, 최종 회복률 …), frap_group_curves.csv, frap_groups.png/.pdf '
+            '(그룹 평균 ± 에러바), frap_summary.png와 이미지별 곡선 CSV·그래프·ROI를 한 번에 저장합니다.'))
+        act(sub, 'CSV 저장 (현재 이미지)…', fp.save_csv)
+        act(sub, '그래프 저장 (PNG / PDF / SVG / TIFF)…', fp.save_plot,
+            tip='탭에 보이는 그래프 (현재 이미지 또는 그룹 평균)')
+        sub.addSeparator()
+        act(sub, 'FRAP ROI 저장 (현재 이미지)…', fp.save_rois_current)
+        load_action(sub, 'FRAP ROI 불러오기…', 'frap')
 
         sub = mb.addMenu('스택')
         tab_action(sub, 'stack_tab')
@@ -1817,7 +1909,7 @@ class MainWindow(QMainWindow):
                                                 f'{filt};;All files (*)')
         if not files:
             return
-        if kind in ('crop', 'cell', 'particle', 'line') and not self.items:
+        if kind in ('crop', 'cell', 'particle', 'line', 'frap') and not self.items:
             QMessageBox.information(self, f'{name} 불러오기', '먼저 이미지를 불러오세요.')
             return
         self.import_paths([Path(f) for f in files])
@@ -2001,6 +2093,7 @@ class MainWindow(QMainWindow):
             'intensity': self.intensity_panel, 'intensity_measure': self.intensity_panel.measure,
             'intensity_bands': self.intensity_panel.bands_measure,
             'coloc': self.coloc_panel, 'profile': self.profile_panel, 'markers': self.markers,
+            'frap': self.frap_panel,
             'stack': self.stack_panel,
         }
 
@@ -2229,6 +2322,10 @@ class MainWindow(QMainWindow):
             from .intensity import ParticleSettings
 
             it.particle_settings = ParticleSettings(**s)
+        if e.get('frap'):
+            from .frap import FrapState
+
+            it.frap = FrapState.from_dict(e['frap'])
         z = e.get('z', 'mip')
         if z in ('mip', 'mid') or (isinstance(z, int) and 0 <= z < it.nz):
             it.z = z
@@ -2293,6 +2390,10 @@ class MainWindow(QMainWindow):
         if is_bleach_file(f):  # bleach regions saved with the images
             it.bleach_rois = load_bleach_rois(f)
             it._info_summary = None
+            link()
+            return 0
+        if is_frap_file(f):  # FRAP measurement ROIs
+            self.frap_panel.set_rois(it, load_frap_rois(f))
             link()
             return 0
         if is_crop_file(f):  # crop regions saved with the exports
@@ -2553,6 +2654,7 @@ class MainWindow(QMainWindow):
             removed = self.items.pop(row)
             current_removed |= removed is self.current
             self.stack_views.pop(id(removed), None)
+            self.frap_panel.forget(removed)
             removed.image.release()
             if self.figure_win is not None:
                 self.figure_win.spec.forget_item(removed)
@@ -2577,6 +2679,7 @@ class MainWindow(QMainWindow):
             self._build_stack_panels()
             self.profile_panel.bind(None)
             self.coloc_panel.bind(None)
+            self.frap_panel.bind(None)
             self.particle_panel.bind(None)
             self.intensity_panel.bind(None)
             self.info_panel.bind(None)
@@ -2620,6 +2723,7 @@ class MainWindow(QMainWindow):
         self._build_stack_panels()
         self.profile_panel.bind(it)
         self.coloc_panel.bind(it)
+        self.frap_panel.bind(it)
         self.particle_panel.bind(it)
         self.intensity_panel.bind(it)
         self.info_panel.bind(it)
@@ -2860,6 +2964,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, 'Z 불러오기 실패', str(exc))
             return
         self.update_preview()
+        if self.tab_current('frap_tab'):
+            self.frap_panel.refresh()
 
     # ---- stack tab ---------------------------------------------------------
 
@@ -2906,6 +3012,8 @@ class MainWindow(QMainWindow):
         if it is not None and self.tab_current('roi_tab'):
             self.roi_panel.show_auto_values(it)
         self.update_preview(refit=True)
+        if self.tab_current('frap_tab'):
+            self.frap_panel.tab_shown()
         self.roi_panel.measure.schedule()
         self.particle_panel.schedule()
         self.intensity_panel.schedule()
@@ -3077,6 +3185,7 @@ class MainWindow(QMainWindow):
         self.canvas.show_crops([] if only else it.crops, sel)
         self.roi_panel.draw_overlay(hidden=only)
         self._draw_profile_line()
+        self.draw_frap()
         if not light:
             self.profile_panel.schedule()
 
@@ -3117,6 +3226,14 @@ class MainWindow(QMainWindow):
         x0, y0, x1, y1 = line
         self.canvas.show_line((x0 - ox, y0 - oy, x1 - ox, y1 - oy),
                               self.profile_panel.width.value())
+
+    def draw_frap(self):
+        """The FRAP tab's bleach / control / background ROIs (only while it is shown)."""
+        if self._stack_on() or self.current is None:
+            self.canvas.show_frap([])
+            return
+        ox, oy = self._view_offset()
+        self.canvas.show_frap([(n, xy - (ox, oy), rgb) for n, xy, rgb in self.frap_panel.rois_for_view()])
 
     # ---- crop -----------------------------------------------------------
 
@@ -3302,6 +3419,7 @@ class MainWindow(QMainWindow):
         prog = QProgressDialog('저장 중…', '취소', 0, len(items), self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
         n_done, n_files, rows, errors, coloc, intensity = 0, 0, [], [], [], {}
+        frap_curves = {}  # group -> FRAP curves of the images measured in the FRAP tab
         for i, it in enumerate(items):
             if prog.wasCanceled():
                 break
@@ -3332,6 +3450,15 @@ class MainWindow(QMainWindow):
                 if it.coloc:
                     write_coloc_csv(folder / f'{item_stem(it)}_coloc2.csv', it.coloc)
                     coloc += it.coloc
+                if it.frap is not None and it.nt > 1:
+                    curve = self.frap_panel.curve_for(it, progress=False)
+                    if curve is not None:
+                        frap.write_curve_csv(folder / f'{item_stem(it)}_frap.csv', curve)
+                        frap.save_rois(folder / f'{item_stem(it)}_frap_rois.zip', it.frap.rois,
+                                       it.id_properties())
+                        frap_curves.setdefault(curve.group, []).append(curve)
+                    if it is not self.current:
+                        self.frap_panel.forget(it)
                 n_done += 1
             except Exception as exc:
                 errors.append(f'{it.label}: {exc}')
@@ -3345,6 +3472,14 @@ class MainWindow(QMainWindow):
             write_rows(Path(out) / f'{suffix}.csv', int_rows)
             boxes[suffix].write_summaries(out, int_rows)
         write_groups(Path(out) / GROUP_FILE, items)
+        if frap_curves:
+            gs = [frap.group_curve(g, c) for g, c in frap_curves.items()]
+            frap.write_summary_csv(Path(out) / 'frap_summary.csv',
+                                   [c for g in gs for c in g.members], gs)
+            frap.write_group_curves_csv(Path(out) / 'frap_group_curves.csv', gs)
+            self.frap_panel.write_plot(Path(out) / 'frap_groups.png', groups=gs)
+            frap.save_summary_figure(Path(out) / 'frap_summary.png', gs,
+                                     self.frap_panel.error.currentData())
         try:
             self.write_project_to(Path(out) / 'project.cyproj')
         except Exception as exc:

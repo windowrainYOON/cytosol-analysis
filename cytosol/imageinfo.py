@@ -361,6 +361,62 @@ def czi_bleach_info(xml, events=(), frame_times=()) -> dict | None:
     return info
 
 
+def _oir_text(xml) -> str:
+    if isinstance(xml, dict):
+        xml = '\n'.join(str(v) for v in xml.values())
+    return str(xml or '').replace('\\r\\n', '\n')
+
+
+def oir_bleach(xml) -> tuple[dict | None, list[BleachRoi]]:
+    """(bleach info, bleach regions in image pixels) of an Olympus / Evident
+    OIR: the stimulation regions of its stimulationParam and, from the
+    synchronized acquisition, how many frames were taken before stimulating."""
+    xml = _oir_text(xml)
+    stim = re.search(r'<fvCommonimage:stimulationParam.*?</fvCommonimage:stimulationParam>', xml, re.S)
+    if not stim:
+        return None, []
+    block = stim.group(0)
+    rois = []
+    for m in re.finditer(r'<roi:ROI ([^>]*)>(.*?)</roi:ROI>', block, re.S):
+        body = m.group(2)
+        kind = (re.search(r'<roi:roiType>([^<]*)<', body) or [None, ''])[1]
+        if kind == 'BackgroundROI' or 'regionInfo' not in body:
+            continue
+        shape = (re.search(r'<marker:shape>([^<]*)<', body) or [None, ''])[1].lower()
+        c = re.search(r'<marker:coordinates ([^>]*)/?>', body)
+        attrs = dict(re.findall(r'(\w+)="([^"]*)"', c.group(1))) if c else {}
+        pts = re.findall(r'<marker:point x="([-\d.]+)" y="([-\d.]+)"', body)
+        nm = re.search(r'name="([^"]*)"', m.group(1))
+        name = nm.group(1) if nm else f'Region {len(rois) + 1}'
+        if all(k in attrs for k in ('x', 'y', 'width', 'height')):
+            x0, y0, w, h = (float(attrs[k]) for k in ('x', 'y', 'width', 'height'))
+            if 'ellipse' in shape or 'circle' in shape:
+                rois.append(BleachRoi(name, 'circle' if w == h else 'ellipse',
+                                      [_ellipse(x0 + w / 2, y0 + h / 2, w / 2, h / 2)]))
+            else:
+                rois.append(BleachRoi(name, 'rectangle', [np.array(
+                    [[x0, y0], [x0 + w, y0], [x0 + w, y0 + h], [x0, y0 + h]], float)]))
+        elif len(pts) >= 3:
+            rois.append(BleachRoi(name, 'polygon', [np.array(pts, float)]))
+    lasers = [(float(w), float(t)) for w, t in re.findall(
+        r'laserDataId="LD(\d+)_\d+Stimulating[^"]*">\s*<commonparam:power>[^<]*</commonparam:power>\s*'
+        r'<commonparam:transmissivity>([^<]*)<', block) if _num(t)]
+    for r in rois:
+        r.lasers = lasers
+    if not rois or not lasers:
+        return ({'active': True, 'ran': False} if rois else None), rois
+    info = {'active': True, 'ran': True, 'type': 'OIR stimulation', 'lasers': lasers, 'count': 1}
+    rep = re.search(r'<commonparam:repeatCount>([^<]*)<', block)
+    info['Iterations'] = _num(rep.group(1)) if rep else None
+    pre = re.search(r'<fvCommonparam:preFrameCount>([^<]*)<', xml)
+    if pre and _num(pre.group(1)) is not None:
+        info['frames_after'] = [int(_num(pre.group(1)))]
+    n = re.search(r'<fvCommonparam:stimulationFrameCount>([^<]*)<', xml)
+    if n:
+        info['stimulation_frames'] = _num(n.group(1))
+    return info, rois
+
+
 def _czi_devices(root) -> dict:
     """Device Id -> attributes (laser lines carry Wavelength / MaxPowerMilliWatts)."""
     return {d.get('Id'): dict(d.attrib) for d in root.iter('Device') if d.get('Id')}
@@ -605,6 +661,13 @@ def _oir_summary(s: InfoSummary, item, meta):
             r'<commonparam:transmissivity>([^<]*)<', stim.group(0)) if _num(lm.group(2))]
         if on:
             s.add('Bleaching', '자극/bleach 레이저', ', '.join(f'{w} nm {fmt(t, 3)} %' for w, t in on))
+            b = meta.get('bleach') or {}
+            if b.get('Iterations'):
+                s.add('Bleaching', '반복 (repeat)', fmt(b['Iterations']))
+            fa = b.get('frames_after') or []
+            if fa:
+                s.add('Bleaching', 'Pre-bleach 프레임 수', fmt(fa[0]))
+                s.add('Bleaching', 'Bleach 직후 프레임', _frame_list(fa, item.nt if item is not None else None))
         else:
             s.add('Bleaching', '실행 여부', '아니오 (자극 레이저 0 %)')
 

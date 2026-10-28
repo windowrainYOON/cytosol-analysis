@@ -16,7 +16,7 @@ Cytosol Viewer(v0.25)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
   있고, 나머지 기능 탭은 각 기능 메뉴의 **… 탭 열기**로 꺼냅니다
 - **메뉴 막대**: **파일**(프로젝트, 자동 인식 불러오기, 통합 저장, 작업 기록, 설정)
   옆에 기능마다 메뉴(**LUT**, **마커**, **Crop**, **세포질 ROI**, **입자 ROI**,
-  **강도 측정**, **Coloc 2**, **라인 프로파일**, **스택**, **이미지 정보**, **Figure**)가
+  **강도 측정**, **Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**, **이미지 정보**, **Figure**)가
   있고, 각 메뉴에 그 기능의 탭 열기와 저장·불러오기가 있습니다.
   [메뉴, 프로젝트 파일, 작업 기록](13-project-menus.md)
 
@@ -32,13 +32,14 @@ Cytosol Viewer(v0.25)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
 | [마커 (LUT 탭 아래)](05-markers.md) | Scale bar, 타임 스탬프, CZI bleach ROI, 설정 저장·불러오기 |
 | [스택 탭](06-stack.md) | Z 스택 2D 투영, 3D 회전 보기, 저장 |
 | [라인 프로파일 탭](07-line-profile.md) | 선을 따라 채널별 강도 그래프 (ImageJ RGB Profiler) |
+| [FRAP 측정 탭](14-frap.md) | bleach 후 회복 곡선, 그룹 평균 ± 에러바, mobile fraction·t½ 요약 |
 | [Coloc 2 탭](08-coloc2.md) | 세포별 공존(colocalization) 분석 (Fiji Coloc 2) |
 | [강도 측정 탭](09-intensity.md) | 논리식 영역(예: `cyto - particle`)의 강도, 그리고 측정 탭들이 함께 쓰는 측정 결과 표 |
 | [이미지 정보 탭](10-image-info.md) | 획득 메타데이터 (레이저, 검출기, 대물렌즈, bleaching) |
 | [Figure 창](11-figure.md) | 행·열 이름, 확대 inset, scale bar가 있는 figure 표; PNG/TIFF/PDF/SVG |
 | [저장되는 파일](12-output-files.md) | 프로그램이 쓰는 모든 파일과 폴더 불러오기 |
 
-Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, 스택 탭은 메뉴 막대의
+Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, FRAP 측정, 스택 탭은 메뉴 막대의
 같은 이름 메뉴에서 열고, 그 탭의 결과도 같은 메뉴에서 저장하고 불러옵니다.
 
 ## 단축키와 마우스

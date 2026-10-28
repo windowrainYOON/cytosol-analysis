@@ -29,6 +29,7 @@
 | `<이름>_regions.zip` | 강도 측정 탭 | `rgnCCC-R`, 식은 `region` 속성 |
 | `<이름>_bleach_rois.zip` | 모든 저장(bleach 영역이 있는 CZI) | 타원 또는 다각형 |
 | `<이름>_line.roi` | 라인 프로파일 탭 | 두께가 들어간 직선 |
+| `<이름>_frap_rois.zip` | FRAP 측정 탭, 통합 저장 | `frap_bleach`, `frap_control`, `frap_background` |
 | `<이름>_crops.zip` | 이미지 내보내기, Crop › Crop 영역 ROI 저장, 통합 저장 | `cropN` 사각형(속성 `crop_region`) |
 | inset `.roi` / `.zip` | Figure 창 | 원본 이미지 좌표의 사각형 |
 
@@ -43,6 +44,7 @@
 | `<이름>_<suffix>_summary.csv` | `<suffix>_summary_image.csv`, `<suffix>_summary_group.csv` | 입자 ROI 탭 요약 |
 | `<이름>_intensity.csv` | `intensity.csv` | 강도 측정 탭 |
 | `<이름>_coloc2.csv` | `coloc2.csv` | Coloc 2 탭 |
+| `<이름>_frap.csv` | `frap_summary.csv`, `frap_group_curves.csv` | FRAP 측정 탭: 프레임별 곡선, 이미지·그룹별 FRAP 수치, 그룹 평균 곡선 (그래프 `frap_groups.png`, `frap_summary.png`) |
 | `<이름>_info.csv` | — | 이미지 정보 탭(모든 분석 결과 통합 저장) |
 | — | `image_groups.csv` | 이미지, 이미지 ID, 그룹 |
 | 라인 프로파일 `.csv` | — | 거리 + 채널마다 한 열 |

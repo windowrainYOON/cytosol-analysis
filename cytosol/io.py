@@ -937,6 +937,12 @@ def read_oir(path) -> Image:
         }
     m = re.search(r'<base:systemName>([^<]*)', str(meta['xml']))
     meta['system'] = m.group(1) if m else ''
+    from .imageinfo import oir_bleach
+
+    try:
+        meta['bleach'], meta['bleach_rois'] = oir_bleach(meta['xml'])
+    except Exception:  # metadata extras never block opening the image
+        traceback.print_exc()
     for ax in ('C', 'Z'):
         if ax not in x.dims:
             x = x.expand_dims(ax)

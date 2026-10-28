@@ -26,6 +26,8 @@
 - bleaching이 있는 CZI(FRAP): bleach 레이저와 세기, 반복 횟수, 시간, bleach
   횟수, 각 bleach 뒤 프레임, bleach 전 프레임, bleach ROI마다 위치와 크기(ROI
   자체는 [마커 탭](05-markers.md)에서 그림).
+- 자극(stimulation)이 있는 OIR(FRAP): 자극 레이저와 세기, 반복 횟수, bleach 전 프레임,
+  자극 영역. [FRAP 측정 탭](14-frap.md)이 이 bleach 영역과 프레임을 씁니다.
 
 ## 형식별 내용
 
