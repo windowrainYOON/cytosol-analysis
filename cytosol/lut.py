@@ -256,14 +256,15 @@ class ImageItem:
         x0, y0, x1, y1 = region
         return d[:, :, y0:y1, x0:x1]
 
-    def composite(self, region=None, channels=None) -> np.ndarray:
+    def composite(self, region=None, channels=None, luts=None) -> np.ndarray:
         """(Y, X, 3) float RGB with the LUTs applied.
 
         channels: indices to include; None means every visible channel.
+        luts: LUTs to use instead of self.luts (e.g. a figure cell's own levels).
         """
         planes = self.region_planes(region)
         rgb = np.zeros(planes.shape[1:] + (3,), np.float32)
-        for i, (plane, lut) in enumerate(zip(planes, self.luts)):
+        for i, (plane, lut) in enumerate(zip(planes, luts or self.luts)):
             if channels is not None and i not in channels:
                 continue
             if channels is None and not lut.visible:
