@@ -969,6 +969,64 @@ def run(out_dir) -> int:
             raise AssertionError(f'inset size to all: {sizes}, {other.insets[0].rect}')
         if fw.cell_canvas.crop_size != (10, 8):
             raise AssertionError('fixed-size drawing not switched on')
+        # brightness of one cell only: 자동 = LUT tab, own levels, Merged takes them
+        it0 = win.current
+        other.channels = [0]
+        fw.rebuild_table()
+        fw.table.setCurrentCell(0, fw.spec.ncols - 1)
+        fw._fill_levels()
+        lv = fw.level_rows
+        lut0 = it0.luts[0]
+        if [r.ch for r in lv] != [0] or not lv[0].auto.isChecked() \
+                or abs(lv[0].max_spin.value() - lut0.vmax) > 1e-3 * max(1, abs(lut0.vmax)):
+            raise AssertionError('figure level row does not show the LUT tab values')
+        lv[0].auto.setChecked(False)
+        if 0 not in other.levels:
+            raise AssertionError('figure cell levels not switched to own values')
+        lo, hi = lut0.vmin, lut0.vmin + (lut0.vmax - lut0.vmin) * 0.3
+        fw.level_rows[0].max_spin.setValue(hi)
+        if abs(other.levels[0][1] - fw.level_rows[0].max_spin.value()) > 1e-6:
+            raise AssertionError(f'figure cell max not taken: {other.levels}')
+        if np.allclose(other.image(), it0.composite(other.region, [0])):
+            raise AssertionError('figure cell levels not used in its image')
+        if (lut0.vmin, lut0.vmax) == other.levels[0]:
+            raise AssertionError('LUT tab changed by a figure cell level')
+        fw.table.setCurrentCell(0, 0)
+        if not np.allclose(cell.image(), it0.composite(cell.region, cell.channels)):
+            raise AssertionError('Merged cell does not start from the LUT tab')
+        if fw.level_combos[0].count() != 3:
+            raise AssertionError(f'level source dropdown: {fw.level_combos[0].count()} items')
+        fw._level_source_chosen(0, 2)
+        if cell.level_from.get(0) is not other or cell.channel_levels()[0] != other.levels[0]:
+            raise AssertionError('Merged cell did not take the other cell levels')
+        # inset with its own levels
+        fw.level_target.setCurrentIndex(1)
+        ins = cell.insets[0]
+        lrow = fw.level_rows[-1]
+        lrow.auto.setChecked(False)
+        if lrow.ch not in ins.levels or lrow.ch in cell.levels:
+            raise AssertionError(f'inset levels: {ins.levels}')
+        ins.levels[lrow.ch] = (0.0, 1.0)
+        import json
+        from .figure import render_cell
+        render_cell(cell, fw.spec, 80, 80)
+        from .project import figure_dict, figure_from
+        files = {}
+        fd = json.loads(json.dumps(figure_dict(fw.spec, win.items, files)))
+        from .figure import FigureSpec
+        back = FigureSpec()
+        back.rows, back.cols = list(fw.spec.rows), list(fw.spec.cols)
+        figure_from(back, fd, win.items, lambda name: b'')
+        bc, bo = back.cells[0][0], back.cells[0][-1]
+        if bc.level_from.get(0) is not bo or bo.levels != other.levels \
+                or bc.insets[0].levels != {lrow.ch: (0.0, 1.0)}:
+            raise AssertionError('figure levels lost in the project round trip')
+        fw._level_source_chosen(0, 0)
+        fw.level_target.setCurrentIndex(1)
+        fw._levels_all_auto()
+        fw.level_target.setCurrentIndex(0)
+        if cell.levels or cell.level_from or ins.levels:
+            raise AssertionError('figure levels not back to 자동')
         fw.close()
         # every ROI tab measures and follows ROI edits; particles from their own tab
         from .cellroi import segment_cells

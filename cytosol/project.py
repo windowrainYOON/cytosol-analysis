@@ -277,7 +277,10 @@ def figure_dict(spec, items, files: dict) -> dict:
                  'channels': cell.channels, 'name': cell.name,
                  'rgb_pixel_um': cell.rgb_pixel_um,
                  'insets': [asdict(i) for i in cell.insets], 'rgb': None,
-                 'zoom_src': None, 'zoom_inset': None}
+                 'zoom_src': None, 'zoom_inset': None,
+                 'levels': {str(k): list(v) for k, v in cell.levels.items()},
+                 'level_from': {str(k): spec.find_level_source(v)
+                                for k, v in cell.level_from.items()}}
             if cell.rgb is not None:
                 d['rgb'] = f'figure/{r}_{c}.npy'
                 files[d['rgb']] = np.asarray(cell.rgb, np.float32)
@@ -294,6 +297,17 @@ def figure_dict(spec, items, files: dict) -> dict:
              if f.name not in ('rows', 'cols', 'cells')}
     return {'rows': [asdict(l) for l in spec.rows], 'cols': [asdict(l) for l in spec.cols],
             'cells': cells, 'settings': other}
+
+
+def _levels(d) -> dict:
+    """{'0': [lo, hi]} from JSON -> {0: (lo, hi)}."""
+    out = {}
+    for k, v in (d or {}).items():
+        try:
+            out[int(k)] = (float(v[0]), float(v[1]))
+        except (TypeError, ValueError, IndexError):
+            pass
+    return out
 
 
 def figure_from(spec, d: dict, items, read):
@@ -324,7 +338,9 @@ def figure_from(spec, d: dict, items, read):
                     cell.rgb = None
             cell.insets = [Inset(tuple(x['rect']), x.get('corner', 'upper left'),
                                  x.get('size', 0.45), x.get('placement', 'inside'),
-                                 tuple(x.get('offset', (0, 1)))) for x in c.get('insets', [])]
+                                 tuple(x.get('offset', (0, 1))), _levels(x.get('levels')))
+                           for x in c.get('insets', [])]
+            cell.levels = _levels(c.get('levels'))
             out.append(cell)
         grid.append(out)
     for r, row in enumerate(d.get('cells', [])):
@@ -337,6 +353,16 @@ def figure_from(spec, d: dict, items, read):
                 grid[r][c].zoom_src, grid[r][c].zoom_inset = src, src.insets[k]
             except (IndexError, TypeError):
                 pass
+    for r, row in enumerate(d.get('cells', [])):
+        for c, cd in enumerate(row):
+            for k, pos in (cd.get('level_from') or {}).items():
+                try:
+                    src = grid[pos[0]][pos[1]]
+                    if len(pos) > 2:
+                        src = src.insets[pos[2]]
+                    grid[r][c].level_from[int(k)] = src
+                except (IndexError, TypeError, ValueError):
+                    pass
     if grid and len(grid) == len(spec.rows) and all(len(r) == len(spec.cols) for r in grid):
         spec.cells = grid
     for k, v in (d.get('settings') or {}).items():

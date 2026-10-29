@@ -12,7 +12,7 @@ cell whatever the source resolution.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
@@ -41,9 +41,12 @@ class Inset:
     # cell (that cell's zoom_src / zoom_inset point back here)
     placement: str = 'inside'
     offset: tuple = (0, 1)  # (rows, cols) from the source cell to the zoom cell
+    # channel -> (vmin, vmax) for the zoomed copy only; missing = the cell's levels
+    levels: dict = field(default_factory=dict)
 
     def copy(self) -> 'Inset':
-        return Inset(self.rect, self.corner, self.size, self.placement, self.offset)
+        return Inset(self.rect, self.corner, self.size, self.placement, self.offset,
+                     dict(self.levels))
 
 
 @dataclass(eq=False)
@@ -60,6 +63,11 @@ class FigureCell:
     # a zoom cell: shows zoom_inset.rect of the cell zoom_src
     zoom_src: 'FigureCell | None' = None
     zoom_inset: Inset | None = None
+    # brightness of this cell only: channel -> (vmin, vmax); missing = the LUT tab
+    levels: dict = field(default_factory=dict)
+    # channel -> another FigureCell or Inset whose levels this cell uses (e.g. a
+    # Merged cell taking the levels set in a single-channel cell)
+    level_from: dict = field(default_factory=dict)
 
     @property
     def is_zoom(self) -> bool:
@@ -72,12 +80,47 @@ class FigureCell:
                                                   for i in self.zoom_src.insets)
         return self.item is None and self.rgb is None
 
-    def image(self) -> np.ndarray:
+    def channel_levels(self) -> dict:
+        """channel -> (vmin, vmax) where this cell differs from the LUT tab."""
         if self.is_zoom:
-            x0, y0, x1, y1 = self.zoom_inset.rect
-            return self.zoom_src.image()[y0:y1, x0:x1]
+            out = self.zoom_src.channel_levels()
+            out.update(self.zoom_inset.levels)
+            return out
+        out = dict(self.levels)
+        for ch, src in self.level_from.items():
+            lv = src.levels.get(ch)
+            if lv is None:
+                out.pop(ch, None)  # the other cell went back to the LUT tab
+            else:
+                out[ch] = lv
+        return out
+
+    def luts(self, levels=None) -> list:
+        """The item's LUTs with this cell's (or the given) levels put in."""
+        levels = self.channel_levels() if levels is None else levels
+        return [replace(lut, vmin=float(levels[k][0]), vmax=float(levels[k][1]))
+                if k in levels else lut for k, lut in enumerate(self.item.luts)]
+
+    def image(self, inset: Inset | None = None) -> np.ndarray:
+        """The cell's RGB; with inset, only inset.rect drawn with the inset's levels."""
+        if self.is_zoom:
+            return self.zoom_src.image(self.zoom_inset)
+        if inset is not None:
+            H, W = self.shape()
+            x0, y0, x1, y1 = inset.rect
+            x0, x1 = max(0, x0), min(W, x1)
+            y0, y1 = max(0, y0), min(H, y1)
+            if self.item is None:
+                return self.rgb[y0:y1, x0:x1]
+            ox, oy = cell_origin(self)
+            levels = self.channel_levels()
+            levels.update(inset.levels)
+            return self.item.composite((x0 + ox, y0 + oy, x1 + ox, y1 + oy), self.channels,
+                                       self.luts(levels) if levels else None)
         if self.item is not None:
-            return self.item.composite(self.region, self.channels)
+            levels = self.channel_levels()
+            return self.item.composite(self.region, self.channels,
+                                       self.luts(levels) if levels else None)
         return self.rgb
 
     @property
@@ -121,6 +164,7 @@ class FigureCell:
         self.rgb_pixel_um, self.name = other.rgb_pixel_um, other.name
         self.zoom_src, self.zoom_inset = other.zoom_src, other.zoom_inset
         self.channels = None if other.channels is None else list(other.channels)
+        self.levels, self.level_from = dict(other.levels), dict(other.level_from)
         if insets:
             # zoom-cell links are not copied: those belong to the original cell
             self.insets = [i.copy() for i in other.insets if i.placement == 'inside']
@@ -235,6 +279,51 @@ class FigureSpec:
         target.copy_from(FigureCell(zoom_src=src, zoom_inset=inset))
         target.insets = []
         return True
+
+    def level_sources(self, cell: FigureCell, ch: int) -> list:
+        """(label, source) of the cells / insets whose levels cell can use for channel ch.
+
+        Sources show the same channel (same image, or the same channel name at
+        that index) and have their own levels for it.
+        """
+        if cell.item is None or ch >= len(cell.item.channels):
+            return []
+        name = cell.item.channels[ch]
+        out = []
+        for r, row in enumerate(self.cells):
+            for c, other in enumerate(row):
+                it = other.item
+                if other.is_zoom or it is None or ch >= len(it.channels) \
+                        or (it is not cell.item and it.channels[ch] != name):
+                    continue
+                if other is not cell and ch in other.levels:
+                    lo, hi = other.levels[ch]
+                    out.append((f'행 {r + 1}, 열 {c + 1} 칸 ({lo:g}–{hi:g})', other))
+                for k, ins in enumerate(other.insets, 1):
+                    if ch in ins.levels:
+                        lo, hi = ins.levels[ch]
+                        out.append((f'행 {r + 1}, 열 {c + 1} 확대 영역 {k} ({lo:g}–{hi:g})',
+                                    ins))
+        return out
+
+    def prune_level_links(self):
+        """Drop level_from links to cells / insets no longer in the table."""
+        for row in self.cells:
+            for cell in row:
+                for ch, src in list(cell.level_from.items()):
+                    if not any(s is src for _, s in self.level_sources(cell, ch)):
+                        del cell.level_from[ch]
+
+    def find_level_source(self, src) -> list | None:
+        """[r, c] of a cell or [r, c, k] of inset k, for saving level links."""
+        for r, row in enumerate(self.cells):
+            for c, cell in enumerate(row):
+                if cell is src:
+                    return [r, c]
+                for k, ins in enumerate(cell.insets):
+                    if ins is src:
+                        return [r, c, k]
+        return None
 
     def forget_item(self, item):
         """Empty every cell that shows item (it was removed from the app)."""
@@ -352,7 +441,8 @@ def render_cell(cell: FigureCell, spec: FigureSpec, w_px: int, h_px: int,
         if ih > dh:
             ih = dh
             iw = max(4, round(ih * (x1 - x0) / (y1 - y0)))
-        zoom = _resize(src[y0:y1, x0:x1], iw, ih)
+        part = cell.image(inset) if inset.levels else src[y0:y1, x0:x1]
+        zoom = _resize(part, iw, ih)
         if spec.inset_scale_bar and px and inset_scale_um:
             zpx = px * (x1 - x0) / iw
             if inset_scale_um / zpx < iw * 0.9:

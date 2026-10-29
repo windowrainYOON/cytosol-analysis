@@ -6,7 +6,7 @@ import traceback
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QScrollArea,
+    QSlider,
     QSpinBox,
     QSplitter,
     QTableWidget,
@@ -127,6 +128,100 @@ class LabelDialog(QDialog):
         return self.text.toPlainText().rstrip('\n'), self.color
 
 
+LEVEL_STEPS = 1000
+
+
+class LevelRow(QWidget):
+    """자동 / Min / Max with sliders for one channel of a figure cell or inset."""
+
+    autoToggled = Signal(int, bool)
+    valuesChanged = Signal(int, float, float)
+    autoPicked = Signal(int)
+
+    def __init__(self, item, ch):
+        super().__init__()
+        self.ch = ch
+        self._busy = False
+        self.lo, self.hi, note = item.value_range(ch)
+        integer = bool(note) and note != 'RI' and float(self.lo).is_integer() \
+            and float(self.hi).is_integer()
+        span = self.hi - self.lo
+        self.steps = int(span) if integer and 0 < span <= 1_000_000 else LEVEL_STEPS
+        swatch = QPixmap(14, 14)
+        swatch.fill(_qcolor(item.luts[ch].color))
+        self.name = QLabel()
+        self.name.setText(item.channels[ch])
+        icon = QLabel()
+        icon.setPixmap(swatch)
+        self.auto = QCheckBox('자동')
+        self.auto.toggled.connect(lambda on: self._busy or self.autoToggled.emit(ch, on))
+        self.pick = QPushButton('Auto')
+        self.pick.setToolTip('이 칸(확대 영역)에 보이는 부분의 밝기 분포로 Min/Max 정하기')
+        self.pick.clicked.connect(lambda: self.autoPicked.emit(ch))
+        self.note = QLabel()
+        self.note.setStyleSheet('color: gray; font-size: 11px;')
+        self.min_spin, self.max_spin = QDoubleSpinBox(), QDoubleSpinBox()
+        self.min_slider = QSlider(Qt.Orientation.Horizontal)
+        self.max_slider = QSlider(Qt.Orientation.Horizontal)
+        for spin, slider in ((self.min_spin, self.min_slider), (self.max_spin, self.max_slider)):
+            spin.setDecimals(0 if integer else 4)
+            spin.setRange(self.lo, self.hi)
+            spin.setSingleStep(1 if integer else span / 100)
+            spin.setKeyboardTracking(False)
+            spin.valueChanged.connect(self._from_spins)
+            slider.setRange(0, self.steps)
+            slider.valueChanged.connect(lambda v, sp=spin: self._slider(sp, v))
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.addWidget(icon)
+        top.addWidget(self.name)
+        top.addWidget(self.auto)
+        top.addWidget(self.note, 1)
+        top.addWidget(self.pick)
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        for r, (text, slider, spin) in enumerate((('Min', self.min_slider, self.min_spin),
+                                                  ('Max', self.max_slider, self.max_spin))):
+            grid.addWidget(QLabel(text), r, 0)
+            grid.addWidget(slider, r, 1)
+            grid.addWidget(spin, r, 2)
+        grid.setColumnStretch(1, 1)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 2, 0, 2)
+        lay.addLayout(top)
+        lay.addLayout(grid)
+
+    def _to_slider(self, v):
+        return int(round((v - self.lo) / (self.hi - self.lo) * self.steps))
+
+    def _slider(self, spin, value):
+        if not self._busy:
+            spin.setValue(self.lo + value / self.steps * (self.hi - self.lo))
+
+    def _from_spins(self, *_):
+        if self._busy:
+            return
+        lo, hi = self.min_spin.value(), self.max_spin.value()
+        self._busy = True
+        self.min_slider.setValue(self._to_slider(lo))
+        self.max_slider.setValue(self._to_slider(hi))
+        self._busy = False
+        self.valuesChanged.emit(self.ch, lo, hi)
+
+    def show_values(self, lo, hi, auto, editable, note=''):
+        """The values in use (also while automatic); fields editable only for own levels."""
+        self._busy = True
+        self.auto.setChecked(auto)
+        self.min_spin.setValue(lo)
+        self.max_spin.setValue(hi)
+        self.min_slider.setValue(self._to_slider(lo))
+        self.max_slider.setValue(self._to_slider(hi))
+        for w in (self.min_spin, self.max_spin, self.min_slider, self.max_slider):
+            w.setEnabled(editable)
+        self.note.setText(note)
+        self._busy = False
+
+
 class FigureWindow(QMainWindow):
     def __init__(self, main):
         super().__init__()
@@ -214,6 +309,7 @@ class FigureWindow(QMainWindow):
         right = QWidget()
         rl = QVBoxLayout(right)
         rl.addWidget(self._cell_editor())
+        rl.addWidget(self._level_editor())
         rl.addWidget(self._inset_editor())
         rl.addWidget(self._layout_editor())
         rl.addWidget(self._export_box())
@@ -261,6 +357,10 @@ class FigureWindow(QMainWindow):
         self.chan_grid = QGridLayout()
         chan_lay.addLayout(self.chan_grid)
         self.chan_checks: list[QCheckBox] = []
+        # next to each channel: whose brightness levels it uses (LUT tab, this
+        # cell's own, or another cell's / inset's adjusted levels)
+        self.level_combos: list[QComboBox] = []
+        self._combo_sources: list[list] = []
         chan_buttons = QHBoxLayout()
         chan_buttons.addWidget(self.merged_chk)
         chan_buttons.addStretch()
@@ -300,6 +400,36 @@ class FigureWindow(QMainWindow):
         row = QHBoxLayout()
         row.addWidget(same_src)
         row.addWidget(clear)
+        lay.addLayout(row)
+        return box
+
+    def _level_editor(self):
+        box = QGroupBox('밝기 (이 칸만)')
+        self.level_target = QComboBox()
+        self.level_target.setToolTip('밝기를 바꿀 곳: 이 칸 전체, 또는 이 칸의 확대 영역 하나')
+        self.level_target.currentIndexChanged.connect(lambda _: self._fill_levels())
+        self.level_box = QVBoxLayout()
+        self.level_rows: list[LevelRow] = []
+        self._level_key = None
+        self.level_hint = QLabel('자동 = LUT 탭 값 (확대 영역은 칸 값). 끄면 이 칸만 따로 조절합니다.')
+        self.level_hint.setWordWrap(True)
+        self.level_hint.setStyleSheet('color: gray;')
+        all_auto = QPushButton('모두 자동으로')
+        all_auto.setToolTip('여기서 조절한 값을 지우고 LUT 탭 값(확대 영역은 칸 값)으로 되돌리기')
+        all_auto.clicked.connect(self._levels_all_auto)
+        self._levels_timer = QTimer(self)
+        self._levels_timer.setSingleShot(True)
+        self._levels_timer.setInterval(150)
+        self._levels_timer.timeout.connect(self._levels_applied)
+        form = QFormLayout()
+        form.addRow('조절할 곳', self.level_target)
+        lay = QVBoxLayout(box)
+        lay.addLayout(form)
+        lay.addLayout(self.level_box)
+        lay.addWidget(self.level_hint)
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(all_auto)
         lay.addLayout(row)
         return box
 
@@ -531,6 +661,7 @@ class FigureWindow(QMainWindow):
 
     def rebuild_table(self):
         s = self.spec
+        s.prune_level_links()
         r0, c0 = self.current_rc()
         self.table.blockSignals(True)
         self.table.setRowCount(s.nrows)
@@ -661,13 +792,14 @@ class FigureWindow(QMainWindow):
         self._fill_region_and_channels(cell)
         self._busy = False
         self._show_cell_canvas(refit=True)
+        self._fill_levels()
 
     def _fill_region_and_channels(self, cell):
         self.region_combo.clear()
-        for chk in self.chan_checks:
+        for chk in self.chan_checks + self.level_combos:
             chk.setParent(None)
             chk.deleteLater()
-        self.chan_checks = []
+        self.chan_checks, self.level_combos, self._combo_sources = [], [], []
         has_item = cell.item is not None
         self.region_combo.setEnabled(has_item)
         self.chan_box.setEnabled(has_item)
@@ -691,8 +823,17 @@ class FigureWindow(QMainWindow):
             on = cell.item.luts[i].visible if cell.channels is None else i in cell.channels
             chk.setChecked(on)
             chk.toggled.connect(self._channel_toggled)
-            self.chan_grid.addWidget(chk, i // 2, i % 2)
+            self.chan_grid.addWidget(chk, i, 0)
             self.chan_checks.append(chk)
+            combo = QComboBox()
+            combo.setToolTip('이 채널의 밝기 레벨: LUT 탭 값(자동), 이 칸에서 조절한 값,\n'
+                             '또는 다른 칸 / 확대 영역에서 조절한 값')
+            combo.activated.connect(lambda k, ch=i: self._level_source_chosen(ch, k))
+            self.chan_grid.addWidget(combo, i, 1)
+            self.level_combos.append(combo)
+            self._combo_sources.append([])
+        self.chan_grid.setColumnStretch(1, 1)
+        self._fill_level_combos()
 
     def _checked_channels(self):
         return [i for i, chk in enumerate(self.chan_checks) if chk.isChecked()]
@@ -751,6 +892,7 @@ class FigureWindow(QMainWindow):
         self._fill_region_and_channels(cell)
         self._busy = False
         self._cell_changed(insets_valid=False)
+        self._fill_levels()
 
     def _region_changed(self, _):
         if self._busy:
@@ -775,6 +917,7 @@ class FigureWindow(QMainWindow):
         else:
             cell.channels = self._checked_channels()
         self._cell_changed()
+        self._fill_levels()
 
     def _load_file(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -830,14 +973,212 @@ class FigureWindow(QMainWindow):
         for c, cell in enumerate(self.spec.cells[r]):
             if c == c0:
                 continue
-            channels = cell.channels
+            channels, levels, level_from = cell.channels, cell.levels, cell.level_from
             if cell.item is not None and src.item is not None and \
                     cell.item.channels != src.item.channels:
-                channels = None
+                channels, levels, level_from = None, {}, {}
             cell.copy_from(src, insets=False)
             cell.channels = None if channels is None else list(channels)
+            cell.levels, cell.level_from = dict(levels), dict(level_from)
             cell.insets = []
         self.rebuild_table()
+
+    # ------------------------------------------------------------------
+    # brightness of one cell / inset
+    # ------------------------------------------------------------------
+
+    def _level_owner(self):
+        """(cell with the image, Inset or None) the level editor works on."""
+        cell = self.current_cell()
+        if cell.is_zoom:
+            return cell.zoom_src, cell.zoom_inset
+        k = self.level_target.currentData()
+        if isinstance(k, int) and 0 <= k < len(cell.insets):
+            return cell, cell.insets[k]
+        return cell, None
+
+    def _fill_level_targets(self):
+        cell = self.current_cell()
+        old = self.level_target.currentData()
+        self.level_target.blockSignals(True)
+        self.level_target.clear()
+        if cell.is_zoom:
+            self.level_target.addItem('이 확대 칸', None)
+        else:
+            self.level_target.addItem('이 칸 전체', None)
+            for k, ins in enumerate(cell.insets):
+                x0, y0, x1, y1 = ins.rect
+                self.level_target.addItem(f'확대 영역 {k + 1} (x {x0}–{x1}, y {y0}–{y1})', k)
+            idx = self.level_target.findData(old) if old is not None else 0
+            self.level_target.setCurrentIndex(max(idx, 0))
+        self.level_target.blockSignals(False)
+        self._fill_levels()
+
+    def _shown_channels(self, cell):
+        if cell.item is None:
+            return []
+        if cell.channels is None:
+            return [i for i, lut in enumerate(cell.item.luts) if lut.visible]
+        return list(cell.channels)
+
+    def _fill_levels(self):
+        """One row per shown channel; rebuilt only when the target or channels change."""
+        if not hasattr(self, 'level_rows'):
+            return
+        cell, ins = self._level_owner()
+        chans = self._shown_channels(cell) if cell is not None else []
+        key = (id(cell), id(ins), id(cell.item) if cell is not None else None, tuple(chans))
+        if key != self._level_key:
+            self._level_key = key
+            for row in self.level_rows:
+                row.setParent(None)
+                row.deleteLater()
+            self.level_rows = []
+            for ch in chans:
+                row = LevelRow(cell.item, ch)
+                row.autoToggled.connect(self._level_auto)
+                row.valuesChanged.connect(self._level_values)
+                row.autoPicked.connect(self._level_pick)
+                self.level_box.addWidget(row)
+                self.level_rows.append(row)
+        if cell is not None and cell.item is not None and not chans:
+            self.level_hint.setText('이 칸에 보이는 채널이 없습니다.')
+        elif cell is None or cell.item is None:
+            self.level_hint.setText('밝기는 열린 이미지가 들어 있는 칸에서 조절합니다.')
+        else:
+            self.level_hint.setText('자동 = LUT 탭 값' + (' 대신 칸의 값' if ins is not None else '')
+                                    + '. 끄면 여기만 따로 조절합니다.')
+        for row in self.level_rows:
+            self._show_level_row(row, cell, ins)
+
+    def _show_level_row(self, row, cell, ins):
+        ch = row.ch
+        lut = cell.item.luts[ch]
+        if ins is not None:
+            if ch in ins.levels:
+                row.show_values(*ins.levels[ch], auto=False, editable=True)
+            else:
+                lo, hi = cell.channel_levels().get(ch, (lut.vmin, lut.vmax))
+                row.show_values(lo, hi, auto=True, editable=False, note='칸 값')
+            return
+        src = cell.level_from.get(ch)
+        if src is not None and ch in src.levels:
+            pos = self.spec.find_level_source(src)
+            where = f'행 {pos[0] + 1}, 열 {pos[1] + 1}' if pos else '다른 칸'
+            if pos and len(pos) > 2:
+                where += f' 확대 {pos[2] + 1}'
+            row.show_values(*src.levels[ch], auto=False, editable=False, note=f'{where} 값')
+        elif ch in cell.levels:
+            row.show_values(*cell.levels[ch], auto=False, editable=True)
+        else:
+            row.show_values(lut.vmin, lut.vmax, auto=True, editable=False, note='LUT 탭')
+
+    def _level_auto(self, ch, on):
+        cell, ins = self._level_owner()
+        if ins is not None:
+            if on:
+                ins.levels.pop(ch, None)
+            else:
+                lut = cell.item.luts[ch]
+                ins.levels[ch] = cell.channel_levels().get(ch, (lut.vmin, lut.vmax))
+        elif on:
+            cell.levels.pop(ch, None)
+            cell.level_from.pop(ch, None)
+        else:
+            lut = cell.item.luts[ch]
+            cell.levels[ch] = cell.channel_levels().get(ch, (lut.vmin, lut.vmax))
+            cell.level_from.pop(ch, None)
+        self._levels_edited()
+
+    def _level_values(self, ch, lo, hi):
+        cell, ins = self._level_owner()
+        target = ins if ins is not None else cell
+        if ch in target.levels:
+            target.levels[ch] = (lo, hi)
+            self._levels_edited(rows=False)
+
+    def _level_pick(self, ch):
+        """Min/Max from the percentiles of the part of the image shown here."""
+        from .lut import auto_range
+
+        cell, ins = self._level_owner()
+        region = cell.region
+        if ins is not None:
+            ox, oy = cell.region[:2] if cell.region else (0, 0)
+            x0, y0, x1, y1 = ins.rect
+            region = (x0 + ox, y0 + oy, x1 + ox, y1 + oy)
+        plane = cell.item.region_planes(region)[ch]
+        target = ins if ins is not None else cell
+        target.levels[ch] = tuple(float(v) for v in auto_range(plane))
+        if ins is None:
+            cell.level_from.pop(ch, None)
+        self._levels_edited()
+
+    def _levels_all_auto(self):
+        cell, ins = self._level_owner()
+        if cell is None or cell.item is None:
+            return
+        if ins is not None:
+            ins.levels.clear()
+        else:
+            cell.levels.clear()
+            cell.level_from.clear()
+        self._levels_edited()
+
+    def _levels_edited(self, rows=True):
+        if rows:
+            self._fill_levels()
+            self._fill_level_combos()
+        self._levels_timer.start()
+
+    def _levels_applied(self):
+        """Redraw every cell (others may use these levels), the inset canvas and preview."""
+        for r in range(self.spec.nrows):
+            for c in range(self.spec.ncols):
+                self._refresh_cell(r, c)
+        self._fill_level_combos()
+        cell = self.current_cell()
+        if not cell.empty:
+            self.cell_canvas.set_image(_qimage(cell.image()), refit=False)
+        self.schedule()
+
+    def _fill_level_combos(self):
+        cell = self.current_cell()
+        for ch, combo in enumerate(self.level_combos):
+            sources = self.spec.level_sources(cell, ch)
+            self._combo_sources[ch] = [src for _, src in sources]
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem('LUT 탭 (자동)')
+            combo.addItem('이 칸에서 조절')
+            for label, _ in sources:
+                combo.addItem(label)
+            src = cell.level_from.get(ch)
+            k = next((j for j, s in enumerate(self._combo_sources[ch]) if s is src), None)
+            if k is not None:
+                combo.setCurrentIndex(k + 2)
+            else:
+                combo.setCurrentIndex(1 if ch in cell.levels else 0)
+            combo.blockSignals(False)
+
+    def _level_source_chosen(self, ch, index):
+        cell = self.current_cell()
+        if cell.item is None:
+            return
+        lut = cell.item.luts[ch]
+        if index == 0:
+            cell.levels.pop(ch, None)
+            cell.level_from.pop(ch, None)
+        elif index == 1:
+            if ch not in cell.levels:
+                cell.levels[ch] = cell.channel_levels().get(ch, (lut.vmin, lut.vmax))
+            cell.level_from.pop(ch, None)
+        else:
+            cell.level_from[ch] = self._combo_sources[ch][index - 2]
+            cell.levels.pop(ch, None)
+        self.level_target.setCurrentIndex(0)
+        self._levels_edited()
+        self._levels_applied()
 
     # ------------------------------------------------------------------
     # insets
@@ -873,6 +1214,7 @@ class FigureWindow(QMainWindow):
             self.inset_list.setCurrentRow(max(0, min(row, len(cell.insets) - 1)))
         self.inset_list.blockSignals(False)
         self._inset_selected(self.inset_list.currentRow(), redraw=False)
+        self._fill_level_targets()
 
     def _inset_selected(self, row, redraw=True):
         cell = self.current_cell()
@@ -959,7 +1301,7 @@ class FigureWindow(QMainWindow):
         return Inset(rect, t.corner if t else self.corner.currentData(),
                      t.size if t else self.inset_size.value() / 100,
                      t.placement if t else self.placement.currentData(),
-                     t.offset if t else (0, 1))
+                     t.offset if t else (0, 1), dict(t.levels) if t else {})
 
     def _add_insets(self, cell, rects, template=None, current=True) -> tuple[int, int]:
         """Add insets for source-image rects to cell; (added, put inside instead of a cell)."""
@@ -1331,6 +1673,7 @@ class FigureWindow(QMainWindow):
             for c in range(self.spec.ncols):
                 self._refresh_cell(r, c)
         self._show_cell_canvas()
+        self._fill_levels()
         self.schedule()
 
     def changeEvent(self, event):

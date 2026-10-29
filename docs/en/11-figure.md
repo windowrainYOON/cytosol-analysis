@@ -27,11 +27,40 @@ main window appear when you come back to the figure window.
 | **영역** (Region) | **전체 이미지** (whole image) or one of the image's crop regions |
 | **파일…** (File) | Put a PNG/TIFF file in the cell instead (e.g. an earlier export) |
 | **메인 창 표시 채널 따르기** (Follow the main window's channels) | Use the channels shown in the main window |
-| **채널 조합** (Channel combination) | Checkboxes per channel, any combination for this cell only (unticks the option above); **모두 켜기 / 모두 끄기** |
+| **채널 조합** (Channel combination) | Checkboxes per channel, any combination for this cell only (unticks the option above); **모두 켜기 / 모두 끄기**. The dropdown next to each checkbox picks that channel's brightness levels (see **밝기 (이 칸만)** below) |
 | **이 행을 채널별 + Merged로 채우기** | Fill the row with one column per channel plus the merged image in the last column |
 | **열 이름을 채널 이름/색으로** | Name the columns after the channels of this row, in their LUT colors |
 | **이 행의 다른 칸도 같은 이미지/영역으로** | Give the row's other cells the same image and region, keeping their channel choice |
 | **칸 비우기** (Clear cell) | Empty the cell |
+
+## 밝기 (이 칸만) — brightness of one cell
+
+Sets the channel brightness (Min/Max) of one cell, or of one of its zoom
+insets, on its own. Everything starts as **자동** (automatic): the cell uses
+the LUT tab values and follows them when the LUT tab changes; the fields still
+show the values in use. The LUT tab itself is never changed.
+
+- **조절할 곳** (Adjust): **이 칸 전체** (the whole cell) or **확대 영역 N**
+  (inset N). Selecting a zoom cell (an inset shown in its own cell) adjusts
+  that inset. For an inset, **자동** means the cell's values.
+- One line per shown channel: untick **자동** to give the cell its own values
+  and set **Min / Max** in the fields or with the sliders below them. **Auto**
+  sets Min/Max from the intensity distribution of the part shown in this cell
+  (or inset).
+- **모두 자동으로** (All automatic): drop the values set here.
+
+**Adjusted levels in a Merged cell**: pick them per channel in the dropdown
+next to each **채널 조합** checkbox.
+
+| Dropdown | Levels used for that channel |
+|---|---|
+| **LUT 탭 (자동)** | The LUT tab values (default) |
+| **이 칸에서 조절** | The values set in this cell |
+| **행 r, 열 c 칸 (min–max)** / **… 확대 영역 k** | The values adjusted in another cell or inset (same image, or a channel of the same name); they follow later changes there |
+
+Example: brighten the CH1 cell and the CH2 cell separately, then choose the
+CH1 cell in the Merged cell's CH1 dropdown: the Merged image gets those levels
+for CH1, while CH2 left at **LUT 탭 (자동)** keeps the LUT tab values.
 
 ## 확대 영역 (inset) — zoom insets
 
