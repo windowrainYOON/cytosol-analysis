@@ -52,6 +52,11 @@ from .flow import FlowLayout
 IMAGE_FILTERS = {'PNG (*.png)': '.png', 'TIFF (*.tif)': '.tif', 'PDF (*.pdf)': '.pdf',
                  'SVG (*.svg)': '.svg'}
 EDITOR_W = 380
+ZOOM_STEP = 1.25
+ZOOM_DRAG_RATE = 0.004
+HANDLE_PX = 9
+OBJECT_NAMES = {'plot': '그래프 영역', 'title': '제목', 'xlabel': 'X 축 이름', 'ylabel': 'Y 축 이름',
+                'legend': '범례', 'text': '글자 상자'}
 
 
 def _safe(name: str) -> str:
@@ -111,9 +116,13 @@ class FloatEdit(QLineEdit):
         self.editingFinished.connect(self._done)
 
     def value(self) -> float:
+        t = self.text().replace(',', '.').strip()
         try:
-            return float(self.text().replace(',', '.'))
-        except ValueError:
+            if '/' in t:  # 1/60 for s -> min
+                a, b = t.split('/', 1)
+                return float(a) / float(b)
+            return float(t)
+        except (ValueError, ZeroDivisionError):
             return float('nan')
 
     def setValue(self, v: float):
@@ -287,6 +296,8 @@ class GraphWindow(QMainWindow):
         self.default_spec = G.GraphSpec()
         self.art = {}
         self._drag = None
+        self._scales = {}
+        self.extra = []  # tables brought in from other analyses / CSV files
         self._series_i = -1
         self._text_i = -1
         self._item_i = -1
@@ -302,22 +313,40 @@ class GraphWindow(QMainWindow):
         self.fig = Figure(figsize=(5, 3.6), dpi=100, layout='constrained')
         self.canvas = FigureCanvasQTAgg(self.fig)
         self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
-        self.holder = QWidget()
-        self.holder.setStyleSheet('background: #e9e9e9;')
-        hl = QVBoxLayout(self.holder)
-        hl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hl.addWidget(self.canvas, 0, Qt.AlignmentFlag.AlignCenter)
-        self.holder.installEventFilter(self)
+        self.zoom = 1.0  # 1 = the whole graph fits the preview
+        self.sel = None  # selected object: (kind, index)
+        self._overlay = []
+        self._last_live = 0.0
+        self.holder = QScrollArea()
+        self.holder.setStyleSheet('QScrollArea { background: #e9e9e9; }')
+        self.holder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.holder.setWidgetResizable(False)
+        self.holder.setWidget(self.canvas)
+        self.holder.viewport().installEventFilter(self)
         for ev, fn in (('button_press_event', self._press), ('motion_notify_event', self._motion),
-                       ('button_release_event', self._release)):
+                       ('button_release_event', self._release), ('scroll_event', self._scroll_ev)):
             self.canvas.mpl_connect(ev, fn)
         preview = QWidget()
         pl = QVBoxLayout(preview)
         pl.setContentsMargins(0, 0, 0, 0)
+        zrow = QHBoxLayout()
+        for text, fn, tip in (('－', lambda: self.zoom_by(1 / ZOOM_STEP), '축소 ( [ )'),
+                              ('＋', lambda: self.zoom_by(ZOOM_STEP), '확대 ( ] )'),
+                              ('화면 맞춤', self.zoom_fit, '그래프 전체가 보이게 (Ctrl+0)')):
+            b = QPushButton(text)
+            b.setToolTip(tip)
+            b.clicked.connect(fn)
+            zrow.addWidget(b)
+        self.zoom_label = QLabel('100 %')
+        self.zoom_label.setStyleSheet('color: gray;')
+        zrow.addWidget(self.zoom_label)
+        zrow.addStretch()
+        pl.addLayout(zrow)
         pl.addWidget(self.holder, 1)
-        pl.addWidget(_hint('글자 상자와 범례는 그래프 위에서 끌어 옮깁니다. 두 번 클릭: 글자·제목·축 이름·범례 '
-                           '항목 고치기 · 오른쪽 클릭: 그 자리에 글자 상자 추가. 미리보기는 저장할 크기와 '
-                           '같은 비율로 줄여 보여줍니다.'))
+        pl.addWidget(_hint('클릭으로 고른 뒤 끌어 옮기고, 파란 모서리 핸들을 끌어 크기를 바꿉니다 (그래프 영역, 제목, '
+                           '축 이름, 글자 상자, 범례). 두 번 클릭: 글자 고치기 · 오른쪽 클릭: 글자 상자 추가, '
+                           '자동 배치로 되돌리기 · 확대·축소: Cmd(Ctrl)+위아래 드래그, Cmd(Ctrl)+휠, ] [ · '
+                           '이동: 가운데 버튼 드래그, 휠.'))
 
         self.editor = QTabWidget()
         self.editor.addTab(self._scroll(self._build_graph_tab()), '그래프')
@@ -424,10 +453,24 @@ class GraphWindow(QMainWindow):
         self._act(m, '모든 데이터 표 (폴더, CSV)…', self.export_all,
                   tip='기능이 넘겨준 모든 결과 표 + 그래프에 쓰인 데이터 + 요약을 한 폴더에 저장합니다.')
 
+        m = mb.addMenu('데이터')
+        self.import_menu = m.addMenu('다른 분석 결과 가져오기')
+        self.import_menu.aboutToShow.connect(self._fill_import_menu)
+        self._act(m, 'CSV 파일 불러오기…', self.import_csv,
+                  tip='CSV 표를 불러와 이 그래프의 데이터 표로 씁니다 (첫 줄 = 열 이름).')
+        self._act(m, '가져온 표 지우기…', self.remove_table)
+
+        m = mb.addMenu('보기')
+        self._act(m, '확대', lambda: self.zoom_by(ZOOM_STEP), ']')
+        self._act(m, '축소', lambda: self.zoom_by(1 / ZOOM_STEP), '[')
+        self._act(m, '화면 맞춤', self.zoom_fit, 'Ctrl+0')
+
         m = mb.addMenu('편집')
         self._act(m, '데이터 시리즈 추가', self.add_series)
         self._act(m, '글자 상자 추가', lambda: self.add_text())
         self._act(m, '범례 항목 추가', self.add_legend_item)
+        self._act(m, '모든 위치·크기 자동 배치로', self.auto_layout,
+                  tip='끌어 옮기거나 크기를 바꾼 그래프 영역·제목·축 이름을 자동 배치로 되돌립니다.')
         m.addSeparator()
         self._act(m, '처음 그래프로 되돌리기', self.reset_spec,
                   tip='탭에서 보던 그래프로 모든 설정을 되돌립니다.')
@@ -439,6 +482,7 @@ class GraphWindow(QMainWindow):
         self.addToolBar(tb)
         for text, fn in (('이미지 저장…', self.save_image), ('데이터 CSV…', lambda: self.export_plotted(False)),
                          ('모든 표…', self.export_all), ('글자 상자 +', lambda: self.add_text()),
+                         ('다른 분석 데이터 +', self._import_popup),
                          ('처음 그래프로', self.reset_spec), ('다시 불러오기', self.reload)):
             tb.addAction(text, fn)
 
@@ -460,6 +504,24 @@ class GraphWindow(QMainWindow):
         dpi.setRange(50, 1200)
         f.addRow('이미지 해상도', _row(self.b.bind(dpi, sp, 'dpi'), QLabel('dpi (PNG / TIFF)')))
         f.addRow('배경색', self.b.bind(ColorButton(), sp, 'background'))
+
+        lay_box = QGroupBox('배치 (그래프 위에서 끌어 옮기고 크기 조절)')
+        lf = QFormLayout(lay_box)
+        lf.addRow(self.b.bind(QCheckBox('그래프 영역 자동 배치'), sp, 'plot_auto'))
+        self.plot_edits = {k: self.b.bind(_dspin(lo, hi, 0.01, 3), sp, k)
+                           for k, lo, hi in (('plot_x', -0.5, 1.5), ('plot_y', -0.5, 1.5),
+                                             ('plot_w', 0.02, 2), ('plot_h', 0.02, 2))}
+        lf.addRow('영역 왼쪽·아래', _row(self.plot_edits['plot_x'], self.plot_edits['plot_y']))
+        lf.addRow('영역 너비·높이', _row(self.plot_edits['plot_w'], self.plot_edits['plot_h']))
+        lf.addRow(_row(self.b.bind(QCheckBox('제목 자동 위치'), sp, 'title_auto'),
+                       self.b.bind(QCheckBox('X 축 이름 자동 위치'), sp, 'xlabel_auto'),
+                       self.b.bind(QCheckBox('Y 축 이름 자동 위치'), sp, 'ylabel_auto')))
+        b = QPushButton('모두 자동 배치로')
+        b.clicked.connect(self.auto_layout)
+        lf.addRow(b)
+        lf.addRow(_hint('영역 값은 그림 전체에 대한 비율(0–1)입니다. 크기 핸들로 글자를 키우면 그 글꼴 크기가 '
+                        '바뀝니다 (축 이름은 X·Y가 같은 크기).'))
+        f.addRow(lay_box)
 
         self.cat_box = QGroupBox('막대 / 점 그림 / 상자 / 바이올린')
         cf = QFormLayout(self.cat_box)
@@ -594,13 +656,30 @@ class GraphWindow(QMainWindow):
             lo, hi = self.b.bind(FloatEdit(), ax, 'lo'), self.b.bind(FloatEdit(), ax, 'hi')
             auto.setToolTip('데이터에 맞춥니다. 칸에는 지금 쓰는 범위가 보입니다.')
             auto.toggled.connect(lambda on, w=which: self._auto_toggled(w, 'range', on))
-            f.addRow('범위', _row(lo, QLabel('–'), hi, auto))
+            f.addRow('최소 – 최대', _row(lo, QLabel('–'), hi, auto))
             sauto = self.b.bind(QCheckBox('자동'), ax, 'auto_step')
             step = self.b.bind(FloatEdit(), ax, 'step')
             sauto.setToolTip('보기 좋은 간격을 자동으로 고릅니다. 칸에는 지금 쓰는 간격이 보입니다.')
             sauto.toggled.connect(lambda on, w=which: self._auto_toggled(w, 'step', on))
             f.addRow('눈금 간격', _row(step, sauto))
             self.range_edits[which] = (lo, hi, auto, step, sauto)
+            unit = QComboBox()
+            unit.setEditable(True)
+            unit.addItems(['', 's', 'min', 'h', 'ms', 'µm', 'nm', 'mm', 'px', '%', 'a.u.', 'µm²'])
+            unit.setToolTip('축 이름 뒤 괄호 안에 붙는 단위')
+            self.b.bind(unit, ax, 'unit')
+            scale = self.b.bind(FloatEdit(), ax, 'scale')
+            scale.setToolTip('그릴 때 값에 곱하는 수. 예: 초 → 분 = 1/60, 0–1 → % = 100, px → µm = 픽셀 크기')
+            conv = QComboBox()
+            conv.setToolTip('자주 쓰는 단위 바꾸기: 배율과 단위를 함께 정합니다.')
+            for text, k, u in (('단위 바꾸기…', None, None), ('그대로 (× 1)', 1.0, None), ('s → min', 1 / 60, 'min'),
+                               ('min → s', 60.0, 's'), ('s → ms', 1000.0, 'ms'), ('min → h', 1 / 60, 'h'),
+                               ('0–1 → %', 100.0, '%'), ('% → 0–1', 0.01, ''), ('µm → nm', 1000.0, 'nm'),
+                               ('nm → µm', 0.001, 'µm')):
+                conv.addItem(text, (k, u))
+            conv.activated.connect(lambda i, c=conv, w=which: self._convert_unit(w, c))
+            f.addRow('단위', _row(unit, conv))
+            f.addRow('값 배율 (×)', _row(scale, QLabel('1/60 처럼 분수도 됩니다')))
             f.addRow(_row(self.b.bind(QCheckBox('로그 눈금'), ax, 'log'),
                           self.b.bind(QCheckBox('보조 눈금'), ax, 'minor')))
             f.addRow('눈금 방향', self.b.bind(_combo(G.TICK_DIRS), ax, 'tick_dir', data=True))
@@ -728,7 +807,20 @@ class GraphWindow(QMainWindow):
     def tables(self) -> dict:
         return {t.name: t for t in (self.data.tables if self.data else [])}
 
+    def state(self) -> dict:
+        """Settings plus the tables brought in from other analyses / CSV (for projects)."""
+        d = self.spec.to_dict()
+        d['_tables'] = [{'name': t.name, 'columns': list(t.columns), 'rows': [list(r) for r in t.rows]}
+                        for t in self.extra]
+        return d
+
+    def _with_extra(self, data):
+        have = {t.name for t in data.tables}
+        data.tables = list(data.tables) + [t for t in self.extra if t.name not in have]
+        return data
+
     def set_data(self, data: G.GraphData, keep_spec=False):
+        data = self._with_extra(data)
         self.data = data
         self.setWindowTitle(f'그래프 편집 · {data.title}')
         self.default_spec = data.spec.copy()
@@ -757,6 +849,12 @@ class GraphWindow(QMainWindow):
     def use_spec(self, d: dict):
         """Settings saved in a project: as they were when they still fit the
         data, else only their style."""
+        tabs = d.get('_tables') if isinstance(d, dict) else None
+        if tabs:
+            self.extra = [G.Table(str(t.get('name', '')), list(t.get('columns', [])), list(t.get('rows', [])))
+                          for t in tabs if isinstance(t, dict)]
+            if self.data is not None:
+                self._with_extra(self.data)
         spec = G.GraphSpec.from_dict(d)
         if self.data is not None and not self._spec_fits(spec, self.data):
             spec = G.apply_style(self.data.spec, spec)
@@ -1060,16 +1158,23 @@ class GraphWindow(QMainWindow):
     # ---- drawing --------------------------------------------------------------------------
 
     def eventFilter(self, obj, ev):
-        if obj is self.holder and ev.type() == ev.Type.Resize:
+        if obj is self.holder.viewport() and ev.type() == ev.Type.Resize:
             QTimer.singleShot(0, self._fit)
         return False
 
-    def _fit(self) -> bool:
-        """Show the figure at its saved proportions, as large as the pane allows."""
+    def _base_dpi(self) -> float:
         s = self.spec
-        aw, ah = max(self.holder.width() - 24, 50), max(self.holder.height() - 24, 50)
-        d = max(20.0, min(aw / s.width_in, ah / s.height_in))
+        vp = self.holder.viewport()
+        aw, ah = max(vp.width() - 16, 50), max(vp.height() - 16, 50)
+        return max(10.0, min(aw / s.width_in, ah / s.height_in))
+
+    def _fit(self) -> bool:
+        """Show the figure at its saved proportions: as large as the pane allows
+        times the zoom."""
+        s = self.spec
+        d = self._base_dpi() * self.zoom
         w, h = int(round(s.width_in * d)), int(round(s.height_in * d))
+        self.zoom_label.setText(f'{self.zoom * 100:.0f} %')
         if (w, h) == (self.canvas.width(), self.canvas.height()) and abs(self.fig._original_dpi - d) < 0.01:
             return False
         r = self.canvas.device_pixel_ratio or 1
@@ -1080,10 +1185,49 @@ class GraphWindow(QMainWindow):
         self.canvas.draw_idle()
         return True
 
+    def zoom_by(self, f, anchor=None):
+        """Zoom the preview; anchor (canvas px) stays under the mouse."""
+        z = min(20.0, max(0.1, self.zoom * f))
+        if abs(z - self.zoom) < 1e-9:
+            return
+        hs, vs = self.holder.horizontalScrollBar(), self.holder.verticalScrollBar()
+        if anchor is None:
+            anchor = (self.canvas.width() / 2, self.canvas.height() / 2)
+        fx = anchor[0] / max(self.canvas.width(), 1)
+        fy = anchor[1] / max(self.canvas.height(), 1)
+        vx, vy = anchor[0] - hs.value(), anchor[1] - vs.value()  # where it is in the viewport
+        self.zoom = z
+        if self._fit():
+            self.render()
+        hs.setValue(int(fx * self.canvas.width() - vx))
+        vs.setValue(int(fy * self.canvas.height() - vy))
+
+    def zoom_fit(self):
+        self.zoom = 1.0
+        if self._fit():
+            self.render()
+
+    def _follow_scale(self):
+        """A new value scale (unit change) also converts a manual range / tick
+        spacing, so the axis shows the same part of the data."""
+        for which in ('x', 'y'):
+            a = getattr(self.spec, which)
+            old = self._scales.get(which)
+            self._scales[which] = (id(a), a.scale)
+            if old is None or old[0] != id(a) or old[1] == a.scale or not old[1]:
+                continue
+            k = a.scale / old[1]
+            if not a.auto_range:
+                a.lo, a.hi = a.lo * k, a.hi * k
+            if not a.auto_step:
+                a.step = abs(a.step * k)
+
     def render(self):
         if self.data is None:
             return
+        self._follow_scale()
         self._fit()
+        self._overlay = []
         try:
             self.art = G.draw(self.fig, self.spec, self.tables())
         except Exception as exc:
@@ -1092,15 +1236,91 @@ class GraphWindow(QMainWindow):
             self.fig.text(0.5, 0.5, f'그릴 수 없습니다: {exc}', ha='center', va='center', color='#b35c00',
                           wrap=True)
             self.art = {}
-        self.canvas.draw_idle()
+        try:
+            self.canvas.draw()  # lay out, so the selection box knows where things are
+        except Exception:
+            traceback.print_exc()
+        self._draw_selection()
         self.b.busy = True
         try:
+            ax = self.art.get('ax')
+            if self.spec.plot_auto and ax is not None:  # the fields show where it is now
+                for k, v in zip(('plot_x', 'plot_y', 'plot_w', 'plot_h'), ax.get_position().bounds):
+                    setattr(self.spec, k, float(v))  # unchecking 자동 keeps it there
+                    self.plot_edits[k].setValue(float(v))
+            for e in self.plot_edits.values():
+                e.setEnabled(not self.spec.plot_auto)
             self._show_used()
         finally:
             self.b.busy = False
         self.fill_table()
 
-    # ---- mouse on the graph ---------------------------------------------------------------------
+    # ---- objects on the graph: select, move, resize ------------------------------------------------
+
+    def _artist(self, kind, i=None):
+        if kind == 'text':
+            texts = self.art.get('texts') or []
+            return texts[i] if i is not None and 0 <= i < len(texts) else None
+        if kind == 'plot':
+            return self.art.get('ax')
+        return self.art.get(kind)
+
+    def _bbox(self, kind, i=None):
+        a = self._artist(kind, i)
+        if a is None:
+            return None
+        try:
+            if kind == 'plot':
+                return a.bbox
+            return a.get_window_extent(self.canvas.get_renderer())
+        except Exception:
+            return None
+
+    def _handle_rect(self, bb):
+        r = HANDLE_PX * (self.canvas.device_pixel_ratio or 1)
+        return bb.x1 - r / 2, bb.y0 - r / 2, r
+
+    def _draw_selection(self):
+        """Dashed box around the selected object, with its resize handle (bottom right)."""
+        from matplotlib.patches import Rectangle
+        from matplotlib.transforms import IdentityTransform
+
+        for p in self._overlay:
+            try:
+                p.remove()
+            except Exception:
+                pass
+        self._overlay = []
+        if self.sel is None or not self.art:
+            self.canvas.draw_idle()
+            return
+        bb = self._bbox(*self.sel)
+        if bb is None:
+            self.sel = None
+            self.canvas.draw_idle()
+            return
+        t = IdentityTransform()
+        box = Rectangle((bb.x0, bb.y0), bb.width, bb.height, transform=t, fill=False, ec='#1e88e5',
+                        lw=1.0, ls='--', zorder=1000)
+        hx, hy, r = self._handle_rect(bb)
+        handle = Rectangle((hx, hy), r, r, transform=t, fc='#1e88e5', ec='white', lw=0.8, zorder=1001)
+        for p in (box, handle):
+            p.set_in_layout(False)
+            self.fig.add_artist(p)
+            self._overlay.append(p)
+        self.canvas.draw_idle()
+        self.statusBar().showMessage(f'선택: {OBJECT_NAMES.get(self.sel[0], self.sel[0])} — 끌어 옮기기, '
+                                     '모서리 핸들로 크기', 4000)
+
+    def _on_handle(self, event) -> bool:
+        if self.sel is None:
+            return False
+        bb = self._bbox(*self.sel)
+        if bb is None:
+            return False
+        hx, hy, r = self._handle_rect(bb)
+        pad = r * 0.6
+        return hx - pad <= event.x <= hx + r + pad and hy - pad <= event.y <= hy + r + pad
 
     def _hit(self, event):
         for i, t in reversed(list(enumerate(self.art.get('texts') or []))):
@@ -1113,68 +1333,232 @@ class GraphWindow(QMainWindow):
             a = self.art.get(k)
             if a is not None and a.get_text() and a.contains(event)[0]:
                 return k, None
+        ax = self.art.get('ax')
+        if ax is not None and ax.bbox.contains(event.x, event.y):
+            return 'plot', None
         return None, None
 
     def _axes_xy(self, x, y):
         return self.art['ax'].transAxes.inverted().transform((x, y))
 
+    @staticmethod
+    def _mods(event) -> set:
+        return set(getattr(event, 'modifiers', None) or ())
+
     def _press(self, event):
         if not self.art or event.x is None:
             return
-        kind, i = self._hit(event)
+        from PySide6.QtGui import QCursor
+
+        mods = self._mods(event)
+        if event.button == 2 or (event.button == 1 and 'alt' in mods and 'shift' in mods):
+            hs, vs = self.holder.horizontalScrollBar(), self.holder.verticalScrollBar()
+            self._drag = {'mode': 'pan', 'pos': QCursor.pos(), 'scroll': (hs.value(), vs.value())}
+            return
+        if event.button == 1 and mods & {'ctrl', 'cmd'}:
+            self._drag = {'mode': 'zoom', 'pos': QCursor.pos(), 'zoom': self.zoom,
+                          'anchor': self._qt_xy(event)}
+            return
         if event.button == 3:
             self._context_menu(event)
             return
         if event.button != 1:
             return
         if event.dblclick:
+            kind, i = self._hit(event)
             self._edit(kind, i, event)
             return
+        if self._on_handle(event):
+            self._start_drag('resize', *self.sel, event)
+            return
+        kind, i = self._hit(event)
+        self.sel = (kind, i) if kind else None
         if kind == 'text':
-            tb = self.spec.texts[i]
-            self._drag = ('text', i, self._axes_xy(event.x, event.y), (tb.x, tb.y))
             self._text_i = i
             self._fill_lists()
-        elif kind == 'legend':
+        self._draw_selection()
+        if kind:
+            self._start_drag('move', kind, i, event)
+
+    def _start_drag(self, mode, kind, i, event):
+        """Remember where the object was; things laid out automatically are
+        first pinned where they are now."""
+        sp = self.spec
+        ax = self.art['ax']
+        if kind == 'plot' and sp.plot_auto:
+            sp.plot_x, sp.plot_y, sp.plot_w, sp.plot_h = (float(v) for v in ax.get_position().bounds)
+            sp.plot_auto = False
+            self._pin_labels()
+            self.render()
+        elif kind in ('title', 'xlabel', 'ylabel') and getattr(sp, f'{kind}_auto'):
+            self._pin_label(kind)
+            self.render()
+        elif kind == 'legend' and mode == 'move':
             leg = self.art['legend']
             bb = leg.get_window_extent()
-            x0, y0 = self._axes_xy(bb.x0, bb.y0)
-            leg.set_loc('lower left')
-            leg.set_bbox_to_anchor((x0, y0), transform=self.art['ax'].transAxes)
-            self._drag = ('legend', None, self._axes_xy(event.x, event.y), (x0, y0))
+            sp.legend_x, sp.legend_y = (float(v) for v in self._axes_xy(bb.x0, bb.y0))
+            sp.legend_loc = 'custom'
+            self.render()
+        bb = self._bbox(kind, i)
+        orig = {
+            'text': lambda: (sp.texts[i].x, sp.texts[i].y, sp.texts[i].size),
+            'legend': lambda: (sp.legend_x, sp.legend_y, sp.legend_font.size),
+            'title': lambda: (sp.title_x, sp.title_y, sp.title_font.size),
+            'xlabel': lambda: (sp.xlabel_x, sp.xlabel_y, sp.label_font.size),
+            'ylabel': lambda: (sp.ylabel_x, sp.ylabel_y, sp.label_font.size),
+            'plot': lambda: (sp.plot_x, sp.plot_y, sp.plot_w, sp.plot_h),
+        }[kind]()
+        self._drag = {'mode': mode, 'kind': kind, 'i': i, 'x0': event.x, 'y0': event.y, 'orig': orig,
+                      'bbox': bb, 'moved': False}
+
+    def _pin_label(self, kind):
+        """Fix the title / an axis name where it is drawn now (axes fractions)."""
+        sp, a = self.spec, self.art.get(kind)
+        if a is None:
+            setattr(sp, f'{kind}_auto', False)
+            return
+        bb = a.get_window_extent(self.canvas.get_renderer())
+        if kind == 'title':
+            x, y = self._axes_xy((bb.x0 + bb.x1) / 2, bb.y0)
+        elif kind == 'xlabel':  # anchored at its top centre
+            x, y = self._axes_xy((bb.x0 + bb.x1) / 2, bb.y1)
+        else:  # y label (turned 90°): anchored at its right edge, middle
+            x, y = self._axes_xy(bb.x1, (bb.y0 + bb.y1) / 2)
+        setattr(sp, f'{kind}_x', float(x))
+        setattr(sp, f'{kind}_y', float(y))
+        setattr(sp, f'{kind}_auto', False)
+
+    def _pin_labels(self):
+        for k in ('title', 'xlabel', 'ylabel'):
+            if getattr(self.spec, f'{k}_auto') and self.art.get(k) is not None and self.art[k].get_text():
+                self._pin_label(k)
+
+    def _qt_xy(self, event):
+        r = self.canvas.device_pixel_ratio or 1
+        return event.x / r, self.canvas.height() - event.y / r
 
     def _motion(self, event):
+        from PySide6.QtGui import QCursor
+
+        d = self._drag
+        if d is None:
+            if event.x is None or not self.art:
+                return
+            if self._on_handle(event):
+                shape = Qt.CursorShape.SizeFDiagCursor
+            else:
+                kind, _ = self._hit(event)
+                shape = Qt.CursorShape.OpenHandCursor if kind else Qt.CursorShape.ArrowCursor
+            self.canvas.setCursor(shape)
+            return
+        if d['mode'] == 'pan':
+            p = QCursor.pos() - d['pos']
+            self.holder.horizontalScrollBar().setValue(d['scroll'][0] - p.x())
+            self.holder.verticalScrollBar().setValue(d['scroll'][1] - p.y())
+            return
+        if d['mode'] == 'zoom':
+            dy = d['pos'].y() - QCursor.pos().y()  # up = in
+            z = d['zoom'] * float(np.exp(dy * ZOOM_DRAG_RATE * self._zoom_sens()))
+            self.zoom_by(z / self.zoom, d['anchor'])
+            return
         if event.x is None:
             return
-        if self._drag is None:
-            kind, _ = self._hit(event) if self.art else (None, None)
-            self.canvas.setCursor(Qt.CursorShape.OpenHandCursor if kind in ('text', 'legend')
-                                  else Qt.CursorShape.ArrowCursor)
+        d['moved'] = True
+        dx, dy = event.x - d['x0'], event.y - d['y0']
+        self._apply_drag(d, dx, dy)
+
+    def _zoom_sens(self) -> float:
+        try:
+            from .settings import view_settings
+            return float(view_settings.value('zoom_drag'))
+        except Exception:
+            return 1.0
+
+    def _apply_drag(self, d, dx, dy):
+        """Write the dragged position / size into the spec and show it."""
+        import time
+
+        sp, kind, i, o = self.spec, d['kind'], d['i'], d['orig']
+        ax = self.art['ax']
+        fw, fh = self.fig.bbox.width, self.fig.bbox.height
+        aw, ah = max(ax.bbox.width, 1), max(ax.bbox.height, 1)
+        if d['mode'] == 'move':
+            if kind == 'plot':
+                sp.plot_x, sp.plot_y = o[0] + dx / fw, o[1] + dy / fh
+                ax.set_position((sp.plot_x, sp.plot_y, sp.plot_w, sp.plot_h))
+            else:
+                nx, ny = o[0] + dx / aw, o[1] + dy / ah
+                if kind == 'text':
+                    sp.texts[i].x, sp.texts[i].y = nx, ny
+                    self._artist('text', i).set_position((nx, ny))
+                elif kind == 'legend':
+                    sp.legend_x, sp.legend_y = nx, ny
+                    self.art['legend'].set_bbox_to_anchor((nx, ny), transform=ax.transAxes)
+                elif kind == 'title':
+                    sp.title_x, sp.title_y = nx, ny
+                    self.art['title'].set_position((nx, ny))
+                elif kind == 'xlabel':
+                    sp.xlabel_x, sp.xlabel_y = nx, ny
+                    ax.xaxis.set_label_coords(nx, ny)
+                elif kind == 'ylabel':
+                    sp.ylabel_x, sp.ylabel_y = nx, ny
+                    ax.yaxis.set_label_coords(nx, ny)
+            self._draw_selection()
             return
-        kind, i, start, orig = self._drag[:4]
-        p = self._axes_xy(event.x, event.y)
-        nx, ny = orig[0] + p[0] - start[0], orig[1] + p[1] - start[1]
+        # resize with the bottom-right handle
+        if kind == 'plot':
+            w = max(0.05, o[2] + dx / fw)
+            h = max(0.05, o[3] - dy / fh)
+            sp.plot_w, sp.plot_h = w, h
+            sp.plot_y = o[1] + o[3] - h  # the top edge stays
+            ax.set_position((sp.plot_x, sp.plot_y, sp.plot_w, sp.plot_h))
+            self._draw_selection()
+            return
+        bb = d['bbox']
+        f = max(0.2, (bb.width + dx) / max(bb.width, 1))
+        size = round(max(2.0, min(144.0, o[2] * f)), 1)
         if kind == 'text':
-            self.art['texts'][i].set_position((nx, ny))
+            sp.texts[i].size = size
+        elif kind == 'legend':
+            sp.legend_font.size = size
+        elif kind == 'title':
+            sp.title_font.size = size
         else:
-            self.art['legend'].set_bbox_to_anchor((nx, ny), transform=self.art['ax'].transAxes)
-        self._drag = (kind, i, start, orig, (nx, ny))
-        self.canvas.draw_idle()
+            sp.label_font.size = size
+        now = time.monotonic()
+        if now - self._last_live > 0.05:  # redraw at most 20 times a second
+            self._last_live = now
+            self.render()
 
     def _release(self, event):
-        if self._drag is None:
+        d, self._drag = self._drag, None
+        if d is None or d['mode'] in ('pan', 'zoom'):
             return
-        drag, self._drag = self._drag, None
-        if len(drag) < 5:
-            return  # a click without a move
-        kind, i, _, _, (nx, ny) = drag
-        if kind == 'text':
-            self.spec.texts[i].x, self.spec.texts[i].y = float(nx), float(ny)
-        else:
-            self.spec.legend_loc = 'custom'
-            self.spec.legend_x, self.spec.legend_y = float(nx), float(ny)
+        if not d['moved']:
+            return  # a click: selected only
         self.b.sync()
         self.render()
+        self._changed_no_redraw()
+
+    def _changed_no_redraw(self):
+        set_dirty = getattr(self.win, 'set_dirty', None)
+        if set_dirty is not None:
+            set_dirty()
+
+    def _scroll_ev(self, event):
+        mods = self._mods(event)
+        if mods & {'ctrl', 'cmd'}:
+            self.zoom_by(ZOOM_STEP if event.step > 0 else 1 / ZOOM_STEP, self._qt_xy(event))
+            return
+        bar = self.holder.horizontalScrollBar() if 'shift' in mods else self.holder.verticalScrollBar()
+        bar.setValue(int(bar.value() - event.step * 40))
+
+    def auto_layout(self):
+        sp = self.spec
+        sp.plot_auto = sp.title_auto = sp.xlabel_auto = sp.ylabel_auto = True
+        self.b.sync()
+        self.render()
+        self._changed_no_redraw()
 
     def _edit(self, kind, i, event):
         if kind == 'text':
@@ -1188,7 +1572,7 @@ class GraphWindow(QMainWindow):
                 self.spec.title = text
         elif kind in ('xlabel', 'ylabel'):
             a = self.spec.x if kind == 'xlabel' else self.spec.y
-            text, ok = QInputDialog.getText(self, '축 이름', '이름:', text=a.label)
+            text, ok = QInputDialog.getText(self, '축 이름', '이름 (단위는 ‘축’ 탭):', text=a.label)
             if ok:
                 a.label = text
         elif kind == 'legend':
@@ -1219,18 +1603,28 @@ class GraphWindow(QMainWindow):
 
     def _context_menu(self, event):
         x, y = self._axes_xy(event.x, event.y)
+        kind, i = self._hit(event)
         m = QMenu(self)
         m.addAction('여기에 글자 상자 추가…', lambda: self.add_text(x, y))
         m.addAction('범례를 여기로 옮기기', lambda: self._legend_here(x, y))
         m.addAction('범례 항목 추가', self.add_legend_item)
-        m.exec(self.canvas.mapToGlobal(self.canvas.rect().topLeft())
-               + self._qt_point(event))
+        if kind == 'text':
+            m.addAction('이 글자 상자 지우기', lambda: self._delete_text(i))
+        m.addSeparator()
+        m.addAction('모든 위치·크기 자동 배치로', self.auto_layout)
+        m.addAction('화면 맞춤', self.zoom_fit)
+        m.exec(self.canvas.mapToGlobal(self.canvas.rect().topLeft()) + self._qt_point(event))
+
+    def _delete_text(self, i):
+        self._text_i = i
+        self.sel = None
+        self.del_text()
 
     def _qt_point(self, event):
         from PySide6.QtCore import QPoint
 
-        r = self.canvas.device_pixel_ratio or 1
-        return QPoint(int(event.x / r), int(self.canvas.height() - event.y / r))
+        x, y = self._qt_xy(event)
+        return QPoint(int(x), int(y))
 
     def _legend_here(self, x, y):
         self.spec.legend_loc = 'custom'
@@ -1238,6 +1632,146 @@ class GraphWindow(QMainWindow):
         self.spec.legend_show = True
         self.b.sync()
         self.render()
+
+    def _convert_unit(self, which, combo):
+        k, u = combo.currentData() or (None, None)
+        combo.setCurrentIndex(0)
+        if k is None:
+            return
+        a = getattr(self.spec, which)
+        a.scale = a.scale * float(k) if k != 1.0 else 1.0  # s -> min twice = 1/3600
+        if u is not None:
+            a.unit = u
+        self.b.sync()
+        self._changed()
+
+    # ---- more data: other analyses, CSV ----------------------------------------------------------
+
+    def _sources(self) -> dict:
+        fn = getattr(self.win, 'graph_sources', None)
+        return fn(all_data=True) if fn is not None else {}
+
+    def _fill_import_menu(self):
+        m = self.import_menu
+        m.clear()
+        for key, (title, _tab, _fn, _hint) in self._sources().items():
+            m.addAction(title, lambda k=key: self.import_source(k))
+        if m.isEmpty():
+            m.addAction('(없음)').setEnabled(False)
+
+    def _import_popup(self):
+        from PySide6.QtGui import QCursor
+
+        self._fill_import_menu()
+        self.import_menu.exec(QCursor.pos())
+
+    def add_tables(self, title, tables, make_series=True) -> list:
+        """Add tables (names prefixed with title) to this graph's data; with
+        make_series, a series of the first one in the selected series' style."""
+        if self.data is None:
+            self.data = G.GraphData(title, [], G.GraphSpec())
+        have = {t.name for t in self.data.tables}
+        added = []
+        for t in tables:
+            name = f'{title} · {t.name}' if title else t.name
+            base, k = name, 2
+            while name in have:
+                name = f'{base} ({k})'
+                k += 1
+            have.add(name)
+            nt = G.Table(name, list(t.columns), [list(r) for r in t.rows])
+            self.data.tables.append(nt)
+            self.extra.append(nt)
+            added.append(nt)
+        if make_series and added:
+            t = added[0]
+            nums = t.numeric_columns()
+            base = self.cur_series()
+            s = G.Series(**asdict(base)) if base is not None else G.Series(style='line+marker')
+            s.table, s.label = t.name, t.name
+            s.where = s.equals = s.where2 = s.equals2 = s.split = s.err = s.z = s.agg_by = ''
+            s.agg = 'none'
+            texts = [c for c in t.columns if c not in nums]
+            if self.spec.chart in G.CATEGORY_CHARTS:
+                s.x = next((c for c in ('group', 'image', 'roi') if c in t.columns), texts[0] if texts else '')
+                s.y = nums[0] if nums else ''
+            else:
+                s.x = nums[0] if nums else ''
+                s.y = nums[1] if len(nums) > 1 else (nums[0] if nums else '')
+            s.color = G.PALETTE[len(self.spec.series) % len(G.PALETTE)]
+            s.visible = True
+            self.spec.series.append(s)
+            self._series_i = len(self.spec.series) - 1
+        self._fill_lists()
+        self.sync()
+        self.render()
+        self.table_pick.setCurrentIndex(max(self.table_pick.findData(('table', added[0].name)), 0)
+                                        if added else 0)
+        return added
+
+    def import_source(self, key):
+        title, _tab, fn, hint = self._sources()[key]
+        try:
+            data = fn()
+        except Exception as exc:
+            traceback.print_exc()
+            QMessageBox.warning(self, '데이터 가져오기', f'데이터를 만들지 못했습니다: {exc}')
+            return []
+        if data is None or not data.tables:
+            QMessageBox.information(self, '데이터 가져오기', hint)
+            return []
+        added = self.add_tables(title, data.tables)
+        self._status(f'{title}: 표 {len(added)}개를 가져와 시리즈를 하나 추가했습니다 (데이터 시리즈 탭에서 '
+                     f'x·y 열을 고르세요).')
+        self.editor.setCurrentIndex(1)
+        return added
+
+    def import_csv(self, path=None):
+        import csv
+
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(self, 'CSV 불러오기', self._default(''), 'CSV (*.csv *.txt)')
+            if not path:
+                return []
+        try:
+            with open(path, newline='', encoding='utf-8-sig') as f:
+                sample = f.read(4096)
+                f.seek(0)
+                try:
+                    dialect = csv.Sniffer().sniff(sample, delimiters=',;\t')
+                except csv.Error:
+                    dialect = csv.excel
+                rows = list(csv.reader(f, dialect))
+        except Exception as exc:
+            QMessageBox.warning(self, 'CSV 불러오기', str(exc))
+            return []
+        if not rows:
+            QMessageBox.information(self, 'CSV 불러오기', '빈 파일입니다.')
+            return []
+        head = rows[0]
+
+        def conv(v):
+            x = G._num(v)
+            return x if v.strip() and np.isfinite(x) else v
+
+        t = G.Table(Path(path).stem, head, [[conv(v) for v in r] for r in rows[1:]])
+        added = self.add_tables('CSV', [t])
+        self._status(f'CSV {Path(path).name}: {len(t.rows)}행을 가져왔습니다.')
+        return added
+
+    def remove_table(self):
+        if self.data is None or not self.data.tables:
+            return
+        names = [t.name for t in self.data.tables]
+        name, ok = QInputDialog.getItem(self, '표 지우기', '이 그래프에서 뺄 표 (그 표를 쓰는 시리즈도 지웁니다):',
+                                        names, len(names) - 1, False)
+        if not ok:
+            return
+        self.data.tables = [t for t in self.data.tables if t.name != name]
+        self.extra = [t for t in self.extra if t.name != name]
+        self.spec.series = [s for s in self.spec.series if s.table != name]
+        self._series_i = min(self._series_i, len(self.spec.series) - 1)
+        self._after_list_change()
 
     # ---- the data table -----------------------------------------------------------------------
 

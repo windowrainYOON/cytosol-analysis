@@ -564,7 +564,12 @@ heat map), x / y / error columns, filters, per-value split and mean / median agg
 every series' color, line and marker shape and size, error bar look, axis ranges and tick
 spacing (automatic by default, the values in use shown), log axes, fonts (family, size,
 bold, italic, color), legend (position, title, extra entries) and text boxes can be
-changed; text boxes and the legend are dragged on the graph. Exports: PNG / TIFF / PDF /
+changed. The plot area, title, axis labels, text boxes and legend are objects moved and
+resized on the graph (resize handle; font size for text), the preview zooms like the image
+preview (`Cmd`/`Ctrl`+drag, `[` `]`, `Cmd`/`Ctrl`+wheel), each axis has min / max, tick
+spacing, unit and value scale (e.g. s → min), and any window can take in the results of other
+analyses (or a CSV) from its 데이터 menu; View › 그래프 편집 창 › 새 그래프 opens an empty
+one. Exports: PNG / TIFF / PDF /
 SVG, the plotted data, a selected series, the summary (n, mean, SD, SEM, …) and every result
 table as CSV, and the settings as JSON (`format: cytosol-viewer-graph`, also loadable as a
 style only). Code: `cytosol.graph` (model, drawing), `cytosol.graph_window`,
