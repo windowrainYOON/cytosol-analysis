@@ -1468,11 +1468,14 @@ def run(out_dir) -> int:
         app.processEvents()
         if 'n=3' not in fp.summary.text():
             raise AssertionError(f'FRAP group summary: {fp.summary.text()}')
-        # each group scaled on its own: mean pre-bleach = 1, first post-bleach frame = 0
+        # every image normalized on its own (pre-bleach = 1, first post-bleach frame = 0), then averaged
         g0 = fp.groups()[0]
-        if (not fp.group_norm.isChecked() or g0.normalize != 'group' or abs(g0.mean[g0.offset == 0][0]) > 1e-9
-                or abs(np.nanmean(g0.mean[g0.offset < 0]) - 1) > 1e-9):
-            raise AssertionError(f'FRAP group normalization: {g0.normalize}, {g0.mean[:7]}')
+        for c in g0.members:
+            if c.normalize != 'full' or abs(c.values[c.bleach_frame]) > 1e-9 \
+                    or abs(np.mean(c.values[:c.bleach_frame]) - 1) > 1e-9:
+                raise AssertionError(f'FRAP per-image normalization: {c.normalize}, {c.values[:7]}')
+        if abs(g0.mean[g0.offset == 0][0]) > 1e-9:
+            raise AssertionError(f'FRAP group mean of normalized images: {g0.mean[:7]}')
         # groups picked for the graph
         box = fp._group_checks.get('WT')
         if box is None or not fp._group_pick.isVisibleTo(fp):

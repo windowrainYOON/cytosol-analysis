@@ -36,7 +36,7 @@ feature is added; keep the bracketed words only when the 입자 ROI tab's
 > the unbleached part of the bleached condensate), each after subtracting a
 > background region of the bleach region's size (double normalisation,
 > Phair et al., 2004) and scaled to 1 before and 0 right after bleaching
-> (full-scale normalisation; for group means, of each group's mean curve), with ROI means as in ImageJ's Measure function and
+> (full-scale normalisation of each image's curve before averaging), with ROI means as in ImageJ's Measure function and
 > the ROIs moved on every frame by the lateral drift found by sub-pixel
 > cross-correlation with a key frame (as in Fiji's Correct 3D Drift plugin),
 > and fitted with ImageJ's Curve Fitter "Exponential recovery" function

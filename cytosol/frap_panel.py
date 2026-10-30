@@ -244,13 +244,7 @@ class FrapPanel(QWidget):
         self.fit.setChecked(True)
         self.fit.setToolTip('y = a·(1 − e^(−k·t)) + c (ImageJ Exponential recovery), bleach 후 프레임')
         self.members = QCheckBox('개별 곡선도 표시')
-        self.group_norm = QCheckBox('그룹별로 정규화 (bleach 전 = 1, 직후 = 0)')
-        self.group_norm.setChecked(True)
-        self.group_norm.setToolTip(
-            '그룹마다 따로: 이미지마다 bleach 전 값으로 나눈 곡선(R / R_pre)을 평균한 뒤, 그 평균 곡선을 '
-            'bleach 전 = 1, bleach 직후 = 0이 되게 맞춥니다 (SD·SEM도 같은 비율로). 끄면 이미지마다 정규화한 '
-            '곡선의 평균입니다.')
-        for w in (self.error, self.fit, self.members, self.group_norm):
+        for w in (self.error, self.fit, self.members):
             (w.toggled if isinstance(w, QCheckBox) else w.currentIndexChanged).connect(self._replot)
             opts.addWidget(w)
         pl.addLayout(opts)
@@ -638,7 +632,7 @@ class FrapPanel(QWidget):
             if prog is not None:
                 prog.setValue(len(items))
         order = [g for g in self.win.groups() if g in by] + [g for g in by if g not in self.win.groups()]
-        return [frap.group_curve(g, by[g], self.group_norm.isChecked()) for g in order]
+        return [frap.group_curve(g, by[g]) for g in order]
 
     def hidden_groups(self) -> set:
         try:
@@ -707,12 +701,6 @@ class FrapPanel(QWidget):
             warn = ' (n < 3)' if len(g.members) < 3 else ''
             lines.append(f'<b>{g.name}</b> n={len(g.members)}{warn}: Mobile {f("mobile_fraction")}, '
                          f't½ {f("half_time_s")} s, 최종 회복 {f("final_recovery", 100)} %')
-            if g.normalize == 'group':
-                fit = g.fit
-                last = g.mean[np.isfinite(g.mean)][-1] if np.isfinite(g.mean).any() else np.nan
-                fit_text = (f'Mobile {fit.mobile:.3g}, t½ {fit.half_time:.3g} s' if fit is not None and fit.ok
-                            else '피팅값 없음')
-                lines.append(f'&nbsp;&nbsp;그룹 평균 곡선: {fit_text}, 마지막 {last * 100:.3g} %')
         self.summary.setText('<br>'.join(lines))
 
     def _view_changed(self, _):
@@ -1007,7 +995,7 @@ class FrapPanel(QWidget):
         c = curves[0] if curves else None
         return frap.write_formulas(path, c.normalize if c else self._norm(), c.drift_mode if c else '',
                                    c.control_source if c else self.control_src.currentData(),
-                                   self.error.currentData(), self.group_norm.isChecked())
+                                   self.error.currentData())
 
     def save_all(self, out=None, ask=True, items=None) -> list[str]:
         """요약 저장: every image measured; per image the curve CSV, graph and
