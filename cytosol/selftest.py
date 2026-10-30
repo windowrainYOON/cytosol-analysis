@@ -1504,15 +1504,20 @@ def run(out_dir) -> int:
         if abs(g0.mean[g0.offset == 0][0]) > 1e-9:
             raise AssertionError(f'FRAP group mean of normalized images: {g0.mean[:7]}')
         # groups picked for the graph
-        box = fp._group_checks.get('WT')
-        if box is None or not fp._group_pick.isVisibleTo(fp):
-            raise AssertionError(f'FRAP group check boxes: {list(fp._group_checks)}')
-        box.setChecked(False)
+        rows = fp.group_rows()
+        box = rows.get('WT')
+        if box is None or not fp._group_pick.isVisibleTo(fp) or fp.group_table.item(0, 1).text() != '3':
+            raise AssertionError(f'FRAP group table: {list(rows)}')
+        from PySide6.QtCore import Qt
+
+        box.setCheckState(Qt.CheckState.Unchecked)
         app.processEvents()
         if fp.shown(fp.groups()) or 'WT' not in fp.hidden_groups():
             raise AssertionError('FRAP group not hidden from the graph')
-        box.setChecked(True)
+        fp._tick_all(True)
         app.processEvents()
+        if fp.hidden_groups() or rows['WT'].checkState() != Qt.CheckState.Checked:
+            raise AssertionError('FRAP groups not all shown again')
         files = fp.save_all(out / 'frap', ask=False)
         names = {Path(f).name for f in files}
         need = {'frap_summary.csv', 'frap_summary.png', 'frap_groups.png', 'frap_group_curves.csv',
