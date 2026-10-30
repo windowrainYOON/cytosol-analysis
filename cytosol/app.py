@@ -1792,12 +1792,18 @@ class MainWindow(QMainWindow):
 
     # ---- graph editor windows (그래프 편집 창) -------------------------------------
 
-    def graph_sources(self) -> dict:
-        """key -> (title, tab name, fn returning GraphData or None, hint when None)."""
+    def graph_sources(self, all_data=False) -> dict:
+        """key -> (title, tab name, fn returning GraphData or None, hint when None);
+        all_data adds results that have no tab graph (일괄 분석), for a graph
+        window's 데이터 › 다른 분석 결과 가져오기."""
         from . import graph_sources as S
 
         rp, pp, ip = self.roi_panel, self.particle_panel, self.intensity_panel
-        return {
+        extra = {}
+        if all_data:
+            extra['batch'] = ('일괄 분석 결과', None, lambda: S.batch(self.batch),
+                              '파일 › 일괄 분석을 먼저 실행하세요.')
+        return extra | {
             'roi': ('세포질 ROI 측정', 'roi_tab', lambda: S.measure(rp.measure, '세포질 ROI 측정'),
                     '세포질 ROI 탭에서 먼저 측정하세요.'),
             'particle': ('입자 ROI 측정', 'particle_tab', lambda: S.measure(pp.measure, '입자 ROI 측정'),
@@ -1835,9 +1841,34 @@ class MainWindow(QMainWindow):
             b.clicked.connect(lambda _=False, k=key: self.open_graph(k))
             lay.insertWidget(lay.indexOf(w) + 1, b)
 
+    def open_blank_graph(self, key=None, show=True):
+        """An empty graph window, filled from 데이터 › 다른 분석 결과 / CSV."""
+        from . import graph as G
+        from .graph_window import GraphWindow
+
+        if key is None:
+            n = 1
+            while f'free{n}' in self.graph_wins:
+                n += 1
+            key = f'free{n}'
+        title = f'새 그래프 {key[4:]}'
+        w = GraphWindow(self, key, title, lambda: None)
+        self.graph_wins[key] = w
+        w.set_data(G.GraphData(title, [], G.GraphSpec(title='')))
+        if show:
+            w.show()
+            w.raise_()
+        return w
+
     def open_graph(self, key):
         from .graph_window import GraphWindow
 
+        if key.startswith('free'):
+            w = self.graph_wins.get(key)
+            if w is not None:
+                w.show()
+                w.raise_()
+            return w
         title, tab, fn, hint = self.graph_sources()[key]
         try:
             data = fn()
@@ -1882,6 +1913,8 @@ class MainWindow(QMainWindow):
             w = self.graph_wins.get(key)
             mark = ' (열림)' if w is not None and w.isVisible() else ''
             m.addAction(f'{title}{mark}', lambda k=key: self.open_graph(k))
+        m.addSeparator()
+        m.addAction('새 그래프 (빈 창, 아무 분석 결과나 CSV를 가져와 그리기)…', self.open_blank_graph)
 
     def _measure_menu(self, menu, box):
         self._act(menu, '측정 CSV 저장 (현재 이미지)…', box.save_current)
@@ -2329,7 +2362,7 @@ class MainWindow(QMainWindow):
             if self.figure_win is not None:
                 data['figure'] = figure_dict(self.figure_win.spec, self.items, files)
                 data['figure_widgets'] = widget_state(self.figure_win)
-            data['graphs'] = dict(self.graph_specs) | {k: w.spec.to_dict() for k, w in self.graph_wins.items()}
+            data['graphs'] = dict(self.graph_specs) | {k: w.state() for k, w in self.graph_wins.items()}
             data['log'] = self.worklog.entries
             data['batch'] = self.batch.to_dict()
             write_project(path, data, files)
@@ -2388,7 +2421,9 @@ class MainWindow(QMainWindow):
         graphs = data.get('graphs') or {}
         if isinstance(graphs, dict):
             for key, spec in graphs.items():
-                if key in self.graph_wins:
+                if key.startswith('free') and key not in self.graph_wins and isinstance(spec, dict):
+                    self.open_blank_graph(key, show=False).use_spec(spec)
+                elif key in self.graph_wins:
                     self.graph_wins[key].use_spec(spec)
                 elif isinstance(spec, dict):
                     self.graph_specs[key] = spec

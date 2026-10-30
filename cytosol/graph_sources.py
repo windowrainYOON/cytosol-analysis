@@ -308,3 +308,14 @@ def coloc(panel) -> G.GraphData | None:
     spec.x.label, spec.y.label = 'ROI', y
     spec.x.rotation = 45 if len(recs) > 6 else 0
     return G.GraphData('Coloc 2 · ROI별 결과', tables, spec, _stem(it, 'coloc2'), _folder(it))
+
+
+# ---- 일괄 분석 ------------------------------------------------------------------------------------
+
+def batch(state) -> G.GraphData | None:
+    """The batch results (one row per image) as a table."""
+    res = getattr(state, 'results', None) or {}
+    if not res:
+        return None
+    rows = [{'image': label} | dict(vals) for label, vals in res.items()]
+    return G.measure_graph(rows, '일괄 분석 결과', 'batch', '')

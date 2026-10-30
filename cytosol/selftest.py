@@ -1782,6 +1782,93 @@ def run(out_dir) -> int:
         if md.spec.chart != 'bar' or [r[2] for r in summ.rows] != [2, 2] or summ.rows[1][3] != 2.5:
             raise AssertionError(f'measure graph summary {summ.rows}')
         G.save_figure(gdir / 'measure.png', md.spec, md.tables)
+        # every object on the graph can be moved and resized; the preview zooms
+        ow = win.open_graph('frap')
+        ow.reset_spec()
+        ow.spec.title = 'FRAP'
+        ow.sync()
+        ow.render()
+
+        def mouse(kind, x, y):
+            ev = MouseEvent(kind, ow.canvas, x, y, button=1)
+            {'button_press_event': ow._press, 'motion_notify_event': ow._motion,
+             'button_release_event': ow._release}[kind](ev)
+
+        def drag_px(x, y, dx, dy):
+            mouse('button_press_event', x, y)
+            mouse('motion_notify_event', x + dx, y + dy)
+            mouse('button_release_event', x + dx, y + dy)
+
+        bb = ow.art['ax'].bbox
+        drag_px((bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2, 20, 10)
+        if ow.spec.plot_auto or ow.sel != ('plot', None):
+            raise AssertionError('plot area not selected / moved')
+        x0, w0 = ow.spec.plot_x, ow.spec.plot_w
+        bb = ow.art['ax'].bbox
+        drag_px(bb.x1, bb.y0, 30, -10)  # the resize handle
+        if not ow.spec.plot_w > w0 + 0.01 or abs(ow.spec.plot_x - x0) > 1e-9:
+            raise AssertionError(f'plot area not resized {w0} -> {ow.spec.plot_w}')
+        for kind in ('xlabel', 'ylabel', 'title'):
+            b = ow.art[kind].get_window_extent(ow.canvas.get_renderer())
+            drag_px((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, 12, 8)
+            if getattr(ow.spec, f'{kind}_auto'):
+                raise AssertionError(f'{kind} not moved')
+        size0 = ow.spec.title_font.size
+        b = ow.art['title'].get_window_extent(ow.canvas.get_renderer())
+        drag_px((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, 0, 0)  # select
+        drag_px(b.x1, b.y0, 40, 0)
+        if not ow.spec.title_font.size > size0:
+            raise AssertionError('title not resized')
+        ow.auto_layout()
+        if not (ow.spec.plot_auto and ow.spec.title_auto and ow.spec.xlabel_auto):
+            raise AssertionError('auto layout')
+        w1 = ow.canvas.width()
+        ow.zoom_by(2.0)
+        if not ow.canvas.width() > 1.8 * w1:
+            raise AssertionError(f'zoom {w1} -> {ow.canvas.width()}')
+        ow.zoom_fit()
+        if abs(ow.canvas.width() - w1) > 2:
+            raise AssertionError('zoom fit')
+        # axis unit and value scale (s -> min)
+        xmax = float(np.nanmax(G.xy_parts(ow.spec.series[0], ow.tables())[0]['x']))
+        ow.spec.x.unit, ow.spec.x.scale = 'min', 1 / 60
+        ow.render()
+        if '(min)' not in ow.art['ax'].get_xlabel() or ow.art['ax'].get_xlim()[1] > xmax / 60 * 1.3:
+            raise AssertionError(f'axis unit / scale {ow.art["ax"].get_xlabel()} {ow.art["ax"].get_xlim()}')
+        ow.spec.x.unit, ow.spec.x.scale = '', 1.0
+        ow.render()
+        if ow.art['ax'].get_xlim()[1] < xmax:
+            raise AssertionError('manual range not converted back with the scale')
+        ow.spec.x.auto_range, ow.spec.x.lo, ow.spec.x.hi = False, 0.0, 10.0
+        ow.render()
+        if ow.art['ax'].get_xlim() != (0.0, 10.0):
+            raise AssertionError('axis min / max')
+        ow.reset_spec()
+        # data from other analyses and CSV files, also in a blank window
+        n0 = len(ow.spec.series)
+        added = ow.import_source('profile')
+        if not added or len(ow.spec.series) != n0 + 1 or ow.spec.series[-1].table != added[0].name:
+            raise AssertionError('import from another analysis')
+        csvp = gdir / 'free.csv'
+        csvp.write_text('t,value,kind\n0,1.5,a\n1,2.5,a\n2,3.0,b\n', encoding='utf-8')
+        bw = win.open_blank_graph()
+        bw.render()
+        bt = bw.import_csv(str(csvp))
+        if not bt or bw.spec.series[-1].x != 't' or bw.spec.series[-1].y != 'value' or bw.art.get('ax') is None:
+            raise AssertionError('CSV import')
+        bw.import_source('frap')
+        if len(bw.tables()) < 2:
+            raise AssertionError('blank window import')
+        key = bw.key
+        st = bw.state()
+        bw.close()
+        win.graph_wins.pop(key)
+        win._apply_project_settings({'graphs': {key: st}})
+        rw = win.graph_wins.get(key)
+        if rw is None or set(rw.tables()) != set(bw.tables()) or len(rw.spec.series) != len(bw.spec.series):
+            raise AssertionError('blank graph window not restored')
+        ow.close()
+        win.graph_wins.pop('frap', None)
         # graph settings are saved in the project and used when the window opens again
         from .project import read_project
         fw = win.open_graph('frap')  # the tab shows the recovery curve again

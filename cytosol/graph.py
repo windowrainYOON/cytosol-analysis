@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
@@ -182,6 +183,16 @@ class Axis:
     minor: bool = False
     tick_dir: str = 'out'
     rotation: float = 0.0
+    unit: str = ''       # shown after the name: 'Time (min)'
+    scale: float = 1.0   # values are multiplied by this (unit change, e.g. s -> min = 1/60)
+
+    def title(self) -> str:
+        """The axis name with its unit; a unit already in brackets at the end
+        of the name is replaced."""
+        if not self.unit:
+            return self.label
+        base = re.sub(r'\s*[(\[][^()\[\]]*[)\]]\s*$', '', self.label)
+        return f'{base} ({self.unit})' if base else self.unit
 
 
 @dataclass
@@ -241,6 +252,21 @@ class GraphSpec:
     legend_font: Font = field(default_factory=lambda: Font(8.0))
     width_in: float = 5.0
     height_in: float = 3.6
+    # where the parts sit: automatic, or moved / resized on the graph
+    plot_auto: bool = True   # plot area laid out automatically
+    plot_x: float = 0.15     # plot area: left, bottom, width, height (figure fractions)
+    plot_y: float = 0.15
+    plot_w: float = 0.75
+    plot_h: float = 0.7
+    title_auto: bool = True
+    title_x: float = 0.5     # axes fractions (centre, bottom of the text)
+    title_y: float = 1.03
+    xlabel_auto: bool = True
+    xlabel_x: float = 0.5
+    xlabel_y: float = -0.12
+    ylabel_auto: bool = True
+    ylabel_x: float = -0.12
+    ylabel_y: float = 0.5
     dpi: int = 300
     background: str = '#ffffff'
     spine_top: bool = False
@@ -328,7 +354,7 @@ def apply_style(spec: GraphSpec, style: GraphSpec) -> GraphSpec:
     out.title = spec.title
     for a in ('x', 'y'):  # ranges and ticks belong to the data
         mine, theirs = getattr(out, a), getattr(spec, a)
-        for k in ('label', 'auto_range', 'lo', 'hi', 'auto_step', 'step', 'log'):
+        for k in ('label', 'auto_range', 'lo', 'hi', 'auto_step', 'step', 'log', 'unit', 'scale'):
             setattr(mine, k, getattr(theirs, k))
     out.texts = [TextBox(**asdict(t)) for t in spec.texts]
     out.legend_items = [LegendItem(**asdict(t)) for t in spec.legend_items]
@@ -385,7 +411,7 @@ def _err(vals: np.ndarray, kind: str) -> float:
     return sem if kind == 'sem' else 1.96 * sem
 
 
-def xy_parts(s: Series, tables: dict) -> list[dict]:
+def xy_parts(s: Series, tables: dict, sx=1.0, sy=1.0) -> list[dict]:
     """[{key, x, y, err, n}]: one part per split value (one part without split);
     x, y numeric; non-numeric x become 0, 1, … with the names in 'ticks'."""
     t, rows = _rows_of(s, tables)
@@ -442,13 +468,18 @@ def xy_parts(s: Series, tables: dict) -> list[dict]:
                 an.append(int(fin.sum()))
             x, y, n = np.array(ax_), np.array(ay), np.array(an)
             e = np.array(ae) if s.agg_err != 'none' else None
+        if numeric_x and sx != 1:
+            x = x * sx
+        if sy != 1:
+            y = y * sy
+            e = e * abs(sy) if e is not None else None
         order = np.argsort(x, kind='stable')
         parts.append({'key': key, 'x': x[order], 'y': y[order],
                       'err': e[order] if e is not None else None, 'n': n[order], 'ticks': cats})
     return parts
 
 
-def category_values(s: Series, tables: dict) -> dict:
+def category_values(s: Series, tables: dict, sy=1.0) -> dict:
     """{category: values} of a bar / box / violin / strip series (x '' = one
     category named after the series)."""
     t, rows = _rows_of(s, tables)
@@ -460,7 +491,7 @@ def category_values(s: Series, tables: dict) -> dict:
     for i in rows:
         k = _text(cat[i]) if cat is not None else (s.label or s.y)
         out.setdefault(k, []).append(yv[i])
-    return {k: np.array(v, float) for k, v in out.items()}
+    return {k: np.array(v, float) * sy for k, v in out.items()}
 
 
 def categories(spec: GraphSpec, tables: dict) -> list:
@@ -482,14 +513,15 @@ def plotted_table(spec: GraphSpec, tables: dict, only=None) -> Table:
         rows = []
         for i in pick:
             s = spec.series[i]
-            for c, v in category_values(s, tables).items():
+            for c, v in category_values(s, tables, spec.y.scale).items():
                 rows += [[_label(s, i), c, float(x)] for x in v]
         return Table('그래프에 쓰인 데이터', ['series', 'category', 'value'], rows)
     if spec.chart == 'hist':
         rows = []
         for i in pick:
             s = spec.series[i]
-            v = np.concatenate([p['y'] for p in xy_parts(_no_agg(s), tables)] or [np.zeros(0)])
+            v = np.concatenate([p['y'] for p in xy_parts(_no_agg(s), tables, sy=spec.x.scale)]
+                               or [np.zeros(0)])
             v = v[np.isfinite(v)]
             if not v.size:
                 continue
@@ -506,17 +538,17 @@ def plotted_table(spec: GraphSpec, tables: dict, only=None) -> Table:
             if t is None:
                 continue
             if s.z:
-                xs, ys, zs = t.numbers(s.x), t.numbers(s.y), t.numbers(s.z)
+                xs, ys, zs = t.numbers(s.x) * spec.x.scale, t.numbers(s.y) * spec.y.scale, t.numbers(s.z)
                 rows += [[_label(s, i), xs[j], ys[j], zs[j]] for j in idx]
             else:
-                for p in xy_parts(s, tables):
+                for p in xy_parts(s, tables, spec.x.scale, spec.y.scale):
                     rows += [[_label(s, i), a, b, ''] for a, b in zip(p['x'], p['y'])]
         return Table('그래프에 쓰인 데이터', ['series', 'x', 'y', 'z'], rows)
     rows = []
     agg = any(spec.series[i].agg != 'none' for i in pick)
     for i in pick:
         s = spec.series[i]
-        for p in xy_parts(s, tables):
+        for p in xy_parts(s, tables, spec.x.scale, spec.y.scale):
             ticks = p['ticks']
             for j in range(len(p['x'])):
                 xv = ticks[int(p['x'][j])] if ticks else float(p['x'][j])
@@ -531,7 +563,7 @@ def summary_table(spec: GraphSpec, tables: dict, only=None) -> Table:
     for i, s in enumerate(spec.series):
         if not s.visible or (only is not None and i not in only):
             continue
-        for c, v in category_values(s, tables).items():
+        for c, v in category_values(s, tables, spec.y.scale).items():
             v = v[np.isfinite(v)]
             n = int(v.size)
             rows.append([_label(s, i), c, n,
@@ -570,14 +602,14 @@ def _ls(s: Series):
     return 'none' if s.line_style == 'none' else s.line_style
 
 
-def _draw_xy(ax, s: Series, i, tables, handles):
+def _draw_xy(ax, s: Series, i, tables, handles, sx=1.0, sy=1.0):
     from matplotlib.lines import Line2D
 
     color = s.color or PALETTE[i % len(PALETTE)]
     ecolor = s.err_color or color
     first = True
     ticks = []
-    for p in xy_parts(s, tables):
+    for p in xy_parts(s, tables, sx, sy):
         x, y, e = p['x'], p['y'], p['err']
         ticks = p['ticks'] or ticks
         if not len(x):
@@ -620,7 +652,7 @@ def _draw_categories(ax, spec: GraphSpec, tables, handles):
     for j, (i, s) in enumerate(shown):
         color = s.color or PALETTE[i % len(PALETTE)]
         ecolor = s.err_color or color
-        vals = category_values(s, tables)
+        vals = category_values(s, tables, spec.y.scale)
         pos, data = [], []
         for k, c in enumerate(cats):
             if c in vals:
@@ -684,7 +716,7 @@ def _draw_hist(ax, spec: GraphSpec, tables, handles):
         if not s.visible:
             continue
         color = s.color or PALETTE[i % len(PALETTE)]
-        v = np.concatenate([p['y'] for p in xy_parts(_no_agg(s), tables)] or [np.zeros(0)])
+        v = np.concatenate([p['y'] for p in xy_parts(_no_agg(s), tables, sy=spec.x.scale)] or [np.zeros(0)])
         v = v[np.isfinite(v)]
         if not v.size:
             continue
@@ -705,7 +737,8 @@ def _draw_heatmap(fig, ax, spec: GraphSpec, tables, handles):
         t, idx = _rows_of(s, tables)
         if first and t is not None and s.z and s.z in t.columns:
             first = False
-            xs, ys, zs = t.numbers(s.x)[idx], t.numbers(s.y)[idx], t.numbers(s.z)[idx]
+            xs, ys, zs = (t.numbers(s.x)[idx] * spec.x.scale, t.numbers(s.y)[idx] * spec.y.scale,
+                          t.numbers(s.z)[idx])
             ux, uy = np.unique(xs[np.isfinite(xs)]), np.unique(ys[np.isfinite(ys)])
             if not ux.size or not uy.size:
                 continue
@@ -729,7 +762,7 @@ def _draw_heatmap(fig, ax, spec: GraphSpec, tables, handles):
                 cb.set_label(s.label or s.z, fontdict=_font(spec.label_font, spec.font_family))
                 cb.ax.tick_params(labelsize=spec.tick_font.size, labelcolor=spec.tick_font.color)
             continue
-        _draw_xy(ax, s, i, tables, handles)  # overlays: regression line, thresholds
+        _draw_xy(ax, s, i, tables, handles, spec.x.scale, spec.y.scale)  # overlays: regression line, thresholds
 
 
 def _axis(ax, which, a: Axis, spec: GraphSpec, ticks_fixed=False):
@@ -755,9 +788,12 @@ def _axis(ax, which, a: Axis, spec: GraphSpec, ticks_fixed=False):
                    labelsize=tf.size, labelcolor=tf.color, color=tf.color, labelrotation=a.rotation)
     ax.tick_params(axis=which, which='major', length=3.5)
     ax.tick_params(axis=which, which='minor', length=2)
-    label = a.label
     fd = _font(spec.label_font, spec.font_family)
-    (ax.set_xlabel if which == 'x' else ax.set_ylabel)(label, fontdict=fd)
+    (ax.set_xlabel if which == 'x' else ax.set_ylabel)(a.title(), fontdict=fd)
+    if which == 'x' and not spec.xlabel_auto:
+        ax.xaxis.set_label_coords(spec.xlabel_x, spec.xlabel_y)
+    if which == 'y' and not spec.ylabel_auto:
+        ax.yaxis.set_label_coords(spec.ylabel_x, spec.ylabel_y)
 
 
 def _tick_fonts(ax, spec: GraphSpec):
@@ -786,7 +822,12 @@ def draw(fig, spec: GraphSpec, tables) -> dict:
     tabs = {t.name: t for t in tables} if not isinstance(tables, dict) else tables
     fig.clear()
     fig.set_facecolor(spec.background)
-    ax = fig.add_subplot(111)
+    if spec.plot_auto:
+        fig.set_layout_engine('constrained')
+        ax = fig.add_subplot(111)
+    else:  # placed by hand: no automatic layout
+        fig.set_layout_engine('none')
+        ax = fig.add_axes((spec.plot_x, spec.plot_y, max(spec.plot_w, 0.02), max(spec.plot_h, 0.02)))
     ax.set_facecolor(spec.background)
     handles = []
     xticks = []
@@ -799,7 +840,7 @@ def draw(fig, spec: GraphSpec, tables) -> dict:
     else:
         for i, s in enumerate(spec.series):
             if s.visible:
-                xticks = _draw_xy(ax, s, i, tabs, handles) or xticks
+                xticks = _draw_xy(ax, s, i, tabs, handles, spec.x.scale, spec.y.scale) or xticks
         if xticks:
             ax.set_xticks(range(len(xticks)))
             ax.set_xticklabels(xticks)
@@ -815,7 +856,13 @@ def draw(fig, spec: GraphSpec, tables) -> dict:
         ax.set_axisbelow(True)
     else:
         ax.grid(False)
-    title = ax.set_title(spec.title, fontdict=_font(spec.title_font, spec.font_family)) if spec.title else None
+    title = None
+    if spec.title and spec.title_auto:
+        title = ax.set_title(spec.title, fontdict=_font(spec.title_font, spec.font_family))
+    elif spec.title:
+        title = ax.text(spec.title_x, spec.title_y, spec.title, transform=ax.transAxes, ha='center',
+                        va='bottom', fontdict=_font(spec.title_font, spec.font_family), clip_on=False)
+        title.set_in_layout(False)
     for it in spec.legend_items:
         mk = None if it.marker == 'none' else it.marker
         handles.append((Line2D([], [], color=it.color, ls='none' if it.line_style == 'none' else it.line_style,
@@ -846,7 +893,7 @@ def draw(fig, spec: GraphSpec, tables) -> dict:
             txt.set_color(lf.color)
         if legend.get_title() is not None:
             legend.get_title().set_color(lf.color)
-        if loc == 'custom':
+        if loc == 'custom' or not spec.plot_auto:
             legend.set_in_layout(False)
     texts = []
     for tb in spec.texts:

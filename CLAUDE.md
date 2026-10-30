@@ -86,7 +86,12 @@ owner writes in Korean, so reply in Korean.
     편집 창 (`Ctrl+G`) and View › 그래프 편집 창 › …. It opens with the
     tab's graph; a new feature graph gets a `graph_sources` function and an
     entry in `graph_sources()`. Every new graph option belongs in
-    `GraphSpec` / `Series` (saved and loaded with it).
+    `GraphSpec` / `Series` (saved and loaded with it). Since v0.47 every
+    object on the graph (plot area, title, axis labels, text boxes, legend)
+    is moved / resized with the mouse, the preview zooms like the canvas,
+    and the window's 데이터 menu imports any other analysis
+    (`graph_sources(all_data=True)`) or a CSV; results with no tab graph
+    (e.g. 일괄 분석) only need an `all_data` entry.
   - Rule from the owner (2026-10-26, v0.25): every feature gets its own
     menu (since v0.41 a submenu of **Tool**, next to 파일) with its own save
     and load items; a new feature's menu goes under Tool (`tools.addMenu`); only bulk saving
@@ -274,4 +279,5 @@ not affected.
 | #60 | 0.43 | View menu next to Tool: open / close each feature tab (check items in step with Tool › … 탭 열기 and the tab ×), open / close all |
 | #59 | 0.44 | FRAP: 그룹별로 정규화 removed (owner: normalize per image); group means are of each image's own normalized curve (pre-bleach = 1, post-bleach = 0); group check boxes kept |
 | #61 | 0.45 | FRAP: normalization is one check box (정규화: 이미지마다 bleach 전 = 1, 직후 = 0; the 첫 프레임 / bleach 전 평균 choices are gone, so old projects saved with them no longer show 'Normalized recovery' starting above 0); group picker is a scrolling table (check, name, n; `group_table`, 모두 표시 / 숨기기) |
-| this PR | 0.46 | 그래프 편집 창 (owner request): every feature graph (FRAP, line profile, distance bands, Coloc 2, measurement tables) opens in its own window, graph + settings top 70 %, data bottom 30 %; 7 chart types, x / y / error columns, filters, split, mean / median aggregation, all styles (series, axes with automatic tick spacing, fonts, legend, text boxes; drag text and legend), exports (image, plotted / series / summary / all tables CSV, settings JSON), settings kept in projects; Tool › … 그래프 편집 창, View › 현재 탭의 그래프 편집 창 (Ctrl+G), button under each graph |
+| #62 | 0.46 | 그래프 편집 창 (owner request): every feature graph (FRAP, line profile, distance bands, Coloc 2, measurement tables) opens in its own window, graph + settings top 70 %, data bottom 30 %; 7 chart types, x / y / error columns, filters, split, mean / median aggregation, all styles (series, axes with automatic tick spacing, fonts, legend, text boxes; drag text and legend), exports (image, plotted / series / summary / all tables CSV, settings JSON), settings kept in projects; Tool › … 그래프 편집 창, View › 현재 탭의 그래프 편집 창 (Ctrl+G), button under each graph |
+| this PR | 0.47 | 그래프 편집 창 (owner request): plot area, title, axis labels, text boxes and legend are objects selected, moved and resized on the graph (handle; font size for text; `*_auto` / `plot_*` in `GraphSpec`); preview zoom like the image preview (scroll area, Cmd/Ctrl+drag, `[` `]`, Ctrl+wheel, fit); 데이터 menu imports any analysis result (`graph_sources(all_data=True)`, incl. 일괄 분석) or a CSV into a window, saved in projects (`_tables`); View › 그래프 편집 창 › 새 그래프 (empty window, keys `free<n>`); axis min / max / step / unit / value scale (`Axis.unit`, `Axis.scale`, unit conversion list) |

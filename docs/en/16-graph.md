@@ -12,6 +12,8 @@ and exports the graph and its data. Like the Figure window, it is a separate win
 - **Tool › (feature) › 그래프 편집 창 (…)…**
 - **View › 현재 탭의 그래프 편집 창** (`Ctrl+G`): the graph of the tab shown on the right
 - **View › 그래프 편집 창 › (feature)**; open windows are marked **(열림)**
+- **View › 그래프 편집 창 › 새 그래프** (new graph): an empty window; bring in any analysis
+  result or a CSV from its **데이터** menu.
 
 | Feature | Graph it opens with |
 |---|---|
@@ -37,11 +39,40 @@ settings you changed are kept while the column names stay the same.
 
 Drag the border between the two parts to resize them.
 
+## Data from other analyses
+
+The **데이터** (data) menu, or **다른 분석 데이터 +** in the toolbar, adds data to this window.
+
+- **다른 분석 결과 가져오기 ›** (import another analysis' result) 세포질 ROI / 입자 ROI /
+  강도 측정 tables, distance bands, Coloc 2, line profile, FRAP, 일괄 분석 results: adds that
+  feature's tables as `feature · table` and one series using them (pick its x / y in the
+  series tab). E.g. a line profile over a FRAP curve, bars of several analyses in one graph.
+- **CSV 파일 불러오기…**: a CSV with column names in its first row (comma, semicolon, tab).
+- **가져온 표 지우기…**: removes an imported table and the series using it.
+
+Imported tables are saved in the project and kept on **다시 불러오기**.
+
 ## On the graph
 
-- Drag **text boxes** and the **legend** (a dragged legend's position becomes **직접 놓기**, custom).
+The **plot area**, **title**, **X / Y axis labels**, **text boxes** and **legend** are all
+objects you select, move and resize.
+
+- **Click** selects (dashed blue box); **drag** moves.
+- **Drag the blue handle** (bottom right) to resize: width / height for the plot area (top
+  edge fixed), the font size for text (both axis labels share one size).
+- Dragging something laid out automatically first pins it where it is. **배치** in the
+  **그래프** tab or right-click › **모든 위치·크기 자동 배치로** returns to automatic layout.
 - **Double-click** a text box, the title, an axis label or a legend entry to edit it.
-- **Right-click**: add a text box here, move the legend here, add a legend entry.
+- **Right-click**: add a text box here, move the legend here, add a legend entry, delete
+  this text box.
+
+### Zooming the preview (as in the image preview)
+
+- `Cmd` (Windows `Ctrl`) + left-drag up / down, `]` in / `[` out, `Cmd` (`Ctrl`) + wheel.
+- **화면 맞춤** (fit, `Ctrl+0`) and the **－ ＋** buttons above the preview; the zoom is shown.
+- Pan with the middle button, the wheel (up / down) and `Shift` + wheel (sideways). The drag
+  rate follows the zoom sensitivity in Settings. Zoom only changes the preview, not the
+  saved figure size.
 
 ## Settings
 
@@ -55,6 +86,9 @@ Drag the border between the two parts to resize them.
   - Histogram: distribution of the y values. Heat map: x, y, z columns of the first series
     (other series drawn on top as lines).
 - Title, size (width × height in inches), image resolution (dpi), background color.
+- **배치** (layout): automatic plot area or its left / bottom / width / height (fractions of
+  the figure, the values in use shown while automatic), automatic title / X / Y label
+  positions, **모두 자동 배치로** (all automatic).
 - Bars etc.: error bars (SD / SEM / 95 % CI / none), show single values as dots, width,
   fill opacity, dot jitter. Histogram: bins (0 = automatic), density, filled. Heat map:
   color map, log color scale, color bar.
@@ -76,10 +110,18 @@ The series list (ticked = shown) with add, duplicate, delete, ▲ ▼ (drawing o
 
 ### 축 (axes)
 
-For X and Y: label, range with **자동** (auto), tick spacing with **자동** (auto picks a
-readable spacing), log scale, minor ticks, tick direction, tick label rotation. While
-automatic, the fields show the range and spacing in use; switching 자동 off starts from
-them. Top / right axis lines, axis line and tick width, grid and its color.
+For X and Y: label, **최소 – 최대** (min – max) with **자동** (auto), tick spacing with
+**자동** (auto picks a readable spacing), **단위** (unit), **값 배율** (value scale), log scale,
+minor ticks, tick direction, tick label rotation. While automatic, the fields show the range
+and spacing in use; switching 자동 off starts from them.
+
+- **Unit**: added in brackets after the axis name (`Time` + `min` → `Time (min)`; a unit
+  already in brackets at the end of the name is replaced). Type any unit not in the list.
+- **Value scale (×)**: values are multiplied by it when drawn (fractions like `1/60` work).
+  The **단위 바꾸기…** list (s → min, min → s, s → ms, min → h, 0–1 → %, % → 0–1, µm → nm,
+  nm → µm) sets the scale and unit together. Changing the scale also converts a manual
+  min / max / spacing so the same part of the data stays shown. The data table and exported
+  CSV show scaled x / y. Top / right axis lines, axis line and tick width, grid and its color.
 
 ### 글꼴 (fonts)
 
