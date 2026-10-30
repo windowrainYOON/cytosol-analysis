@@ -1580,6 +1580,9 @@ class MainWindow(QMainWindow):
         self._restore_panes()
 
         self.figure_win = None
+        self.graph_wins = {}  # graph source key -> GraphWindow (그래프 편집 창)
+        self.graph_specs = {}  # key -> GraphSpec dict from a project, for windows not opened yet
+        self._graph_buttons()
         self.log_win = None
         self.batch = BatchState()  # 일괄 분석: steps, groups, results per image
         self.batch_win = None
@@ -1697,6 +1700,7 @@ class MainWindow(QMainWindow):
         load_action(sub, 'ROI 불러오기…', 'cell')
         sub.addSeparator()
         self._measure_menu(sub, rp.measure)
+        self._graph_action(sub, 'roi')
 
         sub = tools.addMenu('입자 ROI')
         tab_action(sub, 'particle_tab')
@@ -1704,6 +1708,7 @@ class MainWindow(QMainWindow):
         load_action(sub, '입자 ROI 불러오기…', 'particle')
         sub.addSeparator()
         self._measure_menu(sub, pp.measure)
+        self._graph_action(sub, 'particle')
 
         sub = tools.addMenu('강도 측정')
         tab_action(sub, 'intensity_tab')
@@ -1713,6 +1718,9 @@ class MainWindow(QMainWindow):
         act(sub, '등거리 띠: 모든 이미지 측정 + 저장 (폴더)…', ip.bands_measure.save_all,
             tip=ip.bands_measure.save_tip)
         act(sub, '등거리 띠 그래프 저장 (PNG / PDF / SVG / TIFF)…', ip.save_plot)
+        sub.addSeparator()
+        self._graph_action(sub, 'intensity')
+        self._graph_action(sub, 'bands')
 
         sub = tools.addMenu('Coloc 2')
         tab_action(sub, 'coloc_tab')
@@ -1722,12 +1730,14 @@ class MainWindow(QMainWindow):
         act(sub, '그래프 저장…', cp.save_plot)
         act(sub, 'PDF 리포트 저장…', cp.save_pdf,
             tip='선택한 ROI의 히스토그램과 모든 값 (Coloc 2의 PDF와 같은 내용)')
+        self._graph_action(sub, 'coloc')
 
         sub = tools.addMenu('라인 프로파일')
         tab_action(sub, 'profile_tab')
         act(sub, 'CSV 저장…', self.profile_panel.save_csv)
         act(sub, '그래프 저장 (PNG / PDF / SVG / TIFF)…', self.profile_panel.save_plot)
         load_action(sub, '선 ROI 불러오기…', 'line')
+        self._graph_action(sub, 'profile')
 
         fp = self.frap_panel
         sub = tools.addMenu('FRAP 측정')
@@ -1742,6 +1752,8 @@ class MainWindow(QMainWindow):
         sub.addSeparator()
         act(sub, 'FRAP ROI 저장 (현재 이미지)…', fp.save_rois_current)
         load_action(sub, 'FRAP ROI 불러오기…', 'frap')
+        sub.addSeparator()
+        self._graph_action(sub, 'frap')
 
         sub = tools.addMenu('스택')
         tab_action(sub, 'stack_tab')
@@ -1771,6 +1783,105 @@ class MainWindow(QMainWindow):
         act(view, '모든 기능 탭 열기', lambda: [self.show_tab(n, focus=False) for n in self.tab_pages])
         act(view, '모든 기능 탭 닫기', lambda: [self.hide_tab(n) for n in self.tab_pages],
             tip='LUT와 이미지 정보 탭은 항상 열려 있습니다.')
+        view.addSeparator()
+        act(view, '현재 탭의 그래프 편집 창', self.open_graph_current, 'Ctrl+G',
+            '오른쪽에 보이는 탭의 그래프를 그래프 편집 창에서 엽니다.')
+        self.graph_menu = view.addMenu('그래프 편집 창')
+        self.graph_menu.aboutToShow.connect(self._fill_graph_menu)
+        act(view, 'Figure 창', self.open_figure)
+
+    # ---- graph editor windows (그래프 편집 창) -------------------------------------
+
+    def graph_sources(self) -> dict:
+        """key -> (title, tab name, fn returning GraphData or None, hint when None)."""
+        from . import graph_sources as S
+
+        rp, pp, ip = self.roi_panel, self.particle_panel, self.intensity_panel
+        return {
+            'roi': ('세포질 ROI 측정', 'roi_tab', lambda: S.measure(rp.measure, '세포질 ROI 측정'),
+                    '세포질 ROI 탭에서 먼저 측정하세요.'),
+            'particle': ('입자 ROI 측정', 'particle_tab', lambda: S.measure(pp.measure, '입자 ROI 측정'),
+                         '입자 ROI 탭에서 먼저 측정하세요.'),
+            'intensity': ('강도 측정', 'intensity_tab', lambda: S.measure(ip.measure, '강도 측정'),
+                          '강도 측정 탭에서 먼저 측정하세요.'),
+            'bands': ('등거리 띠', 'intensity_tab', lambda: S.bands(ip),
+                      '강도 측정 탭에서 등거리 띠를 먼저 측정하세요.'),
+            'coloc': ('Coloc 2', 'coloc_tab', lambda: S.coloc(self.coloc_panel),
+                      'Coloc 2 탭에서 먼저 계산하세요.'),
+            'profile': ('라인 프로파일', 'profile_tab', lambda: S.profile(self.profile_panel),
+                        '라인 프로파일 탭에서 이미지 위에 선을 먼저 그리세요.'),
+            'frap': ('FRAP', 'frap_tab', lambda: S.frap(self.frap_panel),
+                     'FRAP 측정 탭에서 시간축이 있는 이미지를 먼저 측정하세요.'),
+        }
+
+    def _graph_action(self, menu, key):
+        title = self.graph_sources()[key][0]
+        self._act(menu, f'그래프 편집 창 ({title})…', lambda: self.open_graph(key),
+                  tip='그래프를 새 창에서 열어 그래프 종류, x·y 열, 색·굵기·글꼴·축·범례·글자 상자를 고치고 '
+                      '그래프와 데이터를 내보냅니다.')
+
+    def _graph_buttons(self):
+        """A ‘그래프 편집 창…’ button under each tab's graph / result table."""
+        ip, cp = self.intensity_panel, self.coloc_panel
+        spots = [(self.profile_panel.plot, 'profile'), (self.frap_panel.plot, 'frap'),
+                 (ip.plot, 'bands'), (cp.plot, 'coloc'), (self.roi_panel.measure.table, 'roi'),
+                 (self.particle_panel.measure.table, 'particle'), (ip.measure.table, 'intensity')]
+        for w, key in spots:
+            lay = w.parentWidget().layout() if w.parentWidget() is not None else None
+            if lay is None:
+                continue
+            b = QPushButton('그래프 편집 창…')
+            b.setToolTip('이 그래프(결과 표)를 새 창에서 열어 모양을 고치고 그래프와 데이터를 내보냅니다.')
+            b.clicked.connect(lambda _=False, k=key: self.open_graph(k))
+            lay.insertWidget(lay.indexOf(w) + 1, b)
+
+    def open_graph(self, key):
+        from .graph_window import GraphWindow
+
+        title, tab, fn, hint = self.graph_sources()[key]
+        try:
+            data = fn()
+        except Exception as exc:
+            traceback.print_exc()
+            QMessageBox.warning(self, '그래프 편집 창', f'그래프 데이터를 만들지 못했습니다: {exc}')
+            return None
+        if data is None:
+            QMessageBox.information(self, '그래프 편집 창', hint)
+            return None
+        w = self.graph_wins.get(key)
+        if w is None:
+            w = GraphWindow(self, key, title, fn)
+            self.graph_wins[key] = w
+            w.set_data(data)
+            saved = self.graph_specs.pop(key, None)
+            if saved:
+                w.use_spec(saved)
+        else:
+            w.set_data(data, keep_spec=True)
+        w.show()
+        w.raise_()
+        w.activateWindow()
+        self.statusBar().showMessage(f'그래프 편집 창: {data.title}', 5000)
+        return w
+
+    def open_graph_current(self):
+        srcs = self.graph_sources()
+        for key, (_, tab, _, _) in srcs.items():
+            if self.tab_current(tab):
+                if key == 'intensity' and self.intensity_panel.bands_measure._rows_shown()[0]:
+                    key = 'bands'
+                return self.open_graph(key)
+        QMessageBox.information(self, '그래프 편집 창', '그래프가 있는 탭(세포질 ROI, 입자 ROI, 강도 측정, '
+                                'Coloc 2, 라인 프로파일, FRAP 측정)을 오른쪽에 여세요.')
+        return None
+
+    def _fill_graph_menu(self):
+        m = self.graph_menu
+        m.clear()
+        for key, (title, *_rest) in self.graph_sources().items():
+            w = self.graph_wins.get(key)
+            mark = ' (열림)' if w is not None and w.isVisible() else ''
+            m.addAction(f'{title}{mark}', lambda k=key: self.open_graph(k))
 
     def _measure_menu(self, menu, box):
         self._act(menu, '측정 CSV 저장 (현재 이미지)…', box.save_current)
@@ -1902,7 +2013,7 @@ class MainWindow(QMainWindow):
         if not self._maybe_save():
             event.ignore()
             return
-        for w in (self.figure_win, self.log_win):
+        for w in (self.figure_win, self.log_win, *self.graph_wins.values()):
             if w is not None:
                 w.close()
         super().closeEvent(event)
@@ -2218,6 +2329,7 @@ class MainWindow(QMainWindow):
             if self.figure_win is not None:
                 data['figure'] = figure_dict(self.figure_win.spec, self.items, files)
                 data['figure_widgets'] = widget_state(self.figure_win)
+            data['graphs'] = dict(self.graph_specs) | {k: w.spec.to_dict() for k, w in self.graph_wins.items()}
             data['log'] = self.worklog.entries
             data['batch'] = self.batch.to_dict()
             write_project(path, data, files)
@@ -2237,6 +2349,11 @@ class MainWindow(QMainWindow):
             self.figure_win.close()
             self.figure_win.deleteLater()
             self.figure_win = None
+        for w in self.graph_wins.values():
+            w.close()
+            w.deleteLater()
+        self.graph_wins = {}
+        self.graph_specs = {}
         if self.items:
             self.file_list.selectAll()
             self.remove_selected(log=False)
@@ -2267,6 +2384,14 @@ class MainWindow(QMainWindow):
                 self.hide_tab(name)
         b = BatchState.from_dict(data.get('batch'))
         self.batch.steps, self.batch.groups, self.batch.redo = b.steps, b.groups, b.redo
+        # graph editor settings: used when that graph window opens (open ones take them as style)
+        graphs = data.get('graphs') or {}
+        if isinstance(graphs, dict):
+            for key, spec in graphs.items():
+                if key in self.graph_wins:
+                    self.graph_wins[key].use_spec(spec)
+                elif isinstance(spec, dict):
+                    self.graph_specs[key] = spec
 
     def open_project_dialog(self, path) -> bool:
         """Ask whether the whole project (images, ROIs, results) or only its

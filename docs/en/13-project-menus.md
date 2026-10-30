@@ -15,7 +15,9 @@ fixed at its bottom) and the **이미지 정보** (Image info) tab. Ticking a fe
 **강도 측정**, **Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**) or **… 탭 열기**
 (Open … tab) in a feature menu adds that tab next to them; unticking it or
 pressing the tab's × hides it. **View › 모든 기능 탭 열기 / 닫기** (open / close
-all feature tabs) does it for every feature tab at once. Settings and results stay while a tab is
+all feature tabs) does it for every feature tab at once. Lower in **View** are
+**현재 탭의 그래프 편집 창** (graph editor of the current tab, `Ctrl+G`), the graph editor
+of each feature ([Graph editor window](16-graph.md)) and the **Figure 창**. Settings and results stay while a tab is
 hidden, and the open tabs are saved in the project.
 
 ## File menu

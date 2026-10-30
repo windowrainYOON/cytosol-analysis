@@ -769,6 +769,11 @@ def run(out_dir) -> int:
         if not win.current.coloc or win.coloc_panel.table.rowCount() != len(win.current.coloc):
             raise AssertionError('Coloc 2 tab produced no results')
         win.coloc_panel._draw()
+        # its 2D histogram opens in the graph editor as a heat map
+        gw = win.open_graph('coloc')
+        if gw is None or gw.spec.chart != 'heatmap' or gw.art.get('ax') is None:
+            raise AssertionError('Coloc 2 graph editor')
+        gw.close()
         # zoom: Cmd/Ctrl + drag up zooms in around the press point, [ ] step
         from PySide6.QtCore import QPointF
         from PySide6.QtGui import QWheelEvent
@@ -1257,6 +1262,15 @@ def run(out_dir) -> int:
             raise AssertionError('bands not drawn on the image')
         ip.show_bands.setChecked(False)
         ip.fig.savefig(out / 'intensity_gui' / 'bands.png')
+        # bands and the measurement table in the graph editor: a line per cell + mean ± SD
+        gw = win.open_graph('bands')
+        if gw is None or gw.spec.series[0].split != 'cell' or gw.spec.series[-1].agg != 'mean':
+            raise AssertionError('band graph in the graph editor')
+        gw.close()
+        gw = win.open_graph('intensity')
+        if gw is None or gw.spec.chart != 'bar' or not gw.spec.series[0].y:
+            raise AssertionError('measurement graph in the graph editor')
+        gw.close()
         ip.band_n.setValue(10)
         from .lut import item_stem
         stem = item_stem(own)
@@ -1658,6 +1672,133 @@ def run(out_dir) -> int:
         win.close()
         return f'{len(st.images)} images, {len(files)} files'
 
+    def graph_step():
+        from matplotlib.backend_bases import MouseEvent
+        from PySide6.QtWidgets import QApplication
+
+        from . import graph as G
+        from .app import MainWindow
+
+        app = QApplication.instance() or QApplication([sys.argv[0]])
+        win = MainWindow()
+        win.show()
+        items = [_frap_item('graphA', 0.7, 0.15, file_roi=True), _frap_item('graphB', 0.6, 0.2, seed=1),
+                 _frap_item('graphC', 0.8, 0.1, seed=2)]
+        for it, g in zip(items, ('WT', 'WT', 'KO')):
+            it.group = g
+            win._add_item(it)
+        win.file_list.setCurrentRow(0)
+        app.processEvents()
+        win.tool_actions['frap_tab'].setChecked(True)
+        app.processEvents()
+        # opens with the tab's graph: the recovery curve from the bleach on and its fit
+        gw = win.open_graph('frap')
+        app.processEvents()
+        tabs = gw.tables()
+        rec = tabs['회복 곡선']
+        shown = int(sum(1 for v in rec.values('shown') if v == 1))
+        pt = G.plotted_table(gw.spec, tabs, only={0})
+        if gw.art.get('ax') is None or len(pt.rows) != shown or '피팅 곡선' not in tabs:
+            raise AssertionError(f'FRAP graph: {len(pt.rows)} points, {shown} shown, {list(tabs)}')
+        if gw.split.sizes()[0] < 2 * gw.split.sizes()[1]:
+            raise AssertionError(f'graph / table split {gw.split.sizes()}')
+        # every chart type draws
+        for chart in G.CHARTS:
+            gw.chart.setCurrentIndex(gw.chart.findData(chart))
+            gw.render()
+            if gw.spec.chart != chart or gw.art.get('ax') is None:
+                raise AssertionError(f'chart {chart} not drawn')
+        gw.chart.setCurrentIndex(gw.chart.findData('xy'))
+        # tick spacing set by hand; 자동 shows the spacing in use
+        gw.spec.y.auto_step, gw.spec.y.step = False, 25.0
+        gw.render()
+        locs = gw.art['ax'].yaxis.get_majorticklocs()
+        if not np.allclose(np.diff(locs), 25):
+            raise AssertionError(f'y ticks {locs}')
+        gw.spec.x.auto_step = True
+        gw.render()
+        if not np.isfinite(gw.range_edits['x'][3].value()):
+            raise AssertionError('automatic tick spacing not shown')
+        # series style from the editor widgets
+        gw.series_list.setCurrentRow(0)
+        gw.spec.series[0].color = '#ff0000'
+        gw.sync()
+        if gw.findChildren(type(gw.range_edits['x'][0]))[0] is None:
+            raise AssertionError('no fields')
+        # text box and legend dragged on the graph
+        gw.add_text(0.5, 0.5, 'n = 3')
+        gw.render()
+        app.processEvents()
+        gw.canvas.draw()
+
+        def drag(artist):
+            bb = artist.get_window_extent()
+            x, y = (bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2
+            gw._press(MouseEvent('button_press_event', gw.canvas, x, y, button=1))
+            gw._motion(MouseEvent('motion_notify_event', gw.canvas, x + 30, y - 20, button=1))
+            gw._release(MouseEvent('button_release_event', gw.canvas, x + 30, y - 20, button=1))
+
+        drag(gw.art['texts'][0])
+        tb = gw.spec.texts[0]
+        if not (tb.x > 0.5 and tb.y < 0.5):
+            raise AssertionError(f'text box not moved: {tb}')
+        gw.canvas.draw()
+        drag(gw.art['legend'])
+        if gw.spec.legend_loc != 'custom':
+            raise AssertionError('legend not moved')
+        # exports: image, plotted data, every table, settings round trip
+        gdir = out / 'graph'
+        files = [gw.save_image(str(gdir / 'frap_graph.png')), gw.save_image(str(gdir / 'frap_graph.svg')),
+                 gw.export_plotted(path=str(gdir / 'frap_plotted.csv'))]
+        files += gw.export_all(str(gdir))
+        js = gw.save_settings(str(gdir / 'frap_graph.json'))
+        if not all(f and Path(f).stat().st_size for f in files + [js]):
+            raise AssertionError(f'graph exports: {files}')
+        before = gw.spec.to_dict()
+        gw.reset_spec()
+        gw.load_settings(path=js)
+        if gw.spec.to_dict() != before:
+            raise AssertionError('graph settings JSON round trip')
+        # group means: one series per group with error bars
+        fp = win.frap_panel
+        fp.view.setCurrentIndex(fp.view.findData('groups'))
+        app.processEvents()
+        gw = win.open_graph('frap')
+        means = [s for s in gw.spec.series if s.table == '그룹 평균']
+        if [s.equals for s in means] != ['WT', 'KO'] or not all(s.err for s in means):
+            raise AssertionError(f'FRAP group graph series: {[(s.equals, s.err) for s in means]}')
+        fp.view.setCurrentIndex(fp.view.findData('curve'))
+        # line profile and a measurement table
+        win.show_tab('profile_tab')
+        win.profile_panel.set_line((10, 10, 60, 40))
+        app.processEvents()
+        pw = win.open_graph('profile')
+        if pw is None or len(pw.spec.series) != len(items[0].channels):
+            raise AssertionError('line profile graph')
+        rows = [{'group': g, 'image': f'i{k}', 'roi': f'cell{k}', 'C0_Mean': float(k)}
+                for k, g in enumerate(['A', 'A', 'B', 'B'])]
+        md = G.measure_graph(rows, 'm', 'm')
+        summ = G.summary_table(md.spec, {t.name: t for t in md.tables})
+        if md.spec.chart != 'bar' or [r[2] for r in summ.rows] != [2, 2] or summ.rows[1][3] != 2.5:
+            raise AssertionError(f'measure graph summary {summ.rows}')
+        G.save_figure(gdir / 'measure.png', md.spec, md.tables)
+        # graph settings are saved in the project and used when the window opens again
+        from .project import read_project
+        fw = win.open_graph('frap')  # the tab shows the recovery curve again
+        fw.spec.title = 'saved in project'
+        proj = gdir / 'graph.cyproj'
+        win.write_project_to(proj)
+        win.graph_wins.pop('frap').close()
+        win._apply_project_settings(read_project(proj)[0])
+        fw = win.open_graph('frap')
+        if fw.spec.title != 'saved in project':
+            raise AssertionError('graph settings not restored from the project')
+        for w in list(win.graph_wins.values()):
+            w.close()
+        win.set_dirty(False)
+        win.close()
+        return f'{len(files) + 1} files, {len(G.CHARTS)} chart types'
+
     step('readers import', readers)
     step('HDF5 non-ASCII path', hdf5_unicode_path)
     step('TIFF export', tiff_export)
@@ -1677,6 +1818,7 @@ def run(out_dir) -> int:
     step('bleach ROIs + image info', bleach_info)
     step('FRAP measurement', frap_step)
     step('batch analysis', batch_step)
+    step('graph editor', graph_step)
     step('main window', window)
 
     text = '\n'.join(log) + f'\n\n{"PASSED" if ok else "FAILED"}\n'
