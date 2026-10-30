@@ -260,5 +260,6 @@ not affected.
 | #55 | 0.39 | Figure: brightness (Min/Max) per cell and per inset (`FigureCell.levels`, `Inset.levels`; 자동 = LUT tab, inset 자동 = the cell's), dropdown next to each channel check box picks LUT tab / this cell / another cell's or inset's levels (`FigureCell.level_from`), saved in projects |
 | #56 | 0.40 | FRAP: Control 위치 option (주변의 다른 응집체, default: the most stable of the 12 nearest, lowest CV measured along the drift / 같은 응집체 안), full-scale normalization by default (pre-bleach = 1, first post-bleach frame = 0, Recovery %), paper-style graphs (black open / filled markers, error bars, black fit lines, legend above, no grid), formulas in every FRAP CSV and `frap_formulas.txt` |
 | #57 | 0.41 | Tool menu next to 파일: every feature menu (LUT … Figure) moved under it unchanged (Tool › FRAP 측정 › 불러오기 …) |
-| #58 | 0.42 | FRAP group graph: check boxes pick the groups drawn (`groups_hidden`, saved in projects), 그룹별로 정규화 (default on): each group's mean of R / R_pre scaled to pre-bleach = 1 / post-bleach = 0 with SD / SEM scaled alike (`group_curve(scale=True)`), group mean-curve fit under the graph |
-| this PR | 0.43 | View menu next to Tool: open / close each feature tab (check items in step with Tool › … 탭 열기 and the tab ×), open / close all |
+| #58 | 0.42 | FRAP group graph: check boxes pick the groups drawn (`groups_hidden`, saved in projects), 그룹별로 정규화 option |
+| #60 | 0.43 | View menu next to Tool: open / close each feature tab (check items in step with Tool › … 탭 열기 and the tab ×), open / close all |
+| this PR | 0.44 | FRAP: 그룹별로 정규화 removed (owner: normalize per image); group means are of each image's own normalized curve (pre-bleach = 1, post-bleach = 0); group check boxes kept |
