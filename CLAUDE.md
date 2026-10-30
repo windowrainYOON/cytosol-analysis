@@ -262,4 +262,5 @@ not affected.
 | #57 | 0.41 | Tool menu next to 파일: every feature menu (LUT … Figure) moved under it unchanged (Tool › FRAP 측정 › 불러오기 …) |
 | #58 | 0.42 | FRAP group graph: check boxes pick the groups drawn (`groups_hidden`, saved in projects), 그룹별로 정규화 option |
 | #60 | 0.43 | View menu next to Tool: open / close each feature tab (check items in step with Tool › … 탭 열기 and the tab ×), open / close all |
-| this PR | 0.44 | FRAP: 그룹별로 정규화 removed (owner: normalize per image); group means are of each image's own normalized curve (pre-bleach = 1, post-bleach = 0); group check boxes kept |
+| #59 | 0.44 | FRAP: 그룹별로 정규화 removed (owner: normalize per image); group means are of each image's own normalized curve (pre-bleach = 1, post-bleach = 0); group check boxes kept |
+| this PR | 0.45 | FRAP: normalization is one check box (정규화: 이미지마다 bleach 전 = 1, 직후 = 0; the 첫 프레임 / bleach 전 평균 choices are gone, so old projects saved with them no longer show 'Normalized recovery' starting above 0); group picker is a scrolling table (check, name, n; `group_table`, 모두 표시 / 숨기기) |
