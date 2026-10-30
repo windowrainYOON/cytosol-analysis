@@ -17,7 +17,7 @@ appears on screen, followed by its meaning in parentheses, e.g.
   and the view buttons above it.
 - **Right panel**: at first only the **LUT** tab (marker settings fixed at its
   bottom) and **이미지 정보** (Image info); the other tabs are opened with
-  **… 탭 열기** (Open … tab) in each feature's menu.
+  the **View** menu (or **… 탭 열기**, Open … tab, in each feature's menu).
 - **Menu bar**: **파일** (File: projects, loading with automatic detection,
   saving all results, work log, settings), then **Tool** with one submenu per feature
   (**LUT**, **마커**, **Crop**, **세포질 ROI**, **입자 ROI**, **강도 측정**,
