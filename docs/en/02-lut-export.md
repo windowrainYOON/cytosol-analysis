@@ -4,7 +4,7 @@
 
 The **LUT** tab (always open) sets how each channel is displayed (its LUT);
 the [marker settings](05-markers.md) sit fixed at its bottom. Images are
-exported with **LUT › 이미지 내보내기 (TIFF / MP4)…** in the menu bar. The LUTs set here are used by the preview, every RGB export, the 스택 tab
+exported with **Tool › LUT › 이미지 내보내기 (TIFF / MP4)…** in the menu bar. The LUTs set here are used by the preview, every RGB export, the 스택 tab
 (when linked) and the Figure window.
 
 ## Showing channels

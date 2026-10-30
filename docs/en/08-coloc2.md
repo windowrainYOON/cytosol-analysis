@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/08-coloc2.md)
 
-Open or close this tab with **Coloc 2 › Coloc 2 탭 열기** (Open Coloc 2 tab) in the menu bar. This tab's saves and loads are in the same **Coloc 2** menu.
+Open or close this tab with **Tool › Coloc 2 › Coloc 2 탭 열기** (Open Coloc 2 tab) in the menu bar. This tab's saves and loads are in the same **Coloc 2** menu.
 
 Colocalization of two channels in each cell ROI, with the same calculation
 as Fiji's Coloc 2 plugin (its source code ported line by line). Detect or
@@ -42,7 +42,7 @@ and all values, with the plugin's warnings.
 
 ## Saving
 
-In the **Coloc 2** menu of the menu bar:
+In the **Tool › Coloc 2** menu of the menu bar:
 
 | Menu item | File |
 |---|---|

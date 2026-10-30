@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/03-cytosol-roi.md)
 
-Open or close this tab with **세포질 ROI › 세포질 ROI 탭 열기** (Open 세포질 ROI tab) in the menu bar. This tab's saves and loads are in the same **세포질 ROI** menu.
+Open or close this tab with **Tool › 세포질 ROI › 세포질 ROI 탭 열기** (Open 세포질 ROI tab) in the menu bar. This tab's saves and loads are in the same **세포질 ROI** menu.
 
 This tab finds one ROI per cell, with its nucleus, and gives three regions
 per cell: `cell` (whole cell), `nuc` (nucleus) and `cyto` (cell minus
@@ -118,7 +118,7 @@ The cell list shows each cell's area and whether it was cut at the frame
 
 ## 4. ImageJ ROI 파일 (ImageJ ROI files)
 
-Saving and loading are in the **세포질 ROI** menu of the menu bar.
+Saving and loading are in the **Tool › 세포질 ROI** menu of the menu bar.
 
 - Choose which ROIs to save (check items in that menu): **저장할 ROI: 세포 전체**
   (`cellNNN`, cell polygon), **핵** (`nucNNN`), **세포질 (핵 제외)** (`cytoNNN`,

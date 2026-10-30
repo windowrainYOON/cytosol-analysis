@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/07-line-profile.md)
 
-Open or close this tab with **라인 프로파일 › 라인 프로파일 탭 열기** (Open 라인 프로파일 tab) in the menu bar. This tab's saves and loads are in the same **라인 프로파일** menu.
+Open or close this tab with **Tool › 라인 프로파일 › 라인 프로파일 탭 열기** (Open 라인 프로파일 tab) in the menu bar. This tab's saves and loads are in the same **라인 프로파일** menu.
 
 Plots each channel's raw intensity along a line, like ImageJ's RGB Profiler
 (Plot Profile per channel), in the channel colors, against distance in µm.
@@ -28,7 +28,7 @@ end points in pixels.
 
 ## Saving
 
-From the **라인 프로파일** menu in the menu bar:
+From the **Tool › 라인 프로파일** menu in the menu bar:
 
 - **CSV 저장…**: distance plus one column per channel.
 - **그래프 저장 (PNG / PDF / SVG / TIFF)…** (Graph): PNG/TIFF at 300 dpi, PDF or SVG.

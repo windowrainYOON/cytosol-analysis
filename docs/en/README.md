@@ -19,7 +19,7 @@ appears on screen, followed by its meaning in parentheses, e.g.
   bottom) and **이미지 정보** (Image info); the other tabs are opened with
   **… 탭 열기** (Open … tab) in each feature's menu.
 - **Menu bar**: **파일** (File: projects, loading with automatic detection,
-  saving all results, work log, settings), then one menu per feature
+  saving all results, work log, settings), then **Tool** with one submenu per feature
   (**LUT**, **마커**, **Crop**, **세포질 ROI**, **입자 ROI**, **강도 측정**,
   **Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**, **이미지 정보**, **Figure**), each with
   that feature's tab and its saves and loads. See
@@ -46,7 +46,7 @@ appears on screen, followed by its meaning in parentheses, e.g.
 | [Output files](12-output-files.md) | Every file the program writes, and folder loading |
 
 The Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, FRAP 측정 and 스택 tabs
-are opened from the menu of the same name, which also saves and loads that
+are opened from the menu of the same name under **Tool**, which also saves and loads that
 tab's results.
 
 ## Keyboard and mouse summary
