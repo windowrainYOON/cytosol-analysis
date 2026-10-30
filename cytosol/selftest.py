@@ -1421,6 +1421,21 @@ def run(out_dir) -> int:
             raise AssertionError(f'FRAP fit: {s1}')
         if len(win.canvas._frap) != 3:
             raise AssertionError('FRAP ROIs not drawn on the image')
+        # pre-bleach = 1, first post-bleach frame = 0 (the default normalization)
+        if c.normalize != 'full' or abs(c.values[5]) > 1e-9 or abs(np.mean(c.values[:5]) - 1) > 1e-9:
+            raise AssertionError(f'FRAP 0-1 normalization: {c.normalize}, {c.values[:7]}')
+        # Control: a neighbouring condensate by default, the bleached one when chosen
+        ccx, ccy = st.rois['control'].center()
+        if fp.control_src.currentData() != 'other' or np.hypot(ccx - 90, ccy - 80) < 21:
+            raise AssertionError(f'FRAP control not on another condensate: {ccx, ccy}')
+        fp.control_src.setCurrentIndex(fp.control_src.findData('same'))
+        app.processEvents()
+        ccx, ccy = st.rois['control'].center()
+        if np.hypot(ccx - 90, ccy - 80) > 20 or np.hypot(ccx - 98, ccy - 80) < 6:
+            raise AssertionError(f'FRAP control not in the bleached condensate: {ccx, ccy}')
+        fp.control_src.setCurrentIndex(fp.control_src.findData('other'))
+        app.processEvents()
+        c = fp.curve
         # the background is the bleach ROI's size, away from the condensates
         b, g = st.rois['bleach'], st.rois['background']
         if g.size() != b.size() or c.means['background'][0] > 150:
@@ -1451,9 +1466,14 @@ def run(out_dir) -> int:
         files = fp.save_all(out / 'frap', ask=False)
         names = {Path(f).name for f in files}
         need = {'frap_summary.csv', 'frap_summary.png', 'frap_groups.png', 'frap_group_curves.csv',
+                'frap_formulas.txt',
                 'frapA_frap.csv', 'frapA_frap_rois.zip'}
         if not need <= names:
             raise AssertionError(f'FRAP summary save: {sorted(names)}')
+        with open(out / 'frap' / 'frap_summary.csv', encoding='utf-8') as f:
+            text = f.read()
+        if '# R(t) = (B(t) - BG(t)) / (C(t) - BG(t))' not in text:
+            raise AssertionError('FRAP summary CSV without the formulas')
         with open(out / 'frap' / 'frap_summary.csv', encoding='utf-8') as f:
             rows = [r for r in csv.reader(f) if r and not r[0].startswith('#')]
         head = rows[0]

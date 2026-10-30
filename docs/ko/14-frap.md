@@ -20,10 +20,11 @@
 | ROI | 색 | 자동 위치 |
 |---|---|---|
 | **Bleach** (B) | 빨강 | 파일에 기록된 bleach 영역 (Zeiss CZI의 bleach 영역, Olympus/Evident OIR의 stimulation 영역). 기록이 없으면 앞 프레임들보다 계속 어두워진 곳 중 가장 크게 어두워진 곳 (이미지 가장자리 4 %는 제외) |
-| **Control** (C) | 초록 | bleach한 응집체에서 bleach 영역 밖의 가장 안쪽 (크기는 Bleach와 달라도 됨). 응집체가 통째로 bleach됐으면 bleach되지 않은 가장 가까운 다른 응집체 (촬영 중 bleaching 보정용) |
+| **Control** (C) | 초록 | Control 아래 **위치**에서 고름 (모든 이미지): **주변의 다른 응집체 (강도가 가장 안정된 곳)** (기본): bleach한 응집체에서 가까운 응집체 12개 중 시간에 따라 평균 강도가 가장 적게 변하는 곳 (변동계수가 가장 작은 곳, 드리프트 보정이 켜져 있으면 프레임마다 움직인 자리에서 측정). **같은 응집체 안 (bleach 영역 밖)**: bleach한 응집체에서 bleach 영역 밖의 가장 안쪽, 응집체가 통째로 bleach됐으면 주변에서 가장 안정된 응집체. 크기는 Bleach와 달라도 됨 |
 | **Background** (BG) | 파랑 | Bleach ROI와 같은 모양·크기로, 응집체 신호가 없는 가장 가까운 곳 |
 
 Control은 bleach 프레임에서 신호가 30 % 넘게 떨어지는 곳(같이 bleach된 곳)을 건너뜁니다.
+손으로 옮긴 Control은 그 자리에 그대로 있습니다.
 자동 위치가 알맞지 않을 때 쓰는 안내는 ROI 칸 아래 주황색 글로 나옵니다.
 
 ## ROI 옮기기
@@ -64,7 +65,7 @@ Z-stack이면 MIP(Z 슬라이더)에서 측정하면 초점의 영향을 받지 
 | 항목 | 의미 |
 |---|---|
 | **채널** | 측정할 채널 (모든 이미지에 같은 이름의 채널) |
-| **bleach 전 강도로 정규화** (기본 켬) | 값을 bleach 전 값으로 나눔 (bleach 전 = 1). 기준은 **첫 프레임** 또는 **bleach 전 프레임 평균**. Phair 등(2004)의 double normalization과 같습니다 |
+| **bleach 전 강도로 정규화** (기본 켬) | **bleach 전 = 1, 직후 = 0** (기본): (값 − bleach 후 첫 프레임 값) / (bleach 전 프레임 평균 − 그 값), Recovery (%)로 표시 (full-scale 정규화). **첫 프레임 = 1** / **bleach 전 프레임 평균 = 1**: 그 값으로 나눔. 모두 Phair 등(2004)의 double normalization 위에서 계산합니다 |
 | **bleach 후 첫 프레임** + **자동** | bleach 바로 다음 프레임 (1부터). 자동: 파일의 bleach 기록(CZI bleach 이벤트, OIR pre-bleach 프레임 수), 없으면 Bleach ROI 강도가 가장 크게 떨어진 프레임 |
 | Bleach **지름** + **자동** | 파일 기록이 없을 때 찾은 원의 지름 (자동: 어두워진 영역의 넓이와 같은 원). 파일의 bleach 영역은 그 모양 그대로 |
 | Control **지름** + **자동** | Control 원의 지름 (자동: Bleach ROI 크기까지, 응집체 안에 들어가는 가장 큰 원) |
@@ -82,6 +83,11 @@ Z-stack이면 MIP(Z 슬라이더)에서 측정하면 초점의 영향을 받지 
   이미지는 `No group` 한 묶음입니다. **개별 곡선도 표시**로 이미지마다 곡선도 흐리게.
   에러바에는 그룹마다 3개 이상의 이미지를 권장합니다(3개 미만이면 표시).
 
+그래프는 논문의 FRAP 그림처럼 그립니다: 세로축 Recovery (%) (0부터), 가로축 bleach 후
+Time (s), 그룹마다 검은 마커(빈 네모, 찬 네모, 빈 동그라미, …)와 에러바, 피팅 곡선은 검은
+선, 범례는 그래프 위, 격자와 위·오른쪽 축은 없음. (다른 정규화에서는 bleach 전 프레임도
+보이고 bleach 시점에 점선을 긋습니다.)
+
 그래프 아래에 FRAP 수치가 나옵니다.
 
 ## FRAP 수치
@@ -92,9 +98,9 @@ pre는 bleach 전 값(정규화하면 1)입니다.
 
 | 열 | 의미 |
 |---|---|
-| `pre_bleach` | bleach 전 값 |
-| `post_bleach` | bleach 직후 값 (bleach 후 첫 프레임) |
-| `bleach_depth` | 1 − 직후 / 전 |
+| `pre_bleach` | bleach 전 값 (정규화하면 1) |
+| `post_bleach` | bleach 직후 값 (bleach 후 첫 프레임, "bleach 전 = 1, 직후 = 0"이면 0) |
+| `bleach_depth` | 정규화 전 비율 R의 1 − 직후 / 전 |
 | `final`, `final_recovery` | 마지막 프레임 값, (마지막 − 직후) / (전 − 직후). 피팅 없이 구한 회복률 |
 | `plateau` | 피팅이 수렴하는 값 a + c |
 | `mobile_fraction` | a / (전 − c): 회복할 수 있는 비율 |
@@ -116,6 +122,8 @@ pre는 bleach 전 값(정규화하면 1)입니다.
   - `frap_group_curves.csv`: 그룹 평균 곡선 (bleach 기준 프레임, 시간, mean, SD, SEM, n, 피팅값).
   - `frap_groups.png` / `.pdf`: 그룹 평균 ± 에러바 그래프.
   - `frap_summary.png`: 그룹별 mobile fraction, t½, 최종 회복률 막대(평균 ± 에러바)와 이미지마다 점.
+  - `frap_formulas.txt`: 모든 값의 계산 공식(ROI 평균, 비율, 정규화, 피팅, mobile fraction,
+    t½ …)과 쓴 설정. 같은 내용이 모든 FRAP CSV 맨 위에 `#` 줄로도 들어갑니다.
   - 이미지마다 `<이름>_frap.csv`(프레임별 시간, 세 ROI 평균, 비율, 값, 피팅),
     `<이름>_frap.png`, `<이름>_frap_rois.zip`. **파일 › 이미지별 폴더에 나눠 저장**이 켜져
     있으면 이미지별 폴더에.

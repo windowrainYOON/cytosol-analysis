@@ -414,13 +414,22 @@ def condensate_mask(pre: np.ndarray, bleach: FrapRoi, threshold=None, sigma=1.0)
     return sm >= threshold, float(threshold)
 
 
+CONTROL_SOURCES = {'other': '주변의 다른 응집체 (강도가 가장 안정된 곳)',
+                   'same': '같은 응집체 안 (bleach 영역 밖)'}
+
+
 def place_control(mask: np.ndarray, bleach: FrapRoi, diameter=None, stack=None, frame=None,
-                  keep=0.7):
-    """(control ROI, note): a circle in the unbleached part of the condensate
-    under the bleach ROI (its deepest point), else in the nearest other one.
-    With the stack and the first post-bleach frame, a place that lost more
-    than 1 - keep of its signal at the bleach is skipped (a condensate that
-    was bleached as a whole has no unbleached part)."""
+                  keep=0.7, source='other', nearest=12, shifts=None):
+    """(control ROI, note).
+
+    source 'other': a circle in one of the `nearest` other condensates around
+    the bleached one, the one whose mean changes least over the series
+    (smallest coefficient of variation; one that lost more than 1 - keep of its
+    signal at the bleach is skipped). source 'same': the unbleached part of
+    the bleached condensate (its deepest point); a place that lost more than
+    1 - keep at the bleach counts as bleached too. Each falls back to the
+    other when it finds nothing. shifts: (T, 2) drift of the field, so that
+    the candidates are measured where they are on each frame."""
     from scipy import ndimage as ndi
 
     bm = bleach.mask(mask.shape)
@@ -432,44 +441,77 @@ def place_control(mask: np.ndarray, bleach: FrapRoi, diameter=None, stack=None, 
     hit = hit[hit > 0]
     bw, bh = bleach.size()
     want = diameter or max(3, int(round(min(bw, bh))))
-    cands = []
-    if hit.size:
-        cands.append((np.isin(lab, hit) & ~away, 'same'))
-    # other condensates, nearest first
     cx, cy = bleach.center()
-    others = [l for l in range(1, n + 1) if l not in set(hit.tolist())]
-    if others:
-        com = ndi.center_of_mass(mask, lab, others)
-        order = np.argsort([math.hypot(x - cx, y - cy) for y, x in com])
-        cands += [(lab == others[i], 'other') for i in order[:25]]
-    first = None
-    same_bleached = False
-    for region, kind in cands:
+
+    def circle(region, same):
         if region.sum() < 5:
-            continue
+            return None
         dist = ndi.distance_transform_edt(region)
         r = float(dist.max())
-        if 2 * r < 3 and kind == 'same':
-            continue
+        if 2 * r < 3:
+            return None
         yy, xx = np.nonzero(dist >= min(r, want / 2) - 1e-9)
         # deepest enough points; nearest to the bleach ROI
         k = int(np.argmin((xx - cx) ** 2 + (yy - cy) ** 2))
         d = diameter or max(3, min(want, int(math.floor(2 * r))))
-        roi = FrapRoi.oval(xx[k] + 0.5, yy[k] + 0.5, d)
-        first = first or roi
-        if stack is not None and frame:
-            m = roi_means(stack[max(0, frame - 3):frame + 1], roi)
-            if not (np.isfinite(m).all() and m[-1] >= keep * m[:-1].mean()):
-                same_bleached |= kind == 'same'
-                continue  # bleached too
-        if kind == 'same':
+        return FrapRoi.oval(xx[k] + 0.5, yy[k] + 0.5, d)
+
+    def bleached(roi):
+        if stack is None or not frame:
+            return False
+        m = roi_means(stack[max(0, frame - 3):frame + 1], roi)
+        return not (np.isfinite(m).all() and m[-1] >= keep * m[:-1].mean())
+
+    def same_part():
+        if not hit.size:
+            return None, False
+        roi = circle(np.isin(lab, hit) & ~away, True)
+        if roi is None:
+            return None, False
+        return (None, True) if bleached(roi) else (roi, False)
+
+    def stable_other():
+        others = [l for l in range(1, n + 1) if l not in set(hit.tolist())]
+        if not others:
+            return None, None
+        com = ndi.center_of_mass(mask, lab, others)
+        order = np.argsort([math.hypot(x - cx, y - cy) for y, x in com])[:nearest]
+        best = first = None
+        for i in order:
+            roi = circle(lab == others[i], False)
+            if roi is None or not roi.inside(mask.shape):
+                continue
+            first = first or roi
+            if bleached(roi):
+                continue
+            if stack is None:
+                return roi, 0.0
+            m = roi_means_tracked(stack, roi, shifts)
+            if not np.isfinite(m).all() or m.mean() <= 0:
+                continue
+            cv = float(m.std() / m.mean())
+            if best is None or cv < best[1]:
+                best = (roi, cv)
+        return best if best is not None else (first, None)
+
+    if source == 'same':
+        roi, was_bleached = same_part()
+        if roi is not None:
             return roi, ''
-        if same_bleached:
-            return roi, ('응집체 전체가 bleach되어 bleach되지 않은 가장 가까운 다른 응집체에 두었습니다 '
-                         '(촬영 중 bleaching 보정용).')
-        return roi, '가장 가까운 다른 응집체에 두었습니다 (같은 응집체에 bleach되지 않은 부분이 부족함).'
-    if first is not None:
-        return first, 'bleach되지 않은 응집체를 찾지 못했습니다. Control ROI를 직접 옮기세요.'
+        roi, cv = stable_other()
+        if roi is not None:
+            why = ('응집체 전체가 bleach되어' if was_bleached
+                   else '같은 응집체에 bleach되지 않은 부분이 부족해')
+            return roi, f'{why} 주변의 다른 응집체(강도가 가장 안정된 곳)에 두었습니다.'
+        return None, '대조 위치를 찾지 못했습니다. Control ROI를 직접 옮기세요.'
+    roi, cv = stable_other()
+    if roi is not None and cv is not None:
+        return roi, ''
+    alt, _ = same_part()
+    if alt is not None:
+        return alt, '주변에 다른 응집체가 없어 같은 응집체의 bleach되지 않은 부분에 두었습니다.'
+    if roi is not None:
+        return roi, 'bleach되지 않은 응집체를 찾지 못했습니다. Control ROI를 직접 옮기세요.'
     return None, '대조 위치를 찾지 못했습니다. Control ROI를 직접 옮기세요.'
 
 
@@ -514,8 +556,10 @@ def file_bleach_frame(info, nt) -> int | None:
     return None
 
 
-def auto_place(st: FrapState, stack: np.ndarray, file_rois=(), file_frame=None) -> FrapState:
-    """Fill in every ROI and value of st that is set to automatic."""
+def auto_place(st: FrapState, stack: np.ndarray, file_rois=(), file_frame=None,
+               control_source='other', track=None) -> FrapState:
+    """Fill in every ROI and value of st that is set to automatic
+    (control_source: see place_control; track(roi): (T, 2) drift around a ROI, or None)."""
     T, H, W = stack.shape
     st.notes = []
     if st.auto.get('bleach', True) or 'bleach' not in st.rois:
@@ -549,7 +593,8 @@ def auto_place(st: FrapState, stack: np.ndarray, file_rois=(), file_frame=None) 
     st.threshold = thr
     if st.auto.get('control', True) or 'control' not in st.rois:
         roi, note = place_control(mask, bleach, None if st.control_d_auto else st.control_d,
-                                  stack, st.bleach_frame)
+                                  stack, st.bleach_frame, source=control_source,
+                                  shifts=track(bleach) if track is not None else None)
         if roi is not None:
             st.rois['control'] = roi
             if st.control_d_auto:
@@ -667,7 +712,9 @@ class FrapCurve:
     times: np.ndarray  # s from the first frame
     bleach_frame: int
     means: dict  # roi name -> (T,) means
-    normalize: str = 'first'  # 'first', 'pre' or '' (none)
+    # 'full': pre-bleach (mean of the frames before) = 1, first post-bleach frame = 0;
+    # 'first' / 'pre': divided by the first frame / the mean of the pre-bleach frames; '': none
+    normalize: str = 'full'
     channel: str = ''
     roi_text: dict = field(default_factory=dict)
     bleach_radius_um: float | None = None  # circular bleach ROI: for the D estimate
@@ -675,6 +722,7 @@ class FrapCurve:
     fit: FrapFit | None = None
     drift: dict = field(default_factory=dict)  # roi name -> (T, 2) x, y movement (px); {} = not corrected
     drift_mode: str = ''  # 'roi' (tracked around the ROIs), 'image' (whole field) or '' (off)
+    control_source: str = ''  # 'other' / 'same' (see place_control) or 'manual'
 
     def max_drift(self, name='bleach') -> float:
         """Largest distance (px) the ROI was moved from its place on the first frame."""
@@ -689,18 +737,28 @@ class FrapCurve:
 
     @property
     def pre_value(self) -> float:
+        """Pre-bleach ratio (first frame for 'first', else the mean of the frames before the bleach)."""
         r = self.ratio
-        if self.normalize == 'pre' and self.bleach_frame > 0:
+        if self.normalize != 'first' and self.bleach_frame > 0:
             return float(np.nanmean(r[:self.bleach_frame]))
         return float(r[0])
 
     @property
+    def post_value(self) -> float:
+        """Ratio on the first post-bleach frame."""
+        r = self.ratio
+        return float(r[self.bleach_frame]) if self.bleach_frame < len(r) else float('nan')
+
+    @property
     def values(self) -> np.ndarray:
-        """The plotted recovery value: ratio, divided by the pre-bleach value when normalized."""
+        """The plotted recovery value: the ratio, normalized as set."""
         r = self.ratio
         if not self.normalize:
             return r
         pre = self.pre_value
+        if self.normalize == 'full':
+            span = pre - self.post_value
+            return (r - self.post_value) / span if span else r * np.nan
         return r / pre if pre else r * np.nan
 
     @property
@@ -716,14 +774,16 @@ class FrapCurve:
 
     def summary(self) -> dict:
         """The usual FRAP numbers (NaN where the fit failed)."""
+        pre = self.pre_value
+        depth = 1 - self.post_value / pre if pre else float('nan')
         return summary_values(self.values, self.bleach_frame, self.fit, self.t_rel,
-                              1.0 if self.normalize else self.pre_value, self.bleach_radius_um)
+                              1.0 if self.normalize else pre, self.bleach_radius_um, depth)
 
 
 SUMMARY_KEYS = [
     ('pre_bleach', 'bleach 전 값'),
     ('post_bleach', 'bleach 직후 값 (첫 프레임)'),
-    ('bleach_depth', 'bleach 깊이 (1 - 직후/전)'),
+    ('bleach_depth', 'bleach 깊이 (1 - 직후/전, 정규화 전 비율로)'),
     ('final', '마지막 프레임 값'),
     ('final_recovery', '최종 회복률 (마지막, (값-직후)/(전-직후))'),
     ('plateau', '피팅 plateau (a + c)'),
@@ -739,14 +799,16 @@ SUMMARY_KEYS = [
 ]
 
 
-def summary_values(values, bf, fit, t_rel, pre, radius_um=None) -> dict:
+def summary_values(values, bf, fit, t_rel, pre, radius_um=None, depth=None) -> dict:
+    """depth: bleach depth from the unscaled ratio (with post-bleach = 0 scaling
+    the values themselves no longer show it)."""
     v = np.asarray(values, float)
     nan = float('nan')
     post = float(v[bf]) if bf < len(v) else nan
     final = float(v[-1])
     span = pre - post
     out = {'pre_bleach': pre, 'post_bleach': post,
-           'bleach_depth': 1 - post / pre if pre else nan,
+           'bleach_depth': depth if depth is not None else 1 - post / pre if pre else nan,
            'final': final, 'final_recovery': (final - post) / span if span else nan}
     if fit is not None:
         out['fit_ok'] = 1.0 if fit.ok else 0.0
@@ -850,11 +912,50 @@ GROUP_COLORS = ['#d62728', '#1f77b4', '#2ca02c', '#9467bd', '#ff7f0e', '#8c564b'
 
 
 def _ylabel(normalize):
-    return ('Normalized recovery' if normalize else '(Bleach − Bg) / (Control − Bg)')
+    return {'full': 'Recovery (%)', '': '(Bleach − Bg) / (Control − Bg)'}.get(normalize, 'Normalized recovery')
+
+
+# group markers as in FRAP figures: open / filled squares, then circles, triangles, ...
+MARKERS = [('s', False), ('s', True), ('o', False), ('o', True), ('^', False), ('^', True),
+           ('D', False), ('D', True), ('v', False), ('v', True)]
+
+
+def _scale(normalize) -> float:
+    return 100.0 if normalize == 'full' else 1.0
+
+
+def _style(ax, normalize, tmax):
+    """Plain FRAP figure axes: left and bottom spines, ticks outside, no grid;
+    with post-bleach = 0 scaling the y axis is Recovery (%) from 0."""
+    for side in ('top', 'right'):
+        ax.spines[side].set_visible(False)
+    ax.tick_params(direction='out', length=3, width=0.8)
+    for side in ('left', 'bottom'):
+        ax.spines[side].set_linewidth(0.8)
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel(_ylabel(normalize))
+    if normalize == 'full':
+        lo, hi = ax.get_ylim()
+        ax.set_ylim(min(lo, -5), max(hi, 100) + 5)
+        ax.set_xlim(-0.04 * tmax, tmax * 1.04)
+    ax.grid(False)
+
+
+def _legend(ax, title=None):
+    if ax.get_legend_handles_labels()[0]:
+        leg = ax.legend(fontsize=7, frameon=False, loc='lower left', bbox_to_anchor=(0, 1.0),
+                        handletextpad=0.4, borderaxespad=0.2, title=title, title_fontsize=7,
+                        alignment='left')
+        leg.get_title().set_color('0.35')
+
+
+def _marker_kw(i, color='black'):
+    m, filled = MARKERS[i % len(MARKERS)]
+    return dict(marker=m, ms=4, mew=0.8, mec=color, mfc=color if filled else 'white', ls='none')
 
 
 def draw_curve(ax, curve: FrapCurve, show_fit=True, raw=False):
-    """One image: recovery (or the raw ROI means) against time."""
+    """One image: recovery (or the raw ROI means) against time after the bleach."""
     ax.clear()
     t = curve.t_rel
     if raw:
@@ -862,45 +963,55 @@ def draw_curve(ax, curve: FrapCurve, show_fit=True, raw=False):
             ax.plot(t, curve.means[n], '-o', ms=3, lw=1.2, color=np.array(ROI_COLORS[n]) / 255,
                     label=ROI_TITLES[n])
         ax.set_ylabel('Mean intensity')
-    else:
-        ax.plot(t, curve.values, 'o', ms=4, color='#d62728', label=curve.label)
-        if show_fit and curve.fit is not None and not curve.fit.ok:
-            ax.plot([], [], ' ', label=f'fit: {curve.fit.problem}')
-        elif show_fit and curve.fit is not None:
-            x = np.linspace(0, t[-1], 200)
-            ax.plot(x, curve.fit.value(x), '-', lw=1.4, color='0.2',
-                    label=f'fit: t½ {curve.fit.half_time:.3g} s, Mf {curve.fit.mobile:.2f}')
-        ax.set_ylabel(_ylabel(curve.normalize))
-    ax.axvline(0, color='0.6', lw=0.8, ls='--')
-    ax.set_xlabel('Time after bleach (s)')
-    ax.grid(True, color='0.88', lw=0.6)
-    ax.legend(fontsize=7, frameon=False)
+        ax.axvline(0, color='0.6', lw=0.8, ls='--')
+        ax.set_xlabel('Time after bleach (s)')
+        ax.grid(True, color='0.88', lw=0.6)
+        ax.legend(fontsize=7, frameon=False)
+        return
+    k = _scale(curve.normalize)
+    # post-bleach = 0 scaling shows the recovery from the bleach on, as FRAP figures do
+    show = t >= 0 if curve.normalize == 'full' else np.ones(len(t), bool)
+    ax.plot(t[show], curve.values[show] * k, label=curve.label, zorder=3, **_marker_kw(0))
+    if show_fit and curve.fit is not None and not curve.fit.ok:
+        ax.plot([], [], ' ', label=f'fit: {curve.fit.problem}')
+    elif show_fit and curve.fit is not None:
+        x = np.linspace(0, t[-1], 200)
+        ax.plot(x, curve.fit.value(x) * k, '-', lw=1.0, color='black',
+                label=f'fit: t½ {curve.fit.half_time:.3g} s, Mf {curve.fit.mobile:.2f}')
+    if curve.normalize != 'full':
+        ax.axvline(0, color='0.6', lw=0.8, ls='--')
+    _style(ax, curve.normalize, float(np.nanmax(t)))
+    _legend(ax)
 
 
 def draw_groups(ax, groups: list[GroupCurve], error='sem', show_fit=True, members=False):
-    """Mean curve of each group with error bars (SD or SEM)."""
+    """Mean curve of each group (markers) with error bars (SD or SEM) and its fit (line)."""
     ax.clear()
+    norm = groups[0].members[0].normalize if groups and groups[0].members else 'full'
+    k = _scale(norm)
+    tmax = 1.0
     for i, g in enumerate(groups):
-        col = GROUP_COLORS[i % len(GROUP_COLORS)]
+        show = g.offset >= 0 if norm == 'full' else np.ones(len(g.t), bool)
         if members:
             for c in g.members:
-                ax.plot(c.t_rel, c.values, '-', lw=0.6, color=col, alpha=0.3)
+                sm = c.t_rel >= 0 if norm == 'full' else np.ones(len(c.t_rel), bool)
+                ax.plot(c.t_rel[sm], c.values[sm] * k, '-', lw=0.5, color='0.6', alpha=0.6, zorder=1)
         err = g.sem if error == 'sem' else g.sd
-        ax.errorbar(g.t, g.mean, yerr=np.nan_to_num(err), fmt='o', ms=3.5, capsize=2, lw=1,
-                    color=col, label=f'{g.name} (n={len(g.members)})')
+        ax.errorbar(g.t[show], g.mean[show] * k, yerr=np.nan_to_num(err[show]) * k, capsize=1.5,
+                    elinewidth=0.7, ecolor='black', zorder=3,
+                    label=f'{g.name} (n={len(g.members)})', **_marker_kw(i))
         if show_fit and g.fit is not None and g.fit.ok:
             x = np.linspace(0, np.nanmax(g.t), 200)
-            ax.plot(x, g.fit.value(x), '-', lw=1.3, color=col, alpha=0.8)
-    ax.axvline(0, color='0.6', lw=0.8, ls='--')
-    ax.set_xlabel('Time after bleach (s)')
-    norm = groups[0].members[0].normalize if groups and groups[0].members else 'first'
-    ax.set_ylabel(_ylabel(norm) + f' (mean ± {error.upper()})')
-    ax.grid(True, color='0.88', lw=0.6)
-    if groups:
-        ax.legend(fontsize=7, frameon=False)
+            ax.plot(x, g.fit.value(x) * k, '-', lw=1.0, color='black', zorder=2)
+        tmax = max(tmax, float(np.nanmax(g.t)))
+    if norm != 'full':
+        ax.axvline(0, color='0.6', lw=0.8, ls='--')
+    _style(ax, norm, tmax)
+    ax.set_ylabel(_ylabel(norm) + f' (mean ± {error.upper()})' if norm != 'full' else _ylabel(norm))
+    _legend(ax, f'mean ± {error.upper()}' if norm == 'full' else None)
 
 
-def save_figure(path, draw, size=(5, 3.5)) -> str:
+def save_figure(path, draw, size=(4, 3.4)) -> str:
     """draw(ax) on a new figure saved as PNG/TIFF (300 dpi), PDF or SVG."""
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
@@ -950,6 +1061,59 @@ def save_summary_figure(path, groups: list[GroupCurve], error='sem') -> str:
 # ---------------------------------------------------------------------------
 
 
+NORMALIZE_TEXT = {
+    'full': 'F(t) = (R(t) - R_post) / (R_pre - R_post): pre-bleach = 1 (100 %), first post-bleach frame = 0 '
+            '(R_pre = mean of R over the frames before the bleach, R_post = R on the first post-bleach frame)',
+    'first': 'F(t) = R(t) / R(first frame)',
+    'pre': 'F(t) = R(t) / R_pre (R_pre = mean of R over the frames before the bleach)',
+    '': 'F(t) = R(t) (not normalized)',
+}
+
+
+def formula_lines(normalize='full', drift_mode='', control_source='', error='sem') -> list[str]:
+    """How every number in the FRAP outputs is computed, with the settings used."""
+    drift = {'roi': 'on, tracked around the ROIs', 'image': 'on, whole image'}.get(drift_mode, 'off')
+    src = {'other': 'a neighbouring condensate whose mean changes least over the series',
+           'same': 'the unbleached part of the bleached condensate',
+           'manual': 'placed by hand'}.get(control_source, '')
+    lines = [
+        'FRAP formulas (Cytosol FRAP measurement)',
+        'B(t), C(t), BG(t) = mean intensity in the Bleach, Control and Background ROIs on frame t '
+        '(ImageJ Measure Mean; integer-bounded oval / rectangle masks as ImageJ, polygons by PolygonFiller)',
+        f'Drift correction: {drift}' + ('; the ROIs are moved by the movement (dx, dy) of each frame, rounded '
+                                        'to whole pixels, found by sub-pixel cross-correlation with a key frame'
+                                        if drift_mode else ''),
+    ]
+    if src:
+        lines.append(f'Control ROI: {src}')
+    lines += [
+        'R(t) = (B(t) - BG(t)) / (C(t) - BG(t))   (double normalization, Phair et al. 2004)',
+        'Normalization: ' + NORMALIZE_TEXT.get(normalize, NORMALIZE_TEXT['']),
+        'Recovery (%) = 100 * F(t)' if normalize == 'full' else '',
+        't = s after the first post-bleach frame',
+        'Fit (ImageJ CurveFitter "Exponential recovery", least squares over the frames from the bleach on): '
+        'F(t) = a * (1 - exp(-k * t)) + c',
+        'plateau = a + c',
+        'mobile_fraction Mf = a / (F_pre - c), F_pre = 1 when normalized; immobile_fraction = 1 - Mf',
+        'tau_s = 1 / k; half_time_s t1/2 = ln 2 / k; initial_rate_per_s = a * k',
+        'final_recovery = (F_last - F_post) / (F_pre - F_post); bleach_depth = 1 - R_post / R_pre',
+        'fit_ok = 0 when a <= 0, k <= 0, F_pre - c <= 0 or t1/2 is longer than the observed time '
+        '(then the fitted numbers are left empty)',
+        'D_um2_per_s = 0.224 * r^2 / t1/2 (Soumpasis 1983; circular bleach ROI of radius r in um)',
+        f'Groups: frames aligned on the bleach frame; mean, SD (n - 1), SEM = SD / sqrt(n); '
+        f'error bars = {error.upper()}; the group mean curve is fitted with the same function',
+    ]
+    return [x for x in lines if x]
+
+
+def write_formulas(path, normalize='full', drift_mode='', control_source='', error='sem') -> str:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('\n'.join(formula_lines(normalize, drift_mode, control_source, error)) + '\n',
+                    encoding='utf-8')
+    return str(path)
+
+
 def _f(v):
     try:
         v = float(v)
@@ -966,12 +1130,8 @@ def write_curve_csv(path, curve: FrapCurve) -> str:
         for k, v in curve.properties.items():
             f.write(f'# {k} = {v}\n')
         f.write(f'# channel = {curve.channel}\n# bleach_frame = {curve.bleach_frame + 1}\n')
-        f.write('# drift_correction = ' + {'roi': 'tracked around the ROIs', 'image': 'whole image'}
-                .get(curve.drift_mode, 'off') + (' (ROIs moved by dx, dy on each frame, rounded to whole '
-                                                 'pixels)' if curve.drift else '') + '\n')
-        f.write('# value = (bleach - background) / (control - background)'
-                + {'first': ', / first frame', 'pre': ', / mean of pre-bleach frames'}.get(curve.normalize, '')
-                + '\n')
+        for line in formula_lines(curve.normalize, curve.drift_mode, curve.control_source):
+            f.write(f'# {line}\n')
         for n in ROI_NAMES:
             f.write(f'# {n}_roi = {curve.roi_text.get(n, "")}\n')
         w = csv.writer(f)
@@ -996,8 +1156,9 @@ def write_summary_csv(path, curves: list[FrapCurve], groups: list[GroupCurve] = 
     path.parent.mkdir(parents=True, exist_ok=True)
     keys = [k for k, _ in SUMMARY_KEYS]
     with path.open('w', newline='', encoding='utf-8') as f:
-        f.write('# value = (bleach - background) / (control - background); fit y = a*(1-exp(-k*t)) + c '
-                'over the frames from the bleach on (t: s after the first post-bleach frame)\n')
+        c0 = curves[0] if curves else FrapCurve('', '', np.zeros(1), 0, {})
+        for line in formula_lines(c0.normalize, c0.drift_mode, c0.control_source):
+            f.write(f'# {line}\n')
         w = csv.writer(f)
         w.writerow(['row', 'group', 'image', 'n', 'stat', 'channel', 'bleach_frame', 'frames',
                     'max_drift_px'] + keys)
@@ -1029,6 +1190,10 @@ def write_group_curves_csv(path, groups: list[GroupCurve], error='sem') -> str:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('w', newline='', encoding='utf-8') as f:
+        c0 = next((g.members[0] for g in groups if g.members), None)
+        if c0 is not None:
+            for line in formula_lines(c0.normalize, c0.drift_mode, c0.control_source, error):
+                f.write(f'# {line}\n')
         w = csv.writer(f)
         w.writerow(['group', 'frame_from_bleach', 'time_after_bleach_s', 'mean', 'sd', 'sem', 'n', 'fit'])
         for g in groups:

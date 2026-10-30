@@ -31,11 +31,12 @@ feature is added; keep the bracketed words only when the 입자 ROI tab's
 > MorphoLibJ plugin) on the background-subtracted image (grey opening, as in
 > ImageJ's Subtract Background) down to 30% of each spot's peak (or by a
 > manual threshold); FRAP recovery was quantified as the mean intensity of
-> the bleached region relative to an unbleached reference region of the same
-> condensate (or, when the whole condensate was bleached, a neighbouring
-> unbleached one), each after subtracting a background region of the bleach
-> region's size, normalised to the pre-bleach value (double normalisation,
-> Phair et al., 2004), with ROI means as in ImageJ's Measure function and
+> the bleached region relative to an unbleached reference region (a
+> neighbouring condensate whose intensity varied least over the series, or
+> the unbleached part of the bleached condensate), each after subtracting a
+> background region of the bleach region's size (double normalisation,
+> Phair et al., 2004) and scaled to 1 before and 0 right after bleaching
+> (full-scale normalisation), with ROI means as in ImageJ's Measure function and
 > the ROIs moved on every frame by the lateral drift found by sub-pixel
 > cross-correlation with a key frame (as in Fiji's Correct 3D Drift plugin),
 > and fitted with ImageJ's Curve Fitter "Exponential recovery" function

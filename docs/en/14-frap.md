@@ -22,11 +22,12 @@ Measure's Mean).
 | ROI | Colour | Automatic position |
 |---|---|---|
 | **Bleach** (B) | red | The bleach region recorded in the file (Zeiss CZI bleach regions, Olympus/Evident OIR stimulation regions). Without a record: the place that became darkest and stayed dark compared with the frames before (the outer 4 % of the image is left out) |
-| **Control** (C) | green | The innermost point of the bleached condensate outside the bleach region (its size may differ from Bleach). If the whole condensate was bleached: the nearest other condensate that was not bleached (corrects for bleaching during imaging) |
+| **Control** (C) | green | Chosen with **위치** (position) under Control, for all images: **주변의 다른 응집체 (강도가 가장 안정된 곳)** (default): of the 12 condensates nearest the bleached one, the one whose mean changes least over the series (smallest coefficient of variation, measured where it is on each frame when drift correction is on). **같은 응집체 안 (bleach 영역 밖)**: the innermost point of the bleached condensate outside the bleach region; if the whole condensate was bleached, the most stable neighbouring one. Its size may differ from Bleach |
 | **Background** (BG) | blue | The Bleach ROI's shape and size, at the nearest place without condensate signal |
 
 Control skips places whose signal falls by more than 30 % at the bleach frame
-(they were bleached too). Hints about the automatic positions appear in orange
+(they were bleached too). A Control dragged by hand stays where it is.
+ Hints about the automatic positions appear in orange
 under the ROI box.
 
 ## Moving ROIs
@@ -72,7 +73,7 @@ does not matter.
 | Setting | Meaning |
 |---|---|
 | **채널** (Channel) | Channel measured (the channel with the same name on every image) |
-| **bleach 전 강도로 정규화** (Normalize to pre-bleach, on by default) | Divides the value by its pre-bleach value (pre-bleach = 1), taken from the **첫 프레임** (first frame) or the **bleach 전 프레임 평균** (mean of the pre-bleach frames). This is the double normalization of Phair et al. (2004) |
+| **bleach 전 강도로 정규화** (Normalize to pre-bleach, on by default) | **bleach 전 = 1, 직후 = 0** (default): (value − value on the first post-bleach frame) / (mean of the pre-bleach frames − that value), shown as Recovery (%) (full-scale normalization). **첫 프레임 = 1** / **bleach 전 프레임 평균 = 1**: the value divided by the first frame / the pre-bleach mean. All are on top of the double normalization of Phair et al. (2004) |
 | **bleach 후 첫 프레임** (first frame after bleaching) + **자동** | 1-based. Auto: the file's bleach record (CZI bleach events, OIR pre-bleach frame count), else the frame where the Bleach ROI drops most |
 | Bleach **지름** (diameter) + **자동** | Diameter of the detected circle when the file has no record (auto: the circle with the darkened area's size). A bleach region from the file keeps its own shape |
 | Control **지름** + **자동** | Control circle diameter (auto: the largest circle up to the Bleach ROI's size that fits in the condensate) |
@@ -93,6 +94,12 @@ Choose in the **그래프** list:
   `No group`. **개별 곡선도 표시** also draws each image's curve faintly. Use
   three or more images per group for error bars (fewer are flagged).
 
+The graphs are drawn like FRAP figures in papers: Recovery (%) from 0 against
+Time (s) from the bleach, black markers per group (open square, filled square,
+open circle, …) with error bars, the fitted curve as a black line, the legend
+above the plot, and no grid or top / right axes. (With the other normalizations
+the pre-bleach frames are shown too, with a dashed line at the bleach.)
+
 The FRAP numbers are shown under the graph.
 
 ## FRAP numbers
@@ -103,9 +110,9 @@ post-bleach frame). "pre" is the pre-bleach value (1 when normalized).
 
 | Column | Meaning |
 |---|---|
-| `pre_bleach` | Pre-bleach value |
-| `post_bleach` | Value right after the bleach (first post-bleach frame) |
-| `bleach_depth` | 1 − post / pre |
+| `pre_bleach` | Pre-bleach value (1 when normalized) |
+| `post_bleach` | Value right after the bleach (first post-bleach frame; 0 with bleach 전 = 1, 직후 = 0) |
+| `bleach_depth` | 1 − post / pre of the ratio R before normalization |
 | `final`, `final_recovery` | Last frame's value; (last − post) / (pre − post), a recovery without a fit |
 | `plateau` | Value the fit levels off at, a + c |
 | `mobile_fraction` | a / (pre − c): the fraction that can recover |
@@ -130,6 +137,9 @@ From the **FRAP 측정** menu:
   - `frap_groups.png` / `.pdf`: group means ± error bars;
   - `frap_summary.png`: mobile fraction, t½ and final recovery per group (bars
     with mean ± error, one dot per image);
+  - `frap_formulas.txt`: how every number is computed (ROI means, ratio,
+    normalization, fit, mobile fraction, t½, …) with the settings used; the
+    same lines head every FRAP CSV as `#` lines;
   - per image `<name>_frap.csv` (time, the three ROI means, ratio, value and
     fit per frame), `<name>_frap.png` and `<name>_frap_rois.zip`, in per-image
     folders when **파일 › 이미지별 폴더에 나눠 저장** is on.
