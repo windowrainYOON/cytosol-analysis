@@ -553,6 +553,23 @@ that lays images out as a table with row and column labels:
 
 From Python: `cytosol.figure` (`FigureSpec`, `fill_row_by_channels`, `save_figure`).
 
+### 그래프 편집 창 (graph editor)
+
+`View › 현재 탭의 그래프 편집 창` (`Ctrl+G`), `Tool › (feature) › 그래프 편집 창…` or the
+button under each tab's graph opens that graph (FRAP curves and group means, line profile,
+distance bands, Coloc 2 histogram, the measurement tables of 세포질 ROI / 입자 ROI / 강도 측정)
+in its own window: the graph and its settings in the top 70 %, the data in the bottom 30 %.
+It starts as the tab draws it; chart type (XY, bars, dot plot, box, violin, histogram,
+heat map), x / y / error columns, filters, per-value split and mean / median aggregation,
+every series' color, line and marker shape and size, error bar look, axis ranges and tick
+spacing (automatic by default, the values in use shown), log axes, fonts (family, size,
+bold, italic, color), legend (position, title, extra entries) and text boxes can be
+changed; text boxes and the legend are dragged on the graph. Exports: PNG / TIFF / PDF /
+SVG, the plotted data, a selected series, the summary (n, mean, SD, SEM, …) and every result
+table as CSV, and the settings as JSON (`format: cytosol-viewer-graph`, also loadable as a
+style only). Code: `cytosol.graph` (model, drawing), `cytosol.graph_window`,
+`cytosol.graph_sources` (each tab's graph).
+
 Run from source: `python -m cytosol.app [files…]`
 
 Build the macOS app: `./build_mac.sh` → `dist/Cytosol Viewer.app`

@@ -78,6 +78,15 @@ owner writes in Korean, so reply in Korean.
     action, its saves and its loads (`import_kind_dialog(kind)`, kinds in
     `IMPORT_KINDS`; it only pre-filters the file chooser, `import_paths`
     still detects by content).
+  - **그래프 편집 창** (owner request 2026-10-30, v0.46): every feature graph
+    opens in its own window (`MainWindow.open_graph(key)`, sources in
+    `MainWindow.graph_sources()` → `graph_sources.py`): a ‘그래프 편집 창…’
+    button under each tab's graph / measurement table (`_graph_buttons`),
+    Tool › feature › 그래프 편집 창 (`_graph_action`), View › 현재 탭의 그래프
+    편집 창 (`Ctrl+G`) and View › 그래프 편집 창 › …. It opens with the
+    tab's graph; a new feature graph gets a `graph_sources` function and an
+    entry in `graph_sources()`. Every new graph option belongs in
+    `GraphSpec` / `Series` (saved and loaded with it).
   - Rule from the owner (2026-10-26, v0.25): every feature gets its own
     menu (since v0.41 a submenu of **Tool**, next to 파일) with its own save
     and load items; a new feature's menu goes under Tool (`tools.addMenu`); only bulk saving
@@ -139,6 +148,7 @@ owner writes in Korean, so reply in Korean.
 | `stack.py`, `stack_panel.py` | Z projections (2D) and 3D rotation views |
 | `marker_panel.py` | Scale bar, time stamp, bleach ROI display |
 | `figure.py`, `figure_window.py` | Figure window (image table, insets, scale bars, per-cell / per-inset brightness, PNG/TIFF/PDF/SVG) |
+| `graph.py`, `graph_window.py`, `graph_sources.py` | 그래프 편집 창: `GraphSpec` (every graph setting, JSON `format: cytosol-viewer-graph`) drawn by `graph.draw` from result `Table`s; `GraphWindow` (graph + settings top 70 %, data table bottom 30 %, drag text boxes / legend); `graph_sources` turns each tab's graph into `GraphData` |
 | `groups.py`, `image_tree.py` | Image groups and the grouped image list |
 | `flow.py` | `FlowLayout` and `reflow` (panel rows that follow the pane width) |
 | `project.py` | `.cyproj` project files (see below) |
@@ -262,4 +272,4 @@ not affected.
 | #57 | 0.41 | Tool menu next to 파일: every feature menu (LUT … Figure) moved under it unchanged (Tool › FRAP 측정 › 불러오기 …) |
 | #58 | 0.42 | FRAP group graph: check boxes pick the groups drawn (`groups_hidden`, saved in projects), 그룹별로 정규화 option |
 | #60 | 0.43 | View menu next to Tool: open / close each feature tab (check items in step with Tool › … 탭 열기 and the tab ×), open / close all |
-| this PR | 0.44 | FRAP: 그룹별로 정규화 removed (owner: normalize per image); group means are of each image's own normalized curve (pre-bleach = 1, post-bleach = 0); group check boxes kept |
+| #59 | 0.44 | FRAP: 그룹별로 정규화 removed (owner: normalize per image); group means are of each image's own normalized curve (pre-bleach = 1, post-bleach = 0); group check boxes kept |

@@ -38,6 +38,7 @@ Cytosol Viewer(v0.38)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
 | [강도 측정 탭](09-intensity.md) | 논리식 영역(예: `cyto - particle`)의 강도, 그리고 측정 탭들이 함께 쓰는 측정 결과 표 |
 | [이미지 정보 탭](10-image-info.md) | 획득 메타데이터 (레이저, 검출기, 대물렌즈, bleaching) |
 | [Figure 창](11-figure.md) | 행·열 이름, 확대 inset, scale bar가 있는 figure 표; PNG/TIFF/PDF/SVG |
+| [그래프 편집 창](16-graph.md) | 기능 탭의 그래프를 새 창에서: 그래프 종류, x·y 열, 색·굵기·글꼴·축·범례·글자 상자 수정, 그래프·데이터 내보내기 |
 | [저장되는 파일](12-output-files.md) | 프로그램이 쓰는 모든 파일과 폴더 불러오기 |
 
 Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, FRAP 측정, 스택 탭은 메뉴 막대의
@@ -54,6 +55,7 @@ Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, FR
 | 모든 분석 결과 통합 저장 (이미지별 폴더) | `Ctrl+Shift+E` |
 | 일괄 분석 실행 / 결과 보기 | `Ctrl+B` / `Ctrl+Shift+B` |
 | Figure 창 | `Ctrl+Shift+F`, 창 안에서 저장은 `Ctrl+S` |
+| 현재 탭의 그래프 편집 창 | `Ctrl+G`, 창 안에서 이미지 저장은 `Ctrl+S`, 다시 불러오기는 `Ctrl+R` |
 | 작업 기록 보기 | `Ctrl+Shift+L` |
 | 확대·축소 | `Cmd`(Windows `Ctrl`) + 위/아래 드래그, `]` 확대 / `[` 축소, **영역 확대** 또는 `Shift`+드래그로 사각형, 원래대로는 **화면 맞춤**. 민감도는 **파일 › 설정…** |
 | 마우스 휠 | 타임시리즈: 시점 이동(한 칸에 한 시점). 그 밖에는 화면 이동(스크롤) |

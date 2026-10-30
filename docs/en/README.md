@@ -43,6 +43,7 @@ appears on screen, followed by its meaning in parentheses, e.g.
 | [강도 측정 tab](09-intensity.md) | Intensity in regions defined by logic (e.g. `cyto - particle`), and the measurement table shared by all measuring tabs |
 | [이미지 정보 tab](10-image-info.md) | Acquisition metadata (lasers, detectors, objective, bleaching) |
 | [Figure window](11-figure.md) | Figure tables with labels, zoom insets, scale bars; PNG/TIFF/PDF/SVG |
+| [Graph editor window](16-graph.md) | A tab's graph in its own window: chart type, x / y columns, colors, widths, fonts, axes, legend, text boxes; export of the graph and its data |
 | [Output files](12-output-files.md) | Every file the program writes, and folder loading |
 
 The Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, FRAP 측정 and 스택 tabs
@@ -60,6 +61,7 @@ tab's results.
 | Save all results (one folder per image) | `Ctrl+Shift+E` |
 | Batch analysis / batch results | `Ctrl+B` / `Ctrl+Shift+B` |
 | Figure window | `Ctrl+Shift+F`; inside it, save with `Ctrl+S` |
+| Graph editor of the current tab | `Ctrl+G`; inside it, save the image with `Ctrl+S`, reload with `Ctrl+R` |
 | Work log | `Ctrl+Shift+L` |
 | Zoom | `Cmd` (Windows `Ctrl`) + drag up/down, `]` in / `[` out; **영역 확대** (zoom to area) or `Shift`+drag a rectangle; **화면 맞춤** (fit) to reset. Sensitivity in **파일 › 설정…** |
 | Mouse wheel | Time series: moves through time (one timepoint per notch). Otherwise scrolls the view |
