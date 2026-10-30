@@ -47,7 +47,10 @@ owner writes in Korean, so reply in Korean.
   `show_tab`, `hide_tab`, `tab_open`, `tab_current`). Panels ask
   `win.tab_current('<name>')` to know whether they are the visible tab
   (don't compare `right_tabs.currentIndex()` to fixed numbers).
-- **Menus** (`MainWindow._build_menus`): 파일, then Tool with the feature menus:
+- **Menus** (`MainWindow._build_menus`): 파일, then Tool with the feature menus,
+  then View (`view_menu`, v0.43): one check item per feature tab
+  (`view_actions`, kept in step with `tool_actions` by `_check_tab_actions`)
+  plus 모든 기능 탭 열기 / 닫기:
   - **파일**: 새 프로젝트, 불러오기 (자동 인식) / (폴더), 최근 프로젝트,
     프로젝트에서 설정(파이프라인)만 불러오기, 프로젝트 저장 / 다른 이름으로,
     일괄 분석 실행 / 결과 보기 / 결과 저장 / 설정 저장·불러오기, 모든 분석 결과
@@ -258,4 +261,5 @@ not affected.
 | #56 | 0.40 | FRAP: Control 위치 option (주변의 다른 응집체, default: the most stable of the 12 nearest, lowest CV measured along the drift / 같은 응집체 안), full-scale normalization by default (pre-bleach = 1, first post-bleach frame = 0, Recovery %), paper-style graphs (black open / filled markers, error bars, black fit lines, legend above, no grid), formulas in every FRAP CSV and `frap_formulas.txt` |
 | #57 | 0.41 | Tool menu next to 파일: every feature menu (LUT … Figure) moved under it unchanged (Tool › FRAP 측정 › 불러오기 …) |
 | #58 | 0.42 | FRAP group graph: check boxes pick the groups drawn (`groups_hidden`, saved in projects), 그룹별로 정규화 option |
-| this PR | 0.43 | FRAP: 그룹별로 정규화 removed (owner: normalize per image); group means are of each image's own normalized curve (pre-bleach = 1, post-bleach = 0); group check boxes kept |
+| #60 | 0.43 | View menu next to Tool: open / close each feature tab (check items in step with Tool › … 탭 열기 and the tab ×), open / close all |
+| this PR | 0.44 | FRAP: 그룹별로 정규화 removed (owner: normalize per image); group means are of each image's own normalized curve (pre-bleach = 1, post-bleach = 0); group check boxes kept |

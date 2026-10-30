@@ -1757,6 +1757,21 @@ class MainWindow(QMainWindow):
         act(sub, 'Figure 창 열기…', self.open_figure, 'Ctrl+Shift+F',
             'LUT/crop을 적용한 이미지로 행·열 표 형태의 figure 만들기 (저장은 Figure 창 안에서)')
 
+        # View: open / close each feature tab (same state as Tool › … 탭 열기)
+        self.view_menu = view = mb.addMenu('View')
+        self.view_actions = {}
+        for name, (_, title) in self.tab_pages.items():
+            a = QAction(title, self, checkable=True)
+            a.setToolTip(f'‘{title}’ 탭을 오른쪽에 열거나 닫습니다.')
+            a.setChecked(self.tab_open(name))
+            a.toggled.connect(lambda on, n=name: self.show_tab(n) if on else self.hide_tab(n))
+            view.addAction(a)
+            self.view_actions[name] = a
+        view.addSeparator()
+        act(view, '모든 기능 탭 열기', lambda: [self.show_tab(n, focus=False) for n in self.tab_pages])
+        act(view, '모든 기능 탭 닫기', lambda: [self.hide_tab(n) for n in self.tab_pages],
+            tip='LUT와 이미지 정보 탭은 항상 열려 있습니다.')
+
     def _measure_menu(self, menu, box):
         self._act(menu, '측정 CSV 저장 (현재 이미지)…', box.save_current)
         self._act(menu, '모든 이미지 측정 + 저장 (폴더)…', box.save_all, tip=box.save_tip)
@@ -1815,11 +1830,16 @@ class MainWindow(QMainWindow):
             tabs.insertTab(pos, page, title)
         if focus:
             tabs.setCurrentWidget(page)
-        act = getattr(self, 'tool_actions', {}).get(name)
-        if act is not None and not act.isChecked():
-            act.blockSignals(True)
-            act.setChecked(True)
-            act.blockSignals(False)
+        self._check_tab_actions(name, True)
+
+    def _check_tab_actions(self, name, on):
+        """Tick the tab's Tool › … 탭 열기 and View items without re-triggering them."""
+        for acts in (getattr(self, 'tool_actions', {}), getattr(self, 'view_actions', {})):
+            a = acts.get(name)
+            if a is not None and a.isChecked() != on:
+                a.blockSignals(True)
+                a.setChecked(on)
+                a.blockSignals(False)
 
     def hide_tab(self, name):
         if name is None:
@@ -1828,11 +1848,7 @@ class MainWindow(QMainWindow):
         i = self.right_tabs.indexOf(page)
         if i >= 0:
             self.right_tabs.removeTab(i)
-        act = getattr(self, 'tool_actions', {}).get(name)
-        if act is not None and act.isChecked():
-            act.blockSignals(True)
-            act.setChecked(False)
-            act.blockSignals(False)
+        self._check_tab_actions(name, False)
         if name == 'crop_tab':
             self.crop_btn.setChecked(False)
         elif name == 'profile_tab':

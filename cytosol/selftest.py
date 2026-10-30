@@ -817,12 +817,25 @@ def run(out_dir) -> int:
         tools = [a.text() for a in win.tool_menu.actions() if a.menu()]
         want = ['LUT', '마커', 'Crop', '세포질 ROI', '입자 ROI', '강도 측정', 'Coloc 2',
                 '라인 프로파일', 'FRAP 측정', '스택', '이미지 정보', 'Figure']
-        if menus != ['파일', 'Tool'] or tools != want or 'marker_tab' in win.tab_pages:
+        if menus != ['파일', 'Tool', 'View'] or tools != want or 'marker_tab' in win.tab_pages:
             raise AssertionError(f'menus: {menus} / Tool: {tools}')
         frap_items = [a.text() for a in next(a.menu() for a in win.tool_menu.actions()
                                              if a.text() == 'FRAP 측정').actions()]
         if 'FRAP ROI 불러오기…' not in frap_items or 'FRAP 측정 탭 열기' not in frap_items:
             raise AssertionError(f'Tool › FRAP 측정: {frap_items}')
+        # View opens / closes each feature tab, in step with Tool › … 탭 열기 and the tab's ×
+        win.view_actions['frap_tab'].setChecked(True)
+        if not win.tab_open('frap_tab') or not win.tool_actions['frap_tab'].isChecked():
+            raise AssertionError('View did not open the FRAP tab')
+        win.hide_tab('frap_tab')
+        if win.view_actions['frap_tab'].isChecked() or win.tool_actions['frap_tab'].isChecked():
+            raise AssertionError('View item still ticked after closing the tab')
+        win.tool_actions['stack_tab'].setChecked(True)
+        if not win.view_actions['stack_tab'].isChecked():
+            raise AssertionError('View item not ticked by Tool')
+        win.view_actions['stack_tab'].setChecked(False)
+        if win.tab_open('stack_tab') or list(win.view_actions) != list(win.tab_pages):
+            raise AssertionError('View did not close the 스택 tab')
         lut_page = win.right_tabs.widget(0)
         if not lut_page.isAncestorOf(win.markers):
             raise AssertionError('markers are not in the LUT tab')
