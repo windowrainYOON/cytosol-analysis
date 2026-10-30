@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -27,6 +29,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -92,19 +96,14 @@ class FrapPanel(QWidget):
         self.channel.setToolTip('측정할 채널 (모든 이미지에 같은 이름의 채널을 씁니다).')
         self.channel.currentIndexChanged.connect(self._channel_changed)
         fl.addRow('채널', self.channel)
-        self.normalize = QCheckBox('bleach 전 강도로 정규화')
+        # on: every image on its own to pre-bleach = 1, first post-bleach frame = 0, then group means
+        self.normalize = QCheckBox('정규화: 이미지마다 bleach 전 = 1, 직후 = 0')
         self.normalize.setChecked(True)
-        self.normalize.setToolTip('켜면 bleach 전 값을 1로 정규화합니다 (Phair의 double normalization).\n'
-                                  'bleach 전 = 1, 직후 = 0: (값 − 직후) / (bleach 전 평균 − 직후), '
-                                  'Recovery (%)로 표시\n'
-                                  '첫 프레임 / bleach 전 프레임 평균: 그 값으로 나눔')
-        self.norm_ref = QComboBox()
-        self.norm_ref.addItem('bleach 전 = 1, 직후 = 0', 'full')
-        self.norm_ref.addItem('첫 프레임 = 1', 'first')
-        self.norm_ref.addItem('bleach 전 프레임 평균 = 1', 'pre')
-        for w in (self.normalize, self.norm_ref):
-            (w.toggled if isinstance(w, QCheckBox) else w.currentIndexChanged).connect(self._settings_changed)
-        fl.addRow(_row(self.normalize, self.norm_ref))
+        self.normalize.setToolTip('(R − R_post) / (R_pre − R_post), R = (B − BG) / (C − BG), R_pre = bleach 전 '
+                                  '프레임 평균, R_post = bleach 후 첫 프레임. 그룹 평균 ± 에러바와 그래프는 이렇게 '
+                                  '정규화한 이미지 곡선들로 만듭니다. 끄면 R 그대로.')
+        self.normalize.toggled.connect(self._settings_changed)
+        fl.addRow(self.normalize)
         self._bf = QSpinBox()
         self._bf.setRange(1, 1)
         self._bf.setToolTip('bleach 바로 다음 프레임 (1부터). 이 프레임부터 회복 곡선을 피팅합니다.')
@@ -251,10 +250,25 @@ class FrapPanel(QWidget):
         # which groups the graph shows (names of the hidden ones, saved with the project)
         self.groups_hidden = QLineEdit()
         self.groups_hidden.setVisible(False)
+        # one row per group (ticked = drawn); scrolls when there are many groups
         self._group_pick = QWidget()
-        self._group_flow = FlowLayout(self._group_pick)
-        self._group_flow.setContentsMargins(0, 0, 0, 0)
-        self._group_checks = {}
+        gl = QVBoxLayout(self._group_pick)
+        gl.setContentsMargins(0, 0, 0, 0)
+        self.group_table = QTableWidget(0, 2)
+        self.group_table.setHorizontalHeaderLabels(['그룹 (체크 = 그래프에 표시)', 'n'])
+        self.group_table.verticalHeader().setVisible(False)
+        hh = self.group_table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.group_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.group_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.group_table.setMaximumHeight(150)
+        self.group_table.itemChanged.connect(self._group_ticked)
+        gl.addWidget(self.group_table)
+        all_on, all_off = QPushButton('모두 표시'), QPushButton('모두 숨기기')
+        all_on.clicked.connect(lambda: self._tick_all(True))
+        all_off.clicked.connect(lambda: self._tick_all(False))
+        gl.addLayout(_row(all_on, all_off))
         pl.addWidget(self._group_pick)
         self.fig = Figure(figsize=(4, 3), dpi=100, layout='constrained')
         self.ax = self.fig.add_subplot(111)
@@ -418,7 +432,7 @@ class FrapPanel(QWidget):
         return out
 
     def _norm(self) -> str:
-        return self.norm_ref.currentData() if self.normalize.isChecked() else ''
+        return 'full' if self.normalize.isChecked() else ''
 
     def curve_for(self, item, rois=None, progress=True) -> FrapCurve | None:
         """Measured curve of an image (rois: other positions, e.g. during a drag)."""
@@ -646,29 +660,42 @@ class FrapPanel(QWidget):
         hidden = self.hidden_groups()
         return [g for g in gs if g is not None and g.name not in hidden]
 
-    def _sync_group_checks(self, names):
-        """One check box per group above the graph (ticked = drawn)."""
-        hidden = self.hidden_groups()
-        if list(self._group_checks) != list(names):
-            for b in self._group_checks.values():
-                self._group_flow.removeWidget(b)
-                b.deleteLater()
-            self._group_checks = {}
-            for n in names:
-                b = QCheckBox(n)
-                b.setToolTip('그래프에 이 그룹을 표시')
-                b.toggled.connect(self._group_ticked)
-                self._group_flow.addWidget(b)
-                self._group_checks[n] = b
-        for n, b in self._group_checks.items():
-            b.blockSignals(True)
-            b.setChecked(n not in hidden)
-            b.blockSignals(False)
-        self._group_pick.setVisible(self.view.currentData() == 'groups' and len(names) > 0)
+    def group_rows(self) -> dict:
+        """Group name -> its check item in the table."""
+        t = self.group_table
+        return {t.item(r, 0).text(): t.item(r, 0) for r in range(t.rowCount())}
 
-    def _group_ticked(self, _):
-        hidden = self.hidden_groups() - set(self._group_checks)
-        hidden |= {n for n, b in self._group_checks.items() if not b.isChecked()}
+    def _sync_group_checks(self, gs):
+        """One table row per group above the graph (ticked = drawn)."""
+        hidden = self.hidden_groups()
+        t = self.group_table
+        t.blockSignals(True)
+        if list(self.group_rows()) != [g.name for g in gs]:
+            t.setRowCount(len(gs))
+            for r, g in enumerate(gs):
+                it = QTableWidgetItem(g.name)
+                it.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+                t.setItem(r, 0, it)
+        for r, g in enumerate(gs):
+            t.item(r, 0).setCheckState(Qt.CheckState.Unchecked if g.name in hidden else Qt.CheckState.Checked)
+            n = QTableWidgetItem(str(len(g.members)))
+            n.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            t.setItem(r, 1, n)
+        t.blockSignals(False)
+        self._group_pick.setVisible(self.view.currentData() == 'groups' and len(gs) > 0)
+
+    def _tick_all(self, on):
+        t = self.group_table
+        t.blockSignals(True)
+        for it in self.group_rows().values():
+            it.setCheckState(Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
+        t.blockSignals(False)
+        self._group_ticked()
+
+    def _group_ticked(self, *_):
+        rows = self.group_rows()
+        hidden = self.hidden_groups() - set(rows)
+        hidden |= {n for n, it in rows.items() if it.checkState() != Qt.CheckState.Checked}
         self.groups_hidden.setText(json.dumps(sorted(hidden), ensure_ascii=False))
         self.win.set_dirty()
         self._replot()
@@ -676,7 +703,7 @@ class FrapPanel(QWidget):
     def _plot_groups(self):
         try:
             all_gs = [g for g in self.groups() if g is not None]
-            self._sync_group_checks([g.name for g in all_gs])
+            self._sync_group_checks(all_gs)
             gs = self.shown(all_gs)
         except Exception as exc:
             traceback.print_exc()
@@ -704,7 +731,7 @@ class FrapPanel(QWidget):
         self.summary.setText('<br>'.join(lines))
 
     def _view_changed(self, _):
-        self._group_pick.setVisible(self.view.currentData() == 'groups' and bool(self._group_checks))
+        self._group_pick.setVisible(self.view.currentData() == 'groups' and self.group_table.rowCount() > 0)
         if self.view.currentData() != 'groups':
             self.refresh()
         else:

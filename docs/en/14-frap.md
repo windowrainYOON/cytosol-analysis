@@ -73,7 +73,7 @@ does not matter.
 | Setting | Meaning |
 |---|---|
 | **채널** (Channel) | Channel measured (the channel with the same name on every image) |
-| **bleach 전 강도로 정규화** (Normalize to pre-bleach, on by default) | **bleach 전 = 1, 직후 = 0** (default): (value − value on the first post-bleach frame) / (mean of the pre-bleach frames − that value), shown as Recovery (%) (full-scale normalization). **첫 프레임 = 1** / **bleach 전 프레임 평균 = 1**: the value divided by the first frame / the pre-bleach mean. All are on top of the double normalization of Phair et al. (2004) |
+| **정규화: 이미지마다 bleach 전 = 1, 직후 = 0** (normalize each image, on by default) | Each image on its own: (value − value on the first post-bleach frame) / (mean of the pre-bleach frames − that value), shown as Recovery (%) (full-scale normalization, on top of the double normalization of Phair et al. (2004)). Group means ± error bars and every graph use these normalized values. Off: the ratio R as is |
 | **bleach 후 첫 프레임** (first frame after bleaching) + **자동** | 1-based. Auto: the file's bleach record (CZI bleach events, OIR pre-bleach frame count), else the frame where the Bleach ROI drops most |
 | Bleach **지름** (diameter) + **자동** | Diameter of the detected circle when the file has no record (auto: the circle with the darkened area's size). A bleach region from the file keeps its own shape |
 | Control **지름** + **자동** | Control circle diameter (auto: the largest circle up to the Bleach ROI's size that fits in the condensate) |
@@ -93,17 +93,20 @@ Choose in the **그래프** list:
   frames aligned on the bleach frame. Images not in a group form one set,
   `No group`. **개별 곡선도 표시** also draws each image's curve faintly. Use
   three or more images per group for error bars (fewer are flagged).
-  - The groups appear as check boxes above the graph; only ticked groups are
-    drawn (and saved in `frap_groups.png` / `.pdf`; the CSV files keep all
-    groups). The choice is kept in the project.
-  - Each image's curve is normalized on its own first (with the default
-    normalization: pre-bleach = 1, first post-bleach frame = 0), then the
-    group mean ± SD / SEM is taken of those normalized curves.
+  - A table above the graph has one row per group (check box, group name,
+    number of images n); only ticked groups are drawn (and saved in
+    `frap_groups.png` / `.pdf`; the CSV files keep all groups). The table
+    scrolls when there are many groups; **모두 표시** / **모두 숨기기** tick or
+    untick all. The choice is kept in the project.
+  - With normalization on, each image's curve is normalized on its own first
+    (pre-bleach = 1, first post-bleach frame = 0), then the group mean ± SD /
+    SEM is taken of those normalized curves, so the group mean also starts
+    at 0 right after the bleach.
 
 The graphs are drawn like FRAP figures in papers: Recovery (%) from 0 against
 Time (s) from the bleach, black markers per group (open square, filled square,
 open circle, …) with error bars, the fitted curve as a black line, the legend
-above the plot, and no grid or top / right axes. (With the other normalizations
+above the plot, and no grid or top / right axes. (With normalization off
 the pre-bleach frames are shown too, with a dashed line at the bleach.)
 
 The FRAP numbers are shown under the graph.
