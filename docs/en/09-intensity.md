@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/09-intensity.md)
 
-Open or close this tab with **강도 측정 › 강도 측정 탭 열기** (Open 강도 측정 tab) in the menu bar. This tab's saves and loads are in the same **강도 측정** menu.
+Open or close this tab with **Tool › 강도 측정 › 강도 측정 탭 열기** (Open 강도 측정 tab) in the menu bar. This tab's saves and loads are in the same **강도 측정** menu.
 
 ## 강도 측정 tab
 
@@ -116,7 +116,7 @@ The 세포질 ROI, 입자 ROI and 강도 측정 tabs share the same measurement 
 
 ### Saving
 
-All three tabs with a measurement table save from their own menu in the
+All three tabs with a measurement table save from their own menu under **Tool** in the
 menu bar (**세포질 ROI**, **입자 ROI**, **강도 측정**).
 
 - **측정 CSV 저장 (현재 이미지)…** (Save measurement CSV, current image).

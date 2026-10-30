@@ -47,7 +47,7 @@ owner writes in Korean, so reply in Korean.
   `show_tab`, `hide_tab`, `tab_open`, `tab_current`). Panels ask
   `win.tab_current('<name>')` to know whether they are the visible tab
   (don't compare `right_tabs.currentIndex()` to fixed numbers).
-- **Menus** (`MainWindow._build_menus`), in this order:
+- **Menus** (`MainWindow._build_menus`): 파일, then Tool with the feature menus:
   - **파일**: 새 프로젝트, 불러오기 (자동 인식) / (폴더), 최근 프로젝트,
     프로젝트에서 설정(파이프라인)만 불러오기, 프로젝트 저장 / 다른 이름으로,
     일괄 분석 실행 / 결과 보기 / 결과 저장 / 설정 저장·불러오기, 모든 분석 결과
@@ -66,7 +66,9 @@ owner writes in Korean, so reply in Korean.
     `MainWindow.batch` (`BatchState`), saved in projects as `batch`. A new
     analysis feature should get a `STEPS` entry and a branch in `batch.run` /
     `save_results`.
-  - One menu per feature: **LUT** (이미지 내보내기, LUT 프리셋 저장/불러오기),
+  - **Tool** (`MainWindow.tool_menu`, owner request 2026-10-30, v0.41): one
+    submenu per feature, e.g. Tool › FRAP 측정 › FRAP ROI 불러오기…:
+    **LUT** (이미지 내보내기, LUT 프리셋 저장/불러오기),
     **마커** (설정 저장/불러오기, JSON with `format: cytosol-viewer-markers`),
     **Crop**, **세포질 ROI**, **입자 ROI**, **강도 측정**, **Coloc 2**,
     **라인 프로파일**, **FRAP 측정**, **스택**, **이미지 정보**, **Figure**. Each holds its tab
@@ -74,7 +76,8 @@ owner writes in Korean, so reply in Korean.
     `IMPORT_KINDS`; it only pre-filters the file chooser, `import_paths`
     still detects by content).
   - Rule from the owner (2026-10-26, v0.25): every feature gets its own
-    menu next to 파일 with its own save and load items; only bulk saving
+    menu (since v0.41 a submenu of **Tool**, next to 파일) with its own save
+    and load items; a new feature's menu goes under Tool (`tools.addMenu`); only bulk saving
     (통합 저장), projects and auto-detecting load stay in 파일. Panels keep no
     save/load buttons; they expose methods (`save_current`, `save_all`,
     `save_csv`, ...) that the menus call. Option widgets that belong to a
@@ -253,4 +256,5 @@ not affected.
 | #54 | 0.38 | 일괄 분석 (File menu): pick groups and analyses with check boxes, run them on all images of those groups, results window to open / fix / measure again, save only the batch results and settings (`batch_settings.json`, `format: cytosol-viewer-batch`); opening a project asks 전체 or 설정(파이프라인)만 |
 | #55 | 0.39 | Figure: brightness (Min/Max) per cell and per inset (`FigureCell.levels`, `Inset.levels`; 자동 = LUT tab, inset 자동 = the cell's), dropdown next to each channel check box picks LUT tab / this cell / another cell's or inset's levels (`FigureCell.level_from`), saved in projects |
 | #56 | 0.40 | FRAP: Control 위치 option (주변의 다른 응집체, default: the most stable of the 12 nearest, lowest CV measured along the drift / 같은 응집체 안), full-scale normalization by default (pre-bleach = 1, first post-bleach frame = 0, Recovery %), paper-style graphs (black open / filled markers, error bars, black fit lines, legend above, no grid), formulas in every FRAP CSV and `frap_formulas.txt` |
-| this PR | 0.41 | FRAP group graph: check boxes pick the groups drawn (`groups_hidden`, saved in projects), 그룹별로 정규화 (default on): each group's mean of R / R_pre scaled to pre-bleach = 1 / post-bleach = 0 with SD / SEM scaled alike (`group_curve(scale=True)`), group mean-curve fit under the graph |
+| #57 | 0.41 | Tool menu next to 파일: every feature menu (LUT … Figure) moved under it unchanged (Tool › FRAP 측정 › 불러오기 …) |
+| this PR | 0.42 | FRAP group graph: check boxes pick the groups drawn (`groups_hidden`, saved in projects), 그룹별로 정규화 (default on): each group's mean of R / R_pre scaled to pre-bleach = 1 / post-bleach = 0 with SD / SEM scaled alike (`group_curve(scale=True)`), group mean-curve fit under the graph |

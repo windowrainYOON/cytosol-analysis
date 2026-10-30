@@ -2,7 +2,7 @@
 
 [← Manual contents](README.md) · [한국어](../ko/14-frap.md)
 
-Open and close this tab with **FRAP 측정 › FRAP 측정 탭 열기** (Open FRAP tab) in the
+Open and close this tab with **Tool › FRAP 측정 › FRAP 측정 탭 열기** (Open FRAP tab) in the
 menu bar. The tab's saves and loads are in the same **FRAP 측정** menu.
 
 For bleach experiments with a time axis (T), the tab measures how far the
@@ -136,7 +136,7 @@ post-bleach frame). "pre" is the pre-bleach value (1 when normalized).
 
 ## Saving
 
-From the **FRAP 측정** menu:
+From the **Tool › FRAP 측정** menu:
 
 - **요약 저장: 모든 이미지·그룹 CSV + 그래프 (폴더)…** (save summary: all images
   and groups): measures every image with a time axis and writes at once

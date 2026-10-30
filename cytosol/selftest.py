@@ -812,12 +812,17 @@ def run(out_dir) -> int:
         win.tool_actions['coloc_tab'].setChecked(False)
         if win.tab_open('coloc_tab'):
             raise AssertionError('menu did not close the tab')
-        # one menu per feature next to 파일; the markers sit fixed in the LUT tab
+        # Tool next to 파일 holds one submenu per feature; the markers sit fixed in the LUT tab
         menus = [a.text() for a in win.menuBar().actions()]
-        want = ['파일', 'LUT', '마커', 'Crop', '세포질 ROI', '입자 ROI', '강도 측정', 'Coloc 2',
+        tools = [a.text() for a in win.tool_menu.actions() if a.menu()]
+        want = ['LUT', '마커', 'Crop', '세포질 ROI', '입자 ROI', '강도 측정', 'Coloc 2',
                 '라인 프로파일', 'FRAP 측정', '스택', '이미지 정보', 'Figure']
-        if menus != want or 'marker_tab' in win.tab_pages:
-            raise AssertionError(f'menus: {menus}')
+        if menus != ['파일', 'Tool'] or tools != want or 'marker_tab' in win.tab_pages:
+            raise AssertionError(f'menus: {menus} / Tool: {tools}')
+        frap_items = [a.text() for a in next(a.menu() for a in win.tool_menu.actions()
+                                             if a.text() == 'FRAP 측정').actions()]
+        if 'FRAP ROI 불러오기…' not in frap_items or 'FRAP 측정 탭 열기' not in frap_items:
+            raise AssertionError(f'Tool › FRAP 측정: {frap_items}')
         lut_page = win.right_tabs.widget(0)
         if not lut_page.isAncestorOf(win.markers):
             raise AssertionError('markers are not in the LUT tab')

@@ -113,8 +113,8 @@ A GUI for working on a whole set of images at once:
   or only its settings), **일괄 분석** (batch analysis per group, see below),
   **모든 분석 결과 통합 저장** (save all results), the
   work log (every lasting status message with time and image) and the
-  settings (mouse sensitivity). Next to it every feature has its own menu
-  (LUT, 마커, Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, 스택,
+  settings (mouse sensitivity). Next to it, the **Tool** menu holds one
+  submenu per feature (LUT, 마커, Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, 스택,
   이미지 정보, Figure) that opens its tab on the right and holds its own saves
   and loads. The **LUT** and **이미지 정보** tabs are always there; the marker
   settings are fixed at the bottom of the LUT tab.

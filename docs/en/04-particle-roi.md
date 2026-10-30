@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/04-particle-roi.md)
 
-Open or close this tab with **입자 ROI › 입자 ROI 탭 열기** (Open 입자 ROI tab) in the menu bar. This tab's saves and loads are in the same **입자 ROI** menu.
+Open or close this tab with **Tool › 입자 ROI › 입자 ROI 탭 열기** (Open 입자 ROI tab) in the menu bar. This tab's saves and loads are in the same **입자 ROI** menu.
 
 This tab finds particles (bright spots, puncta, condensates) in one channel
 inside each cell from the [세포질 ROI tab](03-cytosol-roi.md), or in the whole

@@ -1601,8 +1601,8 @@ class MainWindow(QMainWindow):
 
     def _build_menus(self):
         """파일 holds projects, loading by kind, the work log, settings and
-        saving everything at once; every feature has its own menu next to it
-        with its tab and its own saves and loads."""
+        saving everything at once; Tool next to it holds one submenu per
+        feature with its tab and its own saves and loads."""
         mb = self.menuBar()
         act = self._act
         self.tool_actions = {}  # feature tab name -> its checkable "탭 열기" action
@@ -1666,25 +1666,28 @@ class MainWindow(QMainWindow):
 
         rp, pp, ip, cp = self.roi_panel, self.particle_panel, self.intensity_panel, self.coloc_panel
 
-        sub = mb.addMenu('LUT')
+        # every feature menu sits under Tool (Tool › FRAP 측정 › …)
+        self.tool_menu = tools = mb.addMenu('Tool')
+
+        sub = tools.addMenu('LUT')
         act(sub, '이미지 내보내기 (TIFF / MP4)…', self.export_images_dialog, 'Ctrl+E')
         sub.addSeparator()
         act(sub, 'LUT 프리셋 저장…', self.save_preset,
             tip='현재 이미지의 채널 LUT를 JSON 파일로 저장합니다.')
         load_action(sub, 'LUT 프리셋 불러오기…', 'lut')
 
-        sub = mb.addMenu('마커')
+        sub = tools.addMenu('마커')
         act(sub, '마커 설정 저장…', self.save_marker_settings,
             tip='scale bar, 시간 표시, bleach ROI 표시 설정을 JSON 파일로 저장합니다.')
         load_action(sub, '마커 설정 불러오기…', 'marker')
 
-        sub = mb.addMenu('Crop')
+        sub = tools.addMenu('Crop')
         tab_action(sub, 'crop_tab')
         act(sub, 'Crop 영역 ROI 저장 (현재 이미지)…', self.save_crops_current)
         act(sub, 'Crop 영역 ROI 저장 (모든 이미지, 폴더)…', self.save_crops_all)
         load_action(sub, 'Crop 영역 ROI 불러오기…', 'crop')
 
-        sub = mb.addMenu('세포질 ROI')
+        sub = tools.addMenu('세포질 ROI')
         tab_action(sub, 'roi_tab')
         for a in (rp.save_cell, rp.save_nuc, rp.save_cyto):
             sub.addAction(a)
@@ -1695,14 +1698,14 @@ class MainWindow(QMainWindow):
         sub.addSeparator()
         self._measure_menu(sub, rp.measure)
 
-        sub = mb.addMenu('입자 ROI')
+        sub = tools.addMenu('입자 ROI')
         tab_action(sub, 'particle_tab')
         act(sub, '입자 ROI 저장 (현재 이미지)…', pp.save_particles_current)
         load_action(sub, '입자 ROI 불러오기…', 'particle')
         sub.addSeparator()
         self._measure_menu(sub, pp.measure)
 
-        sub = mb.addMenu('강도 측정')
+        sub = tools.addMenu('강도 측정')
         tab_action(sub, 'intensity_tab')
         self._measure_menu(sub, ip.measure)
         sub.addSeparator()
@@ -1711,7 +1714,7 @@ class MainWindow(QMainWindow):
             tip=ip.bands_measure.save_tip)
         act(sub, '등거리 띠 그래프 저장 (PNG / PDF / SVG / TIFF)…', ip.save_plot)
 
-        sub = mb.addMenu('Coloc 2')
+        sub = tools.addMenu('Coloc 2')
         tab_action(sub, 'coloc_tab')
         act(sub, 'CSV 저장 (현재 이미지)…', cp.save_csv,
             tip='현재 이미지의 결과 (ROI마다 한 행, 열 이름은 Coloc 2와 같음)')
@@ -1720,14 +1723,14 @@ class MainWindow(QMainWindow):
         act(sub, 'PDF 리포트 저장…', cp.save_pdf,
             tip='선택한 ROI의 히스토그램과 모든 값 (Coloc 2의 PDF와 같은 내용)')
 
-        sub = mb.addMenu('라인 프로파일')
+        sub = tools.addMenu('라인 프로파일')
         tab_action(sub, 'profile_tab')
         act(sub, 'CSV 저장…', self.profile_panel.save_csv)
         act(sub, '그래프 저장 (PNG / PDF / SVG / TIFF)…', self.profile_panel.save_plot)
         load_action(sub, '선 ROI 불러오기…', 'line')
 
         fp = self.frap_panel
-        sub = mb.addMenu('FRAP 측정')
+        sub = tools.addMenu('FRAP 측정')
         tab_action(sub, 'frap_tab')
         act(sub, '요약 저장: 모든 이미지·그룹 CSV + 그래프 (폴더)…', fp.save_all, tip=(
             'bleach 기록이 있는 모든 이미지를 측정해 frap_summary.csv (이미지·그룹별 mobile fraction, '
@@ -1740,17 +1743,17 @@ class MainWindow(QMainWindow):
         act(sub, 'FRAP ROI 저장 (현재 이미지)…', fp.save_rois_current)
         load_action(sub, 'FRAP ROI 불러오기…', 'frap')
 
-        sub = mb.addMenu('스택')
+        sub = tools.addMenu('스택')
         tab_action(sub, 'stack_tab')
         act(sub, '현재 투영 저장 (TIFF / MP4)…', lambda: self.stack_export_dialog('current'))
         act(sub, '3D 회전 시리즈 저장 (TIFF 스택 / MP4)…', lambda: self.stack_export_dialog('rotation'))
 
-        sub = mb.addMenu('이미지 정보')
+        sub = tools.addMenu('이미지 정보')
         act(sub, 'CSV 저장…', self.info_panel.save_csv)
         act(sub, '원본 메타데이터 저장…', self.info_panel.save_raw,
             tip='파일에 들어 있는 메타데이터 전체(CZI/OIR XML, TCF 속성)를 그대로 저장합니다.')
 
-        sub = mb.addMenu('Figure')
+        sub = tools.addMenu('Figure')
         act(sub, 'Figure 창 열기…', self.open_figure, 'Ctrl+Shift+F',
             'LUT/crop을 적용한 이미지로 행·열 표 형태의 figure 만들기 (저장은 Figure 창 안에서)')
 
