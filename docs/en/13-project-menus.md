@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/13-project-menus.md)
 
-The menu bar has two menus, **파일** (File) and **Tool**. **Tool** holds one
+The menu bar has three menus, **파일** (File), **Tool** and **View**. **Tool** holds one
 submenu per feature: **LUT**, **마커** (Markers), **Crop**, **세포질 ROI**,
 **입자 ROI**, **강도 측정**, **Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**,
 **이미지 정보** and **Figure**. Each feature menu opens that feature's tab and
@@ -11,9 +11,11 @@ holds the saves and loads that belong to it (for example
 everything at once are in the **파일** menu.
 
 The right panel starts with only the **LUT** tab (with the marker settings
-fixed at its bottom) and the **이미지 정보** (Image info) tab. **… 탭 열기**
-(Open … tab) in a feature menu adds that tab next to them; choosing it again
-or pressing the tab's × hides it. Settings and results stay while a tab is
+fixed at its bottom) and the **이미지 정보** (Image info) tab. Ticking a feature in the **View** menu (**Crop**, **세포질 ROI**, **입자 ROI**,
+**강도 측정**, **Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**) or **… 탭 열기**
+(Open … tab) in a feature menu adds that tab next to them; unticking it or
+pressing the tab's × hides it. **View › 모든 기능 탭 열기 / 닫기** (open / close
+all feature tabs) does it for every feature tab at once. Settings and results stay while a tab is
 hidden, and the open tabs are saved in the project.
 
 ## File menu
