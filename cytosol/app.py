@@ -3646,7 +3646,8 @@ class MainWindow(QMainWindow):
             boxes[suffix].write_summaries(out, int_rows)
         write_groups(Path(out) / GROUP_FILE, items)
         if frap_curves:
-            gs = [frap.group_curve(g, c) for g, c in frap_curves.items()]
+            gs = [frap.group_curve(g, c, self.frap_panel.group_norm.isChecked())
+                  for g, c in frap_curves.items()]
             frap.write_summary_csv(Path(out) / 'frap_summary.csv',
                                    [c for g in gs for c in g.members], gs)
             frap.write_group_curves_csv(Path(out) / 'frap_group_curves.csv', gs,

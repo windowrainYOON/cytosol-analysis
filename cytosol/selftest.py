@@ -1463,6 +1463,21 @@ def run(out_dir) -> int:
         app.processEvents()
         if 'n=3' not in fp.summary.text():
             raise AssertionError(f'FRAP group summary: {fp.summary.text()}')
+        # each group scaled on its own: mean pre-bleach = 1, first post-bleach frame = 0
+        g0 = fp.groups()[0]
+        if (not fp.group_norm.isChecked() or g0.normalize != 'group' or abs(g0.mean[g0.offset == 0][0]) > 1e-9
+                or abs(np.nanmean(g0.mean[g0.offset < 0]) - 1) > 1e-9):
+            raise AssertionError(f'FRAP group normalization: {g0.normalize}, {g0.mean[:7]}')
+        # groups picked for the graph
+        box = fp._group_checks.get('WT')
+        if box is None or not fp._group_pick.isVisibleTo(fp):
+            raise AssertionError(f'FRAP group check boxes: {list(fp._group_checks)}')
+        box.setChecked(False)
+        app.processEvents()
+        if fp.shown(fp.groups()) or 'WT' not in fp.hidden_groups():
+            raise AssertionError('FRAP group not hidden from the graph')
+        box.setChecked(True)
+        app.processEvents()
         files = fp.save_all(out / 'frap', ask=False)
         names = {Path(f).name for f in files}
         need = {'frap_summary.csv', 'frap_summary.png', 'frap_groups.png', 'frap_group_curves.csv',

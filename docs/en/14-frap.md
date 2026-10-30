@@ -93,6 +93,17 @@ Choose in the **그래프** list:
   frames aligned on the bleach frame. Images not in a group form one set,
   `No group`. **개별 곡선도 표시** also draws each image's curve faintly. Use
   three or more images per group for error bars (fewer are flagged).
+  - The groups appear as check boxes above the graph; only ticked groups are
+    drawn (and saved in `frap_groups.png` / `.pdf`; the CSV files keep all
+    groups). The choice is kept in the project.
+  - **그룹별로 정규화 (bleach 전 = 1, 직후 = 0)** (normalize each group, on by
+    default): each group on its own, the images' curves divided by their
+    pre-bleach value (R / R_pre) are averaged, and that mean curve is scaled
+    so its pre-bleach frames average 1 and its first post-bleach frame is 0
+    (SD and SEM by the same factor). All groups then share one 0–100 % axis
+    whatever their bleach depth. The text under the graph adds the fit of
+    each group's mean curve. Off: the mean of the images' own normalized
+    curves.
 
 The graphs are drawn like FRAP figures in papers: Recovery (%) from 0 against
 Time (s) from the bleach, black markers per group (open square, filled square,

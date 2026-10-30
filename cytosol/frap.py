@@ -840,10 +840,27 @@ class GroupCurve:
     n: np.ndarray
     members: list  # FrapCurve
     fit: FrapFit | None = None
+    # 'group': the mean curve itself scaled to pre-bleach = 1, first post-bleach frame = 0;
+    # else the members' own normalization ('full', 'first', 'pre', '')
+    normalize: str = 'full'
+    scaling: tuple = (0.0, 1.0)  # 'group': (m_post, m_pre - m_post) applied to R / R_pre
+
+    def member_values(self, c: FrapCurve) -> np.ndarray:
+        """One member's curve on the group's scale."""
+        if self.normalize != 'group':
+            return c.values
+        post, span = self.scaling
+        pre = c.pre_value
+        return (c.ratio / pre - post) / span if pre and span else c.ratio * np.nan
 
 
-def group_curve(name, curves: list[FrapCurve]) -> GroupCurve | None:
-    """Mean ± SD / SEM of the curves, frames aligned on the bleach frame."""
+def group_curve(name, curves: list[FrapCurve], scale=False) -> GroupCurve | None:
+    """Mean ± SD / SEM of the curves, frames aligned on the bleach frame.
+
+    scale: normalize the group as a whole: the mean of each image's R / R_pre
+    is scaled so that its pre-bleach frames average 1 and the first
+    post-bleach frame is 0, and SD / SEM by the same factor (each group on its
+    own, so groups of different bleach depth share one 0-100 % axis)."""
     if not curves:
         return None
     lo = -min(c.bleach_frame for c in curves)
@@ -853,7 +870,11 @@ def group_curve(name, curves: list[FrapCurve]) -> GroupCurve | None:
     ts = np.full_like(vals, np.nan)
     for i, c in enumerate(curves):
         j = np.arange(len(c.times)) - c.bleach_frame - lo
-        vals[i, j] = c.values
+        if scale:
+            pre = c.pre_value
+            vals[i, j] = c.ratio / pre if pre else np.nan
+        else:
+            vals[i, j] = c.values
         ts[i, j] = c.t_rel
     import warnings
 
@@ -865,9 +886,21 @@ def group_curve(name, curves: list[FrapCurve]) -> GroupCurve | None:
         sd = np.where(n > 1, sd, np.nan)
         sem = sd / np.sqrt(np.maximum(n, 1))
         t = np.nanmean(ts, 0)
-    g = GroupCurve(name, off, t, mean, sd, sem, n, list(curves))
     post = off >= 0
-    pre = 1.0 if curves[0].normalize else float(np.nanmean(mean[~post])) if (~post).any() else float(mean[0])
+    norm = curves[0].normalize
+    if scale:
+        m_pre = float(np.nanmean(mean[~post])) if (~post).any() else 1.0
+        m_post = float(mean[off == 0][0])
+        span = m_pre - m_post
+        if span and np.isfinite(span):
+            mean = (mean - m_post) / span
+            sd, sem = sd / abs(span), sem / abs(span)
+        else:
+            m_post, span = 0.0, 1.0
+        norm = 'group'
+    g = GroupCurve(name, off, t, mean, sd, sem, n, list(curves), normalize=norm,
+                   scaling=(m_post, span) if scale else (0.0, 1.0))
+    pre = 1.0 if norm else float(np.nanmean(mean[~post])) if (~post).any() else float(mean[0])
     g.fit = fit_recovery(t[post], mean[post], pre)
     return g
 
@@ -987,7 +1020,8 @@ def draw_curve(ax, curve: FrapCurve, show_fit=True, raw=False):
 def draw_groups(ax, groups: list[GroupCurve], error='sem', show_fit=True, members=False):
     """Mean curve of each group (markers) with error bars (SD or SEM) and its fit (line)."""
     ax.clear()
-    norm = groups[0].members[0].normalize if groups and groups[0].members else 'full'
+    norm = groups[0].normalize if groups else 'full'
+    norm = 'full' if norm == 'group' else norm
     k = _scale(norm)
     tmax = 1.0
     for i, g in enumerate(groups):
@@ -995,7 +1029,8 @@ def draw_groups(ax, groups: list[GroupCurve], error='sem', show_fit=True, member
         if members:
             for c in g.members:
                 sm = c.t_rel >= 0 if norm == 'full' else np.ones(len(c.t_rel), bool)
-                ax.plot(c.t_rel[sm], c.values[sm] * k, '-', lw=0.5, color='0.6', alpha=0.6, zorder=1)
+                ax.plot(c.t_rel[sm], g.member_values(c)[sm] * k, '-', lw=0.5, color='0.6', alpha=0.6,
+                        zorder=1)
         err = g.sem if error == 'sem' else g.sd
         ax.errorbar(g.t[show], g.mean[show] * k, yerr=np.nan_to_num(err[show]) * k, capsize=1.5,
                     elinewidth=0.7, ecolor='black', zorder=3,
@@ -1070,7 +1105,8 @@ NORMALIZE_TEXT = {
 }
 
 
-def formula_lines(normalize='full', drift_mode='', control_source='', error='sem') -> list[str]:
+def formula_lines(normalize='full', drift_mode='', control_source='', error='sem',
+                  group_scaled=False) -> list[str]:
     """How every number in the FRAP outputs is computed, with the settings used."""
     drift = {'roi': 'on, tracked around the ROIs', 'image': 'on, whole image'}.get(drift_mode, 'off')
     src = {'other': 'a neighbouring condensate whose mean changes least over the series',
@@ -1102,15 +1138,20 @@ def formula_lines(normalize='full', drift_mode='', control_source='', error='sem
         'D_um2_per_s = 0.224 * r^2 / t1/2 (Soumpasis 1983; circular bleach ROI of radius r in um)',
         f'Groups: frames aligned on the bleach frame; mean, SD (n - 1), SEM = SD / sqrt(n); '
         f'error bars = {error.upper()}; the group mean curve is fitted with the same function',
+        'Group normalization (each group on its own): m(t) = mean over the images of R(t) / R_pre; '
+        'G(t) = (m(t) - m_post) / (m_pre - m_post), m_pre = mean of m over the pre-bleach frames, m_post = m '
+        'on the first post-bleach frame; SD and SEM divided by (m_pre - m_post); per-image rows of the summary '
+        'keep the per-image normalization' if group_scaled else '',
     ]
     return [x for x in lines if x]
 
 
-def write_formulas(path, normalize='full', drift_mode='', control_source='', error='sem') -> str:
+def write_formulas(path, normalize='full', drift_mode='', control_source='', error='sem',
+                   group_scaled=False) -> str:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('\n'.join(formula_lines(normalize, drift_mode, control_source, error)) + '\n',
-                    encoding='utf-8')
+    path.write_text('\n'.join(formula_lines(normalize, drift_mode, control_source, error, group_scaled))
+                    + '\n', encoding='utf-8')
     return str(path)
 
 
@@ -1157,7 +1198,8 @@ def write_summary_csv(path, curves: list[FrapCurve], groups: list[GroupCurve] = 
     keys = [k for k, _ in SUMMARY_KEYS]
     with path.open('w', newline='', encoding='utf-8') as f:
         c0 = curves[0] if curves else FrapCurve('', '', np.zeros(1), 0, {})
-        for line in formula_lines(c0.normalize, c0.drift_mode, c0.control_source):
+        for line in formula_lines(c0.normalize, c0.drift_mode, c0.control_source,
+                                  group_scaled=any(g.normalize == 'group' for g in groups)):
             f.write(f'# {line}\n')
         w = csv.writer(f)
         w.writerow(['row', 'group', 'image', 'n', 'stat', 'channel', 'bleach_frame', 'frames',
@@ -1171,7 +1213,7 @@ def write_summary_csv(path, curves: list[FrapCurve], groups: list[GroupCurve] = 
             for j, stat in enumerate(('mean', 'sd', 'sem')):
                 w.writerow(['group', g.name, '', len(g.members), stat, '', '', '', '']
                            + [_f(gs[k][j]) for k in keys])
-            pre = 1.0 if g.members and g.members[0].normalize else g.fit.pre if g.fit else float('nan')
+            pre = 1.0 if g.normalize else g.fit.pre if g.fit else float('nan')
             r_um = [c.bleach_radius_um for c in g.members if c.bleach_radius_um]
             fs = summary_values(g.mean, int(np.argmax(g.offset >= 0)), g.fit, g.t, pre,
                                 float(np.mean(r_um)) if r_um else None)
@@ -1192,7 +1234,8 @@ def write_group_curves_csv(path, groups: list[GroupCurve], error='sem') -> str:
     with path.open('w', newline='', encoding='utf-8') as f:
         c0 = next((g.members[0] for g in groups if g.members), None)
         if c0 is not None:
-            for line in formula_lines(c0.normalize, c0.drift_mode, c0.control_source, error):
+            for line in formula_lines(c0.normalize, c0.drift_mode, c0.control_source, error,
+                                      any(g.normalize == 'group' for g in groups)):
                 f.write(f'# {line}\n')
         w = csv.writer(f)
         w.writerow(['group', 'frame_from_bleach', 'time_after_bleach_s', 'mean', 'sd', 'sem', 'n', 'fit'])
