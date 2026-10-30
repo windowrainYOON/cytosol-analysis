@@ -3649,7 +3649,9 @@ class MainWindow(QMainWindow):
             gs = [frap.group_curve(g, c) for g, c in frap_curves.items()]
             frap.write_summary_csv(Path(out) / 'frap_summary.csv',
                                    [c for g in gs for c in g.members], gs)
-            frap.write_group_curves_csv(Path(out) / 'frap_group_curves.csv', gs)
+            frap.write_group_curves_csv(Path(out) / 'frap_group_curves.csv', gs,
+                                        self.frap_panel.error.currentData())
+            self.frap_panel.write_formulas(Path(out) / 'frap_formulas.txt', [c for g in gs for c in g.members])
             self.frap_panel.write_plot(Path(out) / 'frap_groups.png', groups=gs)
             frap.save_summary_figure(Path(out) / 'frap_summary.png', gs,
                                      self.frap_panel.error.currentData())

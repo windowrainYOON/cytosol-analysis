@@ -76,7 +76,8 @@ class FrapPanel(QWidget):
 
         help_ = QLabel('bleach 실험의 회복 곡선: 값 = (Bleach − Background) / (Control − Background). '
                        'Bleach ROI는 파일에 기록된 bleach 영역(없으면 가장 크게 어두워진 곳), Control은 '
-                       '같은 응집체의 bleach되지 않은 부분, Background는 Bleach ROI와 같은 크기로 응집체 '
+                       '주변 응집체 중 강도가 가장 안정된 곳(또는 같은 응집체의 bleach되지 않은 부분), '
+                       'Background는 Bleach ROI와 같은 크기로 응집체 '
                        '신호가 없는 가까운 곳에 자동으로 놓입니다. 이미지 위에서 ROI를 끌어 옮기면 값과 '
                        '그래프가 바로 바뀝니다.')
         help_.setWordWrap(True)
@@ -92,11 +93,14 @@ class FrapPanel(QWidget):
         fl.addRow('채널', self.channel)
         self.normalize = QCheckBox('bleach 전 강도로 정규화')
         self.normalize.setChecked(True)
-        self.normalize.setToolTip('켜면 값을 bleach 전 값으로 나눕니다 (bleach 전 = 1). '
-                                  'Phair의 double normalization과 같습니다.')
+        self.normalize.setToolTip('켜면 bleach 전 값을 1로 정규화합니다 (Phair의 double normalization).\n'
+                                  'bleach 전 = 1, 직후 = 0: (값 − 직후) / (bleach 전 평균 − 직후), '
+                                  'Recovery (%)로 표시\n'
+                                  '첫 프레임 / bleach 전 프레임 평균: 그 값으로 나눔')
         self.norm_ref = QComboBox()
-        self.norm_ref.addItem('첫 프레임', 'first')
-        self.norm_ref.addItem('bleach 전 프레임 평균', 'pre')
+        self.norm_ref.addItem('bleach 전 = 1, 직후 = 0', 'full')
+        self.norm_ref.addItem('첫 프레임 = 1', 'first')
+        self.norm_ref.addItem('bleach 전 프레임 평균 = 1', 'pre')
         for w in (self.normalize, self.norm_ref):
             (w.toggled if isinstance(w, QCheckBox) else w.currentIndexChanged).connect(self._settings_changed)
         fl.addRow(_row(self.normalize, self.norm_ref))
@@ -147,7 +151,8 @@ class FrapPanel(QWidget):
         self._auto_roi = {}
         self._roi_info = {}
         tips = {'bleach': '파일의 bleach 영역, 없으면 두 프레임 사이에 가장 크게 어두워진 곳',
-                'control': '같은 응집체에서 bleach 영역 밖의 가장 안쪽 (없으면 가장 가까운 다른 응집체)',
+                'control': '아래에서 고른 곳 (주변의 다른 응집체 중 강도가 가장 안정된 곳 / 같은 응집체의 '
+                           'bleach 영역 밖)',
                 'background': 'Bleach ROI와 같은 모양·크기로, 응집체 신호가 없는 가장 가까운 곳'}
         colors = {n: '#%02x%02x%02x' % frap.ROI_COLORS[n] for n in ROI_NAMES}
         for n in ROI_NAMES:
@@ -179,6 +184,15 @@ class FrapPanel(QWidget):
                 self._bleach_d_row.setLayout(drow)
                 rl.addWidget(self._bleach_d_row)
             elif n == 'control':
+                self.control_src = QComboBox()
+                for key, text in frap.CONTROL_SOURCES.items():
+                    self.control_src.addItem(text, key)
+                self.control_src.setToolTip(
+                    '자동 Control 위치 (모든 이미지):\n주변의 다른 응집체: bleach한 응집체 둘레의 가까운 '
+                    '응집체들 중 시간에 따라 강도가 가장 적게 변하는 곳 (변동계수가 가장 작은 곳)\n'
+                    '같은 응집체 안: bleach한 응집체에서 bleach 영역 밖의 가장 안쪽')
+                self.control_src.currentIndexChanged.connect(self._control_src_changed)
+                rl.addLayout(_row(QLabel('위치'), self.control_src))
                 self._control_d = QSpinBox()
                 self._control_d.setRange(2, 2000)
                 self._control_d.setSuffix(' px')
@@ -336,12 +350,17 @@ class FrapPanel(QWidget):
         if stack is None:
             stack = self.stack_for(item)
         info = item.image.metadata.get('bleach')
-        frap.auto_place(st, stack, item.bleach_rois, frap.file_bleach_frame(info, item.nt))
+        track = None
+        if self.drift.isChecked():
+            track = lambda roi: self.drift_for(item, {'bleach': roi}, stack)['bleach']  # noqa: E731
+        frap.auto_place(st, stack, item.bleach_rois, frap.file_bleach_frame(info, item.nt),
+                        self.control_src.currentData(), track)
         return st
 
     def _key(self, item, st) -> str:
         return json.dumps([self.channel_index(item), str(item.z), self._norm(),
-                           self._drift_key(), st.to_dict()], sort_keys=True)
+                           self._drift_key(), self.control_src.currentData(), st.to_dict()],
+                          sort_keys=True)
 
     def _drift_key(self):
         if not self.drift.isChecked():
@@ -420,7 +439,9 @@ class FrapPanel(QWidget):
                           self._norm(), item.channels[self.channel_index(item)],
                           {n: use[n].describe(px) for n in ROI_NAMES}, r_um,
                           dict(item.id_properties(), plane=self._plane_text(item)),
-                          drift=drift, drift_mode=self.drift_mode.currentData() if drift else '')
+                          drift=drift, drift_mode=self.drift_mode.currentData() if drift else '',
+                          control_source=self.control_src.currentData() if st.auto.get('control', True)
+                          else 'manual')
         curve.do_fit()
         if key is not None:
             self._curves[id(item)] = (key, curve)
@@ -777,6 +798,14 @@ class FrapPanel(QWidget):
         self.win.set_dirty()
         self.refresh()
 
+    def _control_src_changed(self, _):
+        if self._binding:
+            return
+        self._curves.clear()  # every image with an automatic Control is placed again
+        self.win.set_dirty()
+        self.win.statusBar().showMessage(f'FRAP Control 위치: {self.control_src.currentText()}')
+        self.refresh()
+
     def _settings_changed(self, *_):
         self.win.set_dirty()
         self.refresh()
@@ -910,6 +939,13 @@ class FrapPanel(QWidget):
             frap.save_rois(path, it.frap.rois, it.id_properties())
             self.win.statusBar().showMessage(f'FRAP ROI 저장: {path}')
 
+    def write_formulas(self, path, curves) -> str:
+        """frap_formulas.txt: how every number is computed, with the settings used."""
+        c = curves[0] if curves else None
+        return frap.write_formulas(path, c.normalize if c else self._norm(), c.drift_mode if c else '',
+                                   c.control_source if c else self.control_src.currentData(),
+                                   self.error.currentData())
+
     def save_all(self, out=None, ask=True, items=None) -> list[str]:
         """요약 저장: every image measured; per image the curve CSV, graph and
         ROIs, and for the set frap_summary.csv (FRAP numbers per image and
@@ -942,7 +978,9 @@ class FrapPanel(QWidget):
                     written.append(frap.save_rois(folder / f'{stem}_frap_rois.zip', it.frap.rois,
                                                   it.id_properties()))
             written.append(frap.write_summary_csv(out / 'frap_summary.csv', curves, gs))
-            written.append(frap.write_group_curves_csv(out / 'frap_group_curves.csv', gs))
+            written.append(frap.write_group_curves_csv(out / 'frap_group_curves.csv', gs,
+                                                       self.error.currentData()))
+            written.append(self.write_formulas(out / 'frap_formulas.txt', curves))
             for ext in ('.png', '.pdf'):
                 written.append(self.write_plot(out / f'frap_groups{ext}', groups=gs))
             written.append(frap.save_summary_figure(out / 'frap_summary.png', gs,
