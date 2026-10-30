@@ -2,11 +2,12 @@
 
 [← Manual index](README.md) · [한국어](../ko/13-project-menus.md)
 
-The menu bar has one menu per feature next to **파일** (File): **LUT**,
-**마커** (Markers), **Crop**, **세포질 ROI**, **입자 ROI**, **강도 측정**,
-**Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**, **이미지 정보** and **Figure**. Each
-feature menu opens that feature's tab and holds the saves and loads that
-belong to it. Projects, loading with automatic detection and saving
+The menu bar has two menus, **파일** (File) and **Tool**. **Tool** holds one
+submenu per feature: **LUT**, **마커** (Markers), **Crop**, **세포질 ROI**,
+**입자 ROI**, **강도 측정**, **Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**,
+**이미지 정보** and **Figure**. Each feature menu opens that feature's tab and
+holds the saves and loads that belong to it (for example
+**Tool › FRAP 측정 › FRAP ROI 불러오기…**). Projects, loading with automatic detection and saving
 everything at once are in the **파일** menu.
 
 The right panel starts with only the **LUT** tab (with the marker settings
@@ -37,7 +38,9 @@ hidden, and the open tabs are saved in the project.
 | **설정…** (Settings; on macOS in the app menu, `⌘,`) | | Mouse sensitivity (see [Settings](#settings)) |
 | **종료** (Quit) | `⌘Q` (macOS) | Asks first about unsaved changes |
 
-## Feature menus
+## Feature menus (Tool)
+
+All of them are under the **Tool** menu.
 
 | Menu | Items |
 |---|---|

@@ -123,7 +123,7 @@ and their colors and contrast set, in the
 ## Crop regions
 
 Crops are rectangular regions of an image that can be viewed, projected and
-exported on their own. Choose **Crop › Crop 탭 열기** (Open Crop tab) in the menu
+exported on their own. Choose **Tool › Crop › Crop 탭 열기** (Open Crop tab) in the menu
 bar to get the **Crop** tab on the right.
 
 1. Press **Crop 추가 (드래그)** (Add crop, drag) and drag on the image.
