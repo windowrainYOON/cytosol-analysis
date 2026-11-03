@@ -191,7 +191,7 @@ QStatusBar {{ background: {tint('background-secondary', GLASS_ALPHA)}; }}
     return f"""
 /* ---- surfaces: grouped background → raised groups ---- */
 QMainWindow, QDialog {{ background: {c('background-secondary')}; }}
-QWidget#hig_content {{ background: {c('background')}; }}
+QWidget#hig_content {{ background: {c('background-secondary')}; }}
 QScrollArea, QScrollArea > QWidget > QWidget#qt_scrollarea_viewport,
 QScrollArea > QWidget#qt_scrollarea_viewport {{ background: transparent; border: none; }}
 QSplitter::handle {{ background: {c('separator-opaque')}; }}
@@ -318,6 +318,7 @@ QRadioButton::indicator:unchecked:disabled {{ image: {url('radio_off_dis')}; }}
 
 /* ---- TabView: segmented tab row ---- */
 QTabWidget::pane {{ border: none; background: transparent; top: 0; }}
+QTabWidget#hig_inspector::pane {{ padding: 6px 10px 10px 12px; }}
 QTabWidget::tab-bar {{ alignment: center; }}
 QTabBar {{ background: transparent; }}
 QTabBar::tab {{

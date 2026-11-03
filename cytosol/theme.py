@@ -111,6 +111,7 @@ TEXT_ROLES = {
 }
 BODY_PT = 13.0
 NUMBER_MIN_W, SELECT_MIN_W = 80, 96  # FormRow control widths (desktop)
+NUMBER_MAX_W = 140  # a number field never spans a wide form row
 BODY_PX = 13  # Desktop body text (typography-desktop.md)
 
 _ROLE = 'hig_role'
@@ -399,6 +400,9 @@ class _Polisher(QObject):
             # to its size hint when the pane is wide enough
             if not obj.minimumWidth():
                 obj.setMinimumWidth(NUMBER_MIN_W)
+            # ... but not across a whole form row: a number field is short
+            if obj.maximumWidth() >= 16777215:
+                obj.setMaximumWidth(NUMBER_MAX_W)
         if ev.type() == QEvent.Type.Polish and isinstance(obj, QComboBox) \
                 and not obj.property('hig_sel') and not obj.minimumWidth():
             obj.setProperty('hig_sel', True)

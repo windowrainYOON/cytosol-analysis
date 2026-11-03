@@ -143,7 +143,7 @@ platform (macOS too) runs Fusion + `theme.palette()` + one app-wide style
 sheet generated from the tokens (`hig_style.stylesheet(scheme)`, light/dark,
 re-applied on colour-scheme change; indicator SVGs written to a temp dir):
 buttons (radius 6, height 28, `theme.prominent(btn)` = filled accent, at most
-2 per tab), fields / combos / steppers, `QCheckBox` = switch in panes but a
+2 per tab), fields / combos / steppers (number fields 80–140 px), `QCheckBox` = switch in panes but a
 check box inside a `QDialog` and in item views, `QGroupBox` = rounded card
 (`background-tertiary`, title above), tabs = centred segmented control,
 lists, menus, sliders, scroll bars. Surfaces: window and panes
@@ -334,4 +334,5 @@ not affected.
 | #63 | 0.47 | 그래프 편집 창 (owner request): plot area, title, axis labels, text boxes and legend are objects selected, moved and resized on the graph (handle; font size for text; `*_auto` / `plot_*` in `GraphSpec`); preview zoom like the image preview (scroll area, Cmd/Ctrl+drag, `[` `]`, Ctrl+wheel, fit); 데이터 menu imports any analysis result (`graph_sources(all_data=True)`, incl. 일괄 분석) or a CSV into a window, saved in projects (`_tables`); View › 그래프 편집 창 › 새 그래프 (empty window, keys `free<n>`); axis min / max / step / unit / value scale (`Axis.unit`, `Axis.scale`, unit conversion list) |
 | #64 | 0.48 | Apple HIG design system (owner request, desktop profile): `theme.py` maps the tokens onto Qt roles (native macOS look kept, Fusion + token palette light/dark elsewhere); help text in label-secondary text roles instead of fixed gray; warnings as StatusIndicator (dot + text); destructive buttons red, set apart, "동사 + 대상…" and confirmed with 취소 as default; no box in a box (markers, stack channel display); image list pane: actions on top, list last; graph editor desk uses a system role; measurement plots unchanged |
 | #65 | 0.49 | Full HIG visual style (owner request): token-generated app-wide style sheet on every platform (rounded buttons, filled accent main actions, switches, steppers, rounded group cards, segmented tabs, lists, menus, sliders), Liquid Glass sidebar material on macOS (`glass.py`, pyobjc), pane surfaces; measurement plots unchanged |
-| this PR | 0.49.1 | Glass only with the Cocoa platform plugin (offscreen self-test on macOS crashed in `glass.attach`) |
+| #66 | 0.49.1 | Glass only with the Cocoa platform plugin (offscreen self-test on macOS crashed in `glass.attach`) |
+| this PR | 0.49.2 | HIG polish after the Mac check: inspector pane padding (titles off the edge), number fields at most 140 px wide, centre background = window background (no black band), LUT tab main action filled, shorter bleach export switch text (marker card fits the pane) |
