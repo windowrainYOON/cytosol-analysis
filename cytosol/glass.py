@@ -25,6 +25,12 @@ _active = False
 def available() -> bool:
     if sys.platform != 'darwin':
         return False
+    # Only the Cocoa platform plugin gives an NSView as winId(); with
+    # offscreen / minimal (self-test, CI) it is not one and must not be used.
+    from PySide6.QtGui import QGuiApplication  # noqa: PLC0415
+
+    if QGuiApplication.platformName() != 'cocoa':
+        return False
     try:
         import AppKit  # noqa: F401, PLC0415
         import objc  # noqa: F401, PLC0415
