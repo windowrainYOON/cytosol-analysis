@@ -244,7 +244,7 @@ class ParticlePanel(QWidget):
         self.shape_boxes = {}
         for i, k in enumerate(SHAPES):
             text, tip = SHAPE_TITLES[k]
-            b = QCheckBox(text)
+            b = theme.chip(QCheckBox(text))
             b.setToolTip(tip)
             b.setChecked(True)
             b.toggled.connect(lambda _: self.measure.schedule())

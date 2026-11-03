@@ -1,8 +1,8 @@
-# 마커 (Markers, at the bottom of the LUT tab: scale bar, time stamp, bleach ROIs)
+# 마커 (Markers tab: scale bar, time stamp, bleach ROIs)
 
 [← Manual index](README.md) · [한국어](../ko/05-markers.md)
 
-The marker settings are always shown in the **마커** box at the bottom of the **LUT** tab (drag the border above it to resize). The **Tool › 마커** menu in the menu bar saves and loads them ([below](#saving-and-loading-the-settings)).
+The marker settings have their own **마커** tab next to **LUT** (always open). The **Tool › 마커** menu in the menu bar saves and loads them ([below](#saving-and-loading-the-settings)).
 
 The markers set here are drawn on the preview and burned into every RGB
 export (TIFF and MP4) and 스택 tab save. Raw-value stacks never get

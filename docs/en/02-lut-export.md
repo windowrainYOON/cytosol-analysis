@@ -3,7 +3,9 @@
 [← Manual index](README.md) · [한국어](../ko/02-lut-export.md)
 
 The **LUT** tab (always open) sets how each channel is displayed (its LUT);
-the [marker settings](05-markers.md) sit fixed at its bottom. Images are
+it scrolls as one page: **모든 채널 LUT를 전체 이미지에 적용** (apply all
+channel LUTs to every image) on top, then channel visibility, then every
+channel's LUT. The [marker settings](05-markers.md) have their own tab. Images are
 exported with **Tool › LUT › 이미지 내보내기 (TIFF / MP4)…** in the menu bar. The LUTs set here are used by the preview, every RGB export, the 스택 tab
 (when linked) and the Figure window.
 

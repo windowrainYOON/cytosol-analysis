@@ -42,6 +42,7 @@ from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPale
 from PySide6.QtWidgets import (
     QAbstractButton,
     QAbstractSpinBox,
+    QCheckBox,
     QComboBox,
     QApplication,
     QFormLayout,
@@ -252,7 +253,95 @@ def section_header(text: str) -> QLabel:
     f.setWeight(QFont.Weight.DemiBold)
     lab.setFont(f)
     lab.setProperty(_ROLE, '')  # keep the weight on refresh; colour still follows
+    lab.setProperty('hig_section', True)  # starts on the inset row grid line (style sheet)
     return lab
+
+
+# ---- selection controls (owner rule 2026-11-03) -----------------------------
+# check box: one on / off option (the default QCheckBox look)
+# switch:    only the 자동 / 수동 choice of a value (``switch``; check boxes
+#            whose text starts with '자동' become switches automatically)
+# chip:      several short values picked together (multi-select chips)
+# radio:     one of several (QRadioButton); sub-tabs inside a panel are
+#            choice chips (style sheet)
+
+def _restyle(w: QWidget):
+    st = w.style()
+    st.unpolish(w)
+    st.polish(w)
+    w.updateGeometry()
+
+
+def switch(box: QWidget) -> QWidget:
+    """Toggle switch: reserved for the 자동 / 수동 choice."""
+    box.setProperty('hig_switch', True)
+    box.setProperty('hig_chip', False)
+    _restyle(box)
+    return box
+
+
+def chip(box: QWidget) -> QWidget:
+    """Multi-select chip (capsule with a check mark when on)."""
+    box.setProperty('hig_chip', True)
+    box.setProperty('hig_switch', False)
+    _restyle(box)
+    return box
+
+
+def is_auto_choice(box) -> bool:
+    t = box.text().strip()
+    return t == '자동' or t.startswith('자동 ') or t.startswith('자동(')
+
+
+# ---- one layout system for every inspector page -------------------------------
+
+PAGE_SPACING = 12  # between groups (plus the 24 px title band of the next group)
+GROUP_MARGINS = (12, 10, 12, 12)  # inset row padding 12: titles, labels, controls align
+GROUP_SPACING = 8
+FORM_H_SPACING = 12
+FORM_V_SPACING = 8
+
+
+def unify(page: QWidget):
+    """Give an inspector page the one layout system of the design system:
+    the page itself without margins (the pane pads it), every group the same
+    inner padding (12: the grid line that group titles, section headers, form
+    labels and first controls share), the same gaps, and holder widgets
+    without the style's default margins so nothing steps off the grid."""
+    from PySide6.QtWidgets import QGroupBox, QLayout, QStyle, QTabWidget  # noqa: PLC0415
+
+    pm = page.style().pixelMetric(QStyle.PixelMetric.PM_LayoutLeftMargin)
+
+    def default_margins(lay: QLayout) -> bool:
+        m = lay.contentsMargins()
+        return {m.left(), m.top(), m.right(), m.bottom()} <= {pm, 9, 11}
+
+    def forms(lay):
+        if lay is None:
+            return
+        if isinstance(lay, QFormLayout):
+            lay.setHorizontalSpacing(FORM_H_SPACING)
+            lay.setVerticalSpacing(FORM_V_SPACING)
+        for i in range(lay.count()):
+            forms(lay.itemAt(i).layout())
+
+    if not page.objectName():
+        page.setObjectName('hig_page')  # text outside the groups starts on the grid line too
+    root = page.layout()
+    if root is not None:
+        root.setContentsMargins(0, 0, 4, 12)
+        root.setSpacing(PAGE_SPACING)
+    for w in page.findChildren(QWidget):
+        lay = w.layout()
+        if lay is None:
+            continue
+        if isinstance(w, QGroupBox):
+            lay.setContentsMargins(*GROUP_MARGINS)
+            lay.setSpacing(GROUP_SPACING)
+        elif not isinstance(w, QTabWidget) and default_margins(lay):
+            lay.setContentsMargins(0, 0, 0, 0)
+        forms(lay)
+    forms(root)
 
 
 def separator() -> QFrame:
@@ -403,6 +492,15 @@ class _Polisher(QObject):
             # ... but not across a whole form row: a number field is short
             if obj.maximumWidth() >= 16777215:
                 obj.setMaximumWidth(NUMBER_MAX_W)
+        if ev.type() == QEvent.Type.Polish and isinstance(obj, QPushButton) \
+                and obj.focusPolicy() == Qt.FocusPolicy.StrongFocus:
+            obj.setFocusPolicy(Qt.FocusPolicy.TabFocus)  # macOS: a click gives no focus ring
+        if ev.type() == QEvent.Type.Polish and isinstance(obj, QCheckBox) \
+                and obj.property('hig_switch') is None and obj.property('hig_chip') is None:
+            if is_auto_choice(obj):
+                switch(obj)
+            else:
+                obj.setProperty('hig_switch', False)
         if ev.type() == QEvent.Type.Polish and isinstance(obj, QComboBox) \
                 and not obj.property('hig_sel') and not obj.minimumWidth():
             obj.setProperty('hig_sel', True)
@@ -443,6 +541,10 @@ def refresh():
             _apply_destructive(w)
         if w.property('hig_separator'):
             _apply_separator(w)
+        if w.property('hig_icon') and hasattr(w, 'refresh_icon'):
+            w.refresh_icon()
+        elif hasattr(w, 'refresh_theme'):
+            w.refresh_theme()
 
 
 _custom_palette = False

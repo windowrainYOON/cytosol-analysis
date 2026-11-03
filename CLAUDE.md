@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.26.0)
+## Window structure (v0.50.0)
 
 - **Panes** (`MainWindow.main_split`): left and right keep their width
   (stretch 0, defaults `LEFT_W` / `RIGHT_W`, widths remembered in
@@ -31,16 +31,26 @@ owner writes in Korean, so reply in Korean.
   rows wrap; use `FlowLayout` (or word-wrapping labels, `wrapped_check` for a
   long check box) in new panels instead of wide fixed rows.
 - **Left**: image list with group folders (`image_tree.py`, `groups.py`;
-  long names wrap, `WrapDelegate`), buttons 파일 추가… / 폴더 불러오기… / groups.
+  long names wrap, `WrapDelegate`) in a floating panel (`MainWindow.sidebar`,
+  `#hig_sidebar`). Only one button, 자동 그룹 (owner request 2026-11-03);
+  files come in by 파일 › 불러오기 or drag and drop (the empty list paints a
+  drop glyph). Remove: trash glyph at the end of the hovered / selected row
+  (`ImageTree.removeClicked`) and the context menu (`MainWindow.list_menu`:
+  그룹 지정… / 그룹 이름 변경… / 그룹 해제 only for 2+ selected or a folder,
+  the destructive remove last).
 - **Centre**: `Canvas` (QGraphicsView in `app.py`) with the Z slider (left),
-  T slider (below), toolbar (영역 확대, 화면 맞춤).
+  T slider (below), toolbar icon buttons on one capsule (`zoom_btn` 영역 확대,
+  `fit_btn` 화면 맞춤; `hig_widgets.IconButton`).
   - Zoom: `Cmd`/`Ctrl` + left-drag up/down (`ZOOM_DRAG_RATE` × sensitivity),
     `]` in / `[` out (`ZOOM_KEY_STEP`), `Shift`+drag rectangle zoom.
   - Mouse wheel (no modifier): moves T on time series (`MainWindow._wheel_t`),
     otherwise scrolls. `Ctrl`+wheel does nothing.
   - Right-drag: T (left/right) and Z (up/down). Middle-drag: pan.
-- **Right tabs**: `LUT` (channel LUTs on top, `MarkerPanel` fixed below in a
-  vertical splitter) and `이미지 정보` are always present. The other tabs
+- **Right tabs** (`right_tabs` = `hig_widgets.ChipTabs`: the QTabWidget API
+  with its tab bar replaced by wrapping capsule chips, × / right-click closes a
+  feature tab; pane = `MainWindow.inspector`): `LUT` (one scrolling page:
+  일괄 적용 on top, 채널 표시, the channel LUTs; no inner scroll), `마커`
+  (`marker_tab`) and `이미지 정보` are always present. The other tabs
   live in `MainWindow.tab_pages` (crop_tab, roi_tab, particle_tab,
   intensity_tab, coloc_tab, profile_tab, frap_tab, stack_tab) and are shown / hidden
   by the "… 탭 열기" check action in each feature's menu (`tool_actions`,
@@ -142,12 +152,26 @@ The tokens are mapped onto Qt in `cytosol/theme.py` and
 platform (macOS too) runs Fusion + `theme.palette()` + one app-wide style
 sheet generated from the tokens (`hig_style.stylesheet(scheme)`, light/dark,
 re-applied on colour-scheme change; indicator SVGs written to a temp dir):
-buttons (radius 6, height 28, `theme.prominent(btn)` = filled accent, at most
-2 per tab), fields / combos / steppers (number fields 80–140 px), `QCheckBox` = switch in panes but a
-check box inside a `QDialog` and in item views, `QGroupBox` = rounded card
-(`background-tertiary`, title above), tabs = centred segmented control,
-lists, menus, sliders, scroll bars. Surfaces: window and panes
-`background-secondary`, centre `#hig_content` `background`. Liquid Glass
+since v0.50 the **macOS tahoe style** (`components/MacOSStyle` of the design
+system): concentric radii (sidebar panel 18 inset 8 → selected row 10;
+inset group 12; field 8; value 6; menu 12), capsule buttons (fill, no
+border; `theme.prominent(btn)` = filled accent, at most 2 per tab), fields /
+combos / steppers filled without border (number fields 80–140 px), inset
+groups (`QGroupBox`: translucent `background` 62 %, 1 px `label` 12 % line,
+title above at x 12), choice chips for sub-tabs, accent pill + white text for
+menu and sidebar selection, transparent splitter handles (no dividers).
+Selection controls (owner rule 2026-11-03): `QCheckBox` = check box; switch
+(`theme.switch`) only for the 자동 / 수동 choice (check boxes whose text
+starts with 자동 become switches by themselves); multi-select chips
+(`theme.chip`, also every row of 3+ check boxes that `flow.reflow` turns into
+a flow) for short values picked together; `QRadioButton` for one of several.
+One layout system for every inspector page: `theme.unify(page)` (page
+without margins, group padding `GROUP_MARGINS` 12/10/12/12, gaps 12 / 8,
+holders without the style's default margins; text and options outside a
+group start at x 12 via `#hig_page`), so all titles, rows and labels share
+one grid line. Icons: `hig_widgets.ICONS` (24 px stroke glyphs of the design
+system's icon set; drawn in a token colour). Surfaces: window
+`background-secondary`, centre and inspector transparent. Liquid Glass
 (`cytosol/glass.py`, macOS, pyobjc): an `NSVisualEffectView` (sidebar
 material, behind window) under the Qt view, panes `#hig_sidebar` /
 `#hig_inspector` tinted see-through; opaque when pyobjc is missing or Reduce
@@ -335,4 +359,5 @@ not affected.
 | #64 | 0.48 | Apple HIG design system (owner request, desktop profile): `theme.py` maps the tokens onto Qt roles (native macOS look kept, Fusion + token palette light/dark elsewhere); help text in label-secondary text roles instead of fixed gray; warnings as StatusIndicator (dot + text); destructive buttons red, set apart, "동사 + 대상…" and confirmed with 취소 as default; no box in a box (markers, stack channel display); image list pane: actions on top, list last; graph editor desk uses a system role; measurement plots unchanged |
 | #65 | 0.49 | Full HIG visual style (owner request): token-generated app-wide style sheet on every platform (rounded buttons, filled accent main actions, switches, steppers, rounded group cards, segmented tabs, lists, menus, sliders), Liquid Glass sidebar material on macOS (`glass.py`, pyobjc), pane surfaces; measurement plots unchanged |
 | #66 | 0.49.1 | Glass only with the Cocoa platform plugin (offscreen self-test on macOS crashed in `glass.attach`) |
-| this PR | 0.49.2 | HIG polish after the Mac check: inspector pane padding (titles off the edge), number fields at most 140 px wide, centre background = window background (no black band), LUT tab main action filled, shorter bleach export switch text (marker card fits the pane) |
+| #67 | 0.49.2 | HIG polish after the Mac check: inspector pane padding (titles off the edge), number fields at most 140 px wide, centre background = window background (no black band), LUT tab main action filled, shorter bleach export switch text (marker card fits the pane) |
+| this PR | 0.50.0 | Owner request: macOS tahoe style of the updated design system (capsule buttons and chips, borderless filled fields, inset groups, accent-pill selection, floating sidebar panel, no dividers); left pane only 자동 그룹 + list (trash glyph per row, context menu with group actions for multi-selection, drop-target empty state); LUT tab one scroll with 일괄 적용 on top; 마커 its own tab; capsule chip tab switcher; zoom / fit icon buttons; one layout grid for every right tab (`theme.unify`); switches only for 자동 / 수동, check boxes / multi-select chips / radio otherwise |

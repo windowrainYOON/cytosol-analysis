@@ -11,6 +11,7 @@ from PySide6.QtCore import QPoint, QRect, QSize, Qt
 from PySide6.QtWidgets import (
     QAbstractButton,
     QBoxLayout,
+    QCheckBox,
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
@@ -110,6 +111,13 @@ def _to_flow(lay) -> FlowLayout | None:
             pos[w] = (r, c)
         widgets.sort(key=pos.get)
     flow = FlowLayout(spacing=max(lay.spacing(), 4))
+    if all(isinstance(w, QCheckBox) for w in widgets):
+        # a row of three or more options picked together: multi-select chips
+        from . import theme  # noqa: PLC0415
+
+        for w in widgets:
+            if not theme.is_auto_choice(w):
+                theme.chip(w)
     for w in widgets:
         lay.removeWidget(w)
         if w.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding:

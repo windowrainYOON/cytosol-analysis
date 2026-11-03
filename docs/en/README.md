@@ -15,8 +15,8 @@ appears on screen, followed by its meaning in parentheses, e.g.
 - **Left panel**: the image list and groups.
 - **Centre**: the image, with the Z slider on its left, the T slider below it
   and the view buttons above it.
-- **Right panel**: at first only the **LUT** tab (marker settings fixed at its
-  bottom) and **이미지 정보** (Image info); the other tabs are opened with
+- **Right panel**: at first only **LUT**, **마커** (Markers) and **이미지 정보**
+  (Image info), switched with capsule buttons; the other tabs are opened with
   the **View** menu (or **… 탭 열기**, Open … tab, in each feature's menu).
 - **Menu bar**: **파일** (File: projects, loading with automatic detection,
   saving all results, work log, settings), then **Tool** with one submenu per feature
@@ -35,7 +35,7 @@ appears on screen, followed by its meaning in parentheses, e.g.
 | [LUT tab and image export](02-lut-export.md) | Channel display (LUT), batch LUT, presets, TIFF/MP4 export, saving all results |
 | [세포질 ROI tab](03-cytosol-roi.md) | Automatic cell/nucleus/cytosol ROI detection, editing, ImageJ ROI files, cell intensity |
 | [입자 ROI tab](04-particle-roi.md) | Particle (spot/condensate) detection, per-cell and per-particle measurements, shape, summaries |
-| [마커 (Markers, in the LUT tab)](05-markers.md) | Scale bar, time stamp, CZI bleach ROIs, saving and loading the settings |
+| [마커 (Markers tab)](05-markers.md) | Scale bar, time stamp, CZI bleach ROIs, saving and loading the settings |
 | [스택 tab](06-stack.md) | 2D Z projections and 3D rotation views, saving them |
 | [라인 프로파일 tab](07-line-profile.md) | Intensity profile along a line (ImageJ RGB Profiler) |
 | [FRAP 측정 tab](14-frap.md) | Recovery after photobleaching, group means ± error bars, mobile fraction / t½ summary |
@@ -68,7 +68,8 @@ tab's results.
 | Pan | Middle-button drag (right-button drag too on images without Z or T) |
 | Move through T and Z | Right-button drag on the image: left/right = T, up/down = Z |
 | Z slice | Z slider, mouse wheel over the slider, `↑` `↓` / `PageUp` `PageDown` |
-| Remove images from the list | Select, then `Delete` / `Backspace` |
+| Remove images from the list | Select, then `Delete` / `Backspace`, the trash icon at the end of the row, or right-click |
+| Group images | Select two or more, right-click › 그룹 지정… / 그룹 이름 변경… / 그룹 해제 |
 | Cell ROI editing | `V` select, `A` add, `S` subtract, `N` new cell, `Delete` delete cell, `Ctrl+Z` / `Ctrl+Shift+Z` undo/redo |
 
 ## Screen design (Apple HIG)
@@ -78,13 +79,21 @@ The screens follow the desktop rules of the Apple Human Interface Guidelines.
 - Every platform is drawn in the same design-system style (light and dark,
   following the system setting); all colors come from the design tokens
   (accent blue, secondary label, separator, fills).
-- Buttons have rounded corners (6 px) and are 28 px high. Only each tab's
-  main action (e.g. **ROI 검출 (현재 이미지)**, **지금 측정**) is a filled
-  blue button; the others are gray filled buttons.
-- On / off settings are switches; choices in dialogs and items in lists are
-  check boxes.
-- Settings sit in rounded cards (groups) with the group name above the card
-  in bold secondary text. Sub-tabs are centered segmented controls.
+- macOS (tahoe) style: buttons, tab buttons and chips are capsules, fields
+  are borderless fills (radius 8), and radii shrink inwards (window → panel
+  18 → selected row 10). Only each tab's main action (e.g. **ROI 검출 (현재
+  이미지)**, **지금 측정**) is a filled blue button.
+- Selection controls follow their use: a **switch** only for a value's
+  **자동 / 수동** (auto / manual) choice, a **check box** for one on / off
+  option, **multi-select chips** for short values picked together
+  (measurements Mean·StdDev…, channels to measure, channel visibility, ROI
+  kinds; a check mark and blue outline when on), **radio buttons** for one of
+  several, and **choice chips** for sub-tabs inside a panel (e.g. 자동 /
+  수동 (threshold)).
+- Settings sit in rounded translucent cards (inset groups). Every tab uses
+  the same spacing, so group titles, the rows in a card and the text outside
+  the cards start on one vertical line (12 px inside the card).
+- Selected items in menus and lists are a blue pill with white text.
 - On macOS the image list on the left and the tab pane on the right use the
   translucent sidebar material (Liquid Glass), so the desktop shows through;
   the image preview in the centre stays opaque. With **Reduce transparency**

@@ -54,10 +54,10 @@ class InfoPanel(QWidget):
         self.title.setFont(f)
         lay.addWidget(self.title)
 
-        lay.addWidget(QLabel('채널별 획득 설정'))
+        lay.addWidget(theme.section_header('채널별 획득 설정'))
         self.chan = _table(['항목'])
         lay.addWidget(self.chan, 1)
-        lay.addWidget(QLabel('이미지 · 장비 · Bleaching'))
+        lay.addWidget(theme.section_header('이미지 · 장비 · Bleaching'))
         self.gen = _table(['구분', '항목', '값'])
         self.gen.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         lay.addWidget(self.gen, 2)
