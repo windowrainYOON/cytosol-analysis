@@ -58,6 +58,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .lut import (
     ImageItem,
     apply_lut_to_all,
@@ -1015,7 +1016,7 @@ class ChannelPanel(QGroupBox):
         self.range_hi = QLabel()
         self.range_note = QLabel()
         for lab in (self.range_lo, self.range_hi, self.range_note):
-            lab.setStyleSheet('color: gray; font-size: 11px;')
+            theme.hint(lab)
         self.range_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.min_slider = QSlider(Qt.Orientation.Horizontal)
         self.max_slider = QSlider(Qt.Orientation.Horizontal)
@@ -1175,14 +1176,18 @@ class VisibilityRow(QWidget):
 
     COLUMNS = 2
 
-    def __init__(self):
+    def __init__(self, boxed: bool = True):
         super().__init__()
         self.panels: list[ChannelPanel] = []
-        box = QGroupBox('채널 표시')
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(box)
-        lay = QVBoxLayout(box)
+        if boxed:
+            box = QGroupBox('채널 표시')
+            outer.addWidget(box)
+            lay = QVBoxLayout(box)
+        else:  # inside another box: a section header, never a box in a box
+            outer.addWidget(theme.section_header('채널 표시'))
+            lay = outer
         self.boxes = QGridLayout()
         lay.addLayout(self.boxes)
         buttons = QHBoxLayout()
@@ -1248,7 +1253,7 @@ class MainWindow(QMainWindow):
         for key in (QKeySequence.StandardKey.Delete, QKeySequence(Qt.Key.Key_Backspace)):
             sc = QShortcut(key, self.file_list)
             sc.setContext(Qt.ShortcutContext.WidgetShortcut)
-            sc.activated.connect(self.remove_selected)
+            sc.activated.connect(self.confirm_remove_selected)
         add_btn = QPushButton('파일 추가…')
         add_btn.clicked.connect(self.add_files_dialog)
         folder_btn = QPushButton('폴더 불러오기…')
@@ -1256,9 +1261,10 @@ class MainWindow(QMainWindow):
             '폴더 안의 원본 이미지, 내보낸 TIFF, ROI(.zip/.roi)를 이미지 ID로 짝지어 불러옵니다.\n'
             '원본이 없으면 내보낸 TIFF(raw 스택 우선)로 열고, ROI는 해당 이미지에 자동으로 붙입니다.')
         folder_btn.clicked.connect(self.add_folder_dialog)
-        rm_btn = QPushButton('목록에서 제거')
-        rm_btn.setToolTip('선택한 이미지를 모두 목록에서 제거합니다 (파일은 지우지 않습니다).')
-        rm_btn.clicked.connect(self.remove_selected)
+        rm_btn = theme.destructive(QPushButton('이미지를 목록에서 제거…'))
+        rm_btn.setToolTip('선택한 이미지를 모두 목록에서 제거합니다 (파일은 지우지 않습니다). '
+                          '단축키: Delete')
+        rm_btn.clicked.connect(self.confirm_remove_selected)
         group_btn = QPushButton('그룹 지정…')
         group_btn.setToolTip('선택한 이미지들을 한 그룹으로 묶습니다 (새 이름을 쓰거나 있는 그룹을 고르세요).\n'
                              '입자 ROI 측정 결과에 group 열과 그룹별 요약이 붙고, 저장할 때 '
@@ -1273,25 +1279,32 @@ class MainWindow(QMainWindow):
         ungroup_btn = QPushButton('그룹 해제')
         ungroup_btn.setToolTip('선택한 이미지를 그룹에서 뺍니다.')
         ungroup_btn.clicked.connect(lambda: self.set_group(self._selected_items(), ''))
+        # HIG desktop layout: actions at the top (most important first), the
+        # destructive one set apart by a separator, and the list last so no
+        # control sits on the window's bottom edge
         left = QWidget()
         ll = QVBoxLayout(left)
         title = QLabel('이미지 (TCF / CZI / OIR / TIF, 끌어다 놓기 가능)')
         title.setWordWrap(True)
+        theme.text_style(title, 'headline')
         ll.addWidget(title)
-        ll.addWidget(self.file_list)
-        grid = QGridLayout()  # two per row so the list can stay narrow
-        for i, b in enumerate((group_btn, auto_btn, rename_btn, ungroup_btn)):
-            grid.addWidget(b, i // 2, i % 2)
-        ll.addLayout(grid)
+        add_row = QHBoxLayout()
+        add_row.addWidget(add_btn)
+        add_row.addWidget(folder_btn)
+        ll.addLayout(add_row)
         self.align_tcf = QCheckBox()
         self.align_tcf.setChecked(True)
         tip = ('FL을 HT 픽셀 격자에 맞춰 리샘플링합니다 (XY: 픽셀 크기와 자동 미세 보정, '
                'Z: 3DFL OffsetZ). 끄면 HT와 FL이 따로 열립니다. 새로 추가하는 파일부터 적용됩니다.')
         self.align_tcf.setToolTip(tip)
         ll.addLayout(wrapped_check(self.align_tcf, 'TCF: HT와 FL을 정렬해 한 이미지로', tip))
-        ll.addWidget(add_btn)
-        ll.addWidget(folder_btn)
-        ll.addWidget(rm_btn)
+        grid = QGridLayout()  # two per row so the list can stay narrow
+        for i, b in enumerate((group_btn, auto_btn, rename_btn, ungroup_btn)):
+            grid.addWidget(b, i // 2, i % 2)
+        ll.addLayout(grid)
+        ll.addWidget(theme.separator())
+        ll.addWidget(rm_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        ll.addWidget(self.file_list, 1)
 
         # crop regions of the current image (Crop menu > Crop 탭)
         self.crop_list = QListWidget()
@@ -1302,10 +1315,12 @@ class MainWindow(QMainWindow):
         self.crop_btn.setCheckable(True)
         self.crop_btn.setToolTip('누른 뒤 이미지 위에서 드래그해 Crop 영역을 그립니다. '
                                  'Shift + 드래그: 정사각형.')
-        del_crop = QPushButton('선택 삭제')
-        del_crop.clicked.connect(self.delete_crop)
-        clear_crop = QPushButton('전체 삭제')
-        clear_crop.clicked.connect(self.clear_crops)
+        del_crop = theme.destructive(QPushButton('선택한 Crop 삭제…'))
+        del_crop.clicked.connect(lambda: self._confirm(
+            'Crop 삭제', '선택한 Crop 영역을 삭제할까요?', '삭제', self.delete_crop))
+        clear_crop = theme.destructive(QPushButton('모든 Crop 삭제…'))
+        clear_crop.clicked.connect(lambda: self._confirm(
+            'Crop 삭제', '이 이미지의 Crop 영역을 모두 삭제할까요?', '모두 삭제', self.clear_crops))
         crop_all = QPushButton('같은 크기 이미지에 복사')
         crop_all.setToolTip('이 이미지의 crop 영역들을 크기가 같은 다른 이미지에 복사.\n'
                             '복사한 뒤 각 이미지에서 영역 안을 드래그하면 위치를 옮길 수 있습니다.')
@@ -1317,17 +1332,18 @@ class MainWindow(QMainWindow):
         help_ = QLabel('Crop 영역은 내보낼 때 각각 따로 저장되고, Figure 칸의 영역으로도 고를 수 있습니다. '
                        '영역 안을 드래그하면 옮겨집니다. 저장·불러오기: 메뉴 막대의 Crop.')
         help_.setWordWrap(True)
-        help_.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(help_)
         cbl.addWidget(help_)
         cbl.addWidget(self.crop_btn)
-        cbl.addWidget(self.crop_list, 1)
+        cbl.addWidget(crop_all)
+        cbl.addWidget(self.show_crop_btn)
+        cbl.addWidget(theme.separator())  # destructive actions set apart
         row = QHBoxLayout()
         row.addWidget(del_crop)
         row.addWidget(clear_crop)
+        row.addStretch()
         cbl.addLayout(row)
-        cbl.addWidget(crop_all)
-        cbl.addWidget(self.show_crop_btn)
-        cbl.addStretch()
+        cbl.addWidget(self.crop_list, 1)  # last: no control on the bottom edge
 
         # center: canvas + view controls
         self.canvas = Canvas()
@@ -1387,7 +1403,7 @@ class MainWindow(QMainWindow):
 
         bar1 = QHBoxLayout()
         hint = QLabel('Cmd/Ctrl+드래그: 확대·축소 · [ ]: 축소·확대')
-        hint.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(hint)
         bar1.addWidget(hint)
         bar1.addStretch()
         bar1.addWidget(self.zoom_btn)
@@ -1439,7 +1455,7 @@ class MainWindow(QMainWindow):
         bl.addWidget(self.copy_color)
         note = QLabel('LUT 프리셋 저장·불러오기와 이미지 내보내기: 메뉴 막대의 LUT')
         note.setWordWrap(True)
-        note.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(note)
         bl.addWidget(note)
 
         # image export options: shown in the dialog of LUT → 이미지 내보내기
@@ -1499,10 +1515,13 @@ class MainWindow(QMainWindow):
         rl.addWidget(self.visibility)
         rl.addWidget(scroll, 1)
         rl.addWidget(batch)
-        marker_box = QGroupBox('마커 (scale bar · 시간 · bleach ROI)')
+        # the marker settings are boxes themselves: a section header above
+        # them instead of an enclosing box (no box in a box)
+        marker_box = QWidget()
         ml = QVBoxLayout(marker_box)
-        ml.setContentsMargins(4, 4, 4, 4)
-        ml.addWidget(scrolled(self.markers))
+        ml.setContentsMargins(0, 4, 0, 0)
+        ml.addWidget(theme.section_header('마커 (scale bar · 시간 · bleach ROI)'))
+        ml.addWidget(scrolled(self.markers), 1)
         lut_tab = QSplitter(Qt.Orientation.Vertical)
         lut_tab.addWidget(lut_top)
         lut_tab.addWidget(marker_box)
@@ -2898,6 +2917,19 @@ class MainWindow(QMainWindow):
             self._groups_changed()
         return n
 
+    def _confirm(self, title, text, action, fn, info=''):
+        """Run a destructive action after the HIG confirmation alert (취소 is the default)."""
+        if theme.confirm_destructive(self, title, text, action, info):
+            fn()
+
+    def confirm_remove_selected(self):
+        n = len(self.file_list.selected_rows()) or (1 if self.file_list.currentRow() >= 0 else 0)
+        if not n:
+            return
+        self._confirm('이미지 제거', f'선택한 이미지 {n}개를 목록에서 제거할까요?', '제거',
+                      self.remove_selected,
+                      '파일은 지우지 않습니다. 저장하지 않은 ROI·측정 결과는 목록에서 함께 사라집니다.')
+
     def remove_selected(self, log=True):
         """Remove every selected image (or the current one) from the list."""
         rows = self.file_list.selected_rows()[::-1]
@@ -3853,6 +3885,7 @@ def main(argv=None):
     app = QApplication(argv)
     app.setApplicationName('Cytosol Viewer')
     app.setApplicationVersion(__version__)
+    theme.apply(app)  # Apple HIG design system (desktop profile), see cytosol/theme.py
     icon = Path(__file__).parent / 'assets' / 'icon.png'
     if icon.exists():
         app.setWindowIcon(QIcon(str(icon)))

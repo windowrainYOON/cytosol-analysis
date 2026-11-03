@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QKeySequence
+from PySide6.QtGui import QAction, QColor, QKeySequence, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from . import graph as G
 from .flow import FlowLayout
 
@@ -242,7 +243,7 @@ def _row(*ws) -> QWidget:
 def _hint(text) -> QLabel:
     lab = QLabel(text)
     lab.setWordWrap(True)
-    lab.setStyleSheet('color: gray; font-size: 11px;')
+    theme.hint(lab)
     return lab
 
 
@@ -318,7 +319,8 @@ class GraphWindow(QMainWindow):
         self._overlay = []
         self._last_live = 0.0
         self.holder = QScrollArea()
-        self.holder.setStyleSheet('QScrollArea { background: #e9e9e9; }')
+        # the desk around the graph page: a system role, so it follows light / dark
+        self.holder.setBackgroundRole(QPalette.ColorRole.Mid)
         self.holder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.holder.setWidgetResizable(False)
         self.holder.setWidget(self.canvas)
@@ -338,7 +340,7 @@ class GraphWindow(QMainWindow):
             b.clicked.connect(fn)
             zrow.addWidget(b)
         self.zoom_label = QLabel('100 %')
-        self.zoom_label.setStyleSheet('color: gray;')
+        theme.secondary(self.zoom_label)
         zrow.addWidget(self.zoom_label)
         zrow.addStretch()
         pl.addLayout(zrow)
@@ -378,7 +380,7 @@ class GraphWindow(QMainWindow):
         self.only_sel.toggled.connect(lambda _: self.fill_table())
         row.addWidget(self.only_sel)
         self.table_info = QLabel()
-        self.table_info.setStyleSheet('color: gray;')
+        theme.secondary(self.table_info)
         row.addWidget(self.table_info, 1)
         for text, fn in (('표 CSV 저장…', self.export_table), ('선택한 행 CSV…', self.export_selected_rows)):
             b = QPushButton(text)
@@ -560,7 +562,7 @@ class GraphWindow(QMainWindow):
         lay.addWidget(self.series_list)
         btns = []
         for text, fn, tip in (('추가', self.add_series, '새 시리즈 (선택한 시리즈를 바탕으로)'),
-                              ('복제', self.dup_series, None), ('삭제', self.del_series, None),
+                              ('복제', self.dup_series, None),
                               ('▲', lambda: self.move_series(-1), '앞으로 (먼저 그림)'),
                               ('▼', lambda: self.move_series(1), '뒤로'),
                               ('값마다 나누기…', self.split_series,
@@ -570,6 +572,10 @@ class GraphWindow(QMainWindow):
                 b.setToolTip(tip)
             b.clicked.connect(fn)
             btns.append(b)
+        rm = theme.destructive(QPushButton('시리즈 삭제…'))  # last, red, confirmed
+        rm.clicked.connect(lambda: self.cur_series() is not None and theme.confirm_destructive(
+            self, '시리즈', '선택한 시리즈를 삭제할까요?', '삭제') and self.del_series())
+        btns.append(rm)
         lay.addWidget(_row(*btns))
         cur = self.cur_series
 
@@ -747,9 +753,10 @@ class GraphWindow(QMainWindow):
         self.item_list.setMaximumHeight(90)
         self.item_list.currentRowChanged.connect(self._item_picked)
         f.addRow(self.item_list)
-        add, rm = QPushButton('추가'), QPushButton('삭제')
+        add, rm = QPushButton('추가'), theme.destructive(QPushButton('항목 삭제…'))
         add.clicked.connect(self.add_legend_item)
-        rm.clicked.connect(self.del_legend_item)
+        rm.clicked.connect(lambda: self.cur_item() is not None and theme.confirm_destructive(
+            self, '범례', '선택한 범례 항목을 삭제할까요?', '삭제') and self.del_legend_item())
         f.addRow(_row(add, rm))
         cur = self.cur_item
         it_label = self.b.bind(QLineEdit(), cur, 'label')
@@ -767,9 +774,10 @@ class GraphWindow(QMainWindow):
         self.text_list.setMaximumHeight(90)
         self.text_list.currentRowChanged.connect(self._text_picked)
         f.addRow(self.text_list)
-        add, rm = QPushButton('추가'), QPushButton('삭제')
+        add, rm = QPushButton('추가'), theme.destructive(QPushButton('글자 상자 삭제…'))
         add.clicked.connect(lambda: self.add_text())
-        rm.clicked.connect(self.del_text)
+        rm.clicked.connect(lambda: self.cur_text() is not None and theme.confirm_destructive(
+            self, '글자 상자', '선택한 글자 상자를 삭제할까요?', '삭제') and self.del_text())
         f.addRow(_row(add, rm))
         cur = self.cur_text
         te = QPlainTextEdit()

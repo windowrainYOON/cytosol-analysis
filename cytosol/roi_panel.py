@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .cellroi import (
     CellRois,
     RoiParams,
@@ -265,7 +266,7 @@ class RoiPanel(QWidget):
                       '그 아래는 버립니다. 핵은 세포 안에서 핵 threshold 이상인 가장 큰 영역입니다. '
                       '스무딩·분할 없이 크기 범위와 프레임 처리만 적용합니다.')
         note.setWordWrap(True)
-        note.setStyleSheet('color: gray;')
+        theme.secondary(note)
         ml.addRow(note)
         self.man = {}
         for key, label in (('cell', '세포 threshold'), ('nuc', '핵 threshold')):
@@ -385,7 +386,8 @@ class RoiPanel(QWidget):
                              '메워 잇고, 가까운 핵 조각도 하나로 잇습니다.')
         merge_btn.clicked.connect(self.merge_selected)
         QShortcut(QKeySequence('M'), win, activated=self.merge_selected)
-        del_btn = QPushButton('선택 세포 삭제')
+        del_btn = theme.destructive(QPushButton('선택 세포 삭제'))  # undo: 되돌리기
+        del_btn.setToolTip('선택한 세포 ROI를 지웁니다 (Delete). 되돌리기(Ctrl/⌘+Z)로 복구합니다.')
         del_btn.clicked.connect(self.delete_selected)
         undo_btn = QPushButton('되돌리기')
         undo_btn.clicked.connect(self.undo)
@@ -428,7 +430,7 @@ class RoiPanel(QWidget):
                       'Shift+클릭으로 여러 세포를 골라 합치기(M), Option(Alt)+드래그로 선을 그어 자릅니다. '
                       '가운데 버튼 드래그로 화면을 움직이고, Cmd(Ctrl)+드래그로 확대·축소합니다.')
         hint.setWordWrap(True)
-        hint.setStyleSheet('color: gray;')
+        theme.secondary(hint)
         el.addWidget(hint)
 
         # which ROIs the 세포질 ROI menu writes (menu check items)
@@ -1079,8 +1081,9 @@ class RoiPanel(QWidget):
         return ', '.join(f'{n} {r[0]:.0f}–{r[1]:.0f} µm²' for n, r in zip(names, sizes) if r is not None)
 
     def _confirm_replace(self):
-        r = QMessageBox.question(self, 'ROI 다시 검출', '이 이미지의 ROI(수정 포함)를 새로 검출한 결과로 바꿀까요?')
-        return r == QMessageBox.StandardButton.Yes
+        return theme.confirm_destructive(
+            self, 'ROI 다시 검출', '이 이미지의 ROI(수정 포함)를 새로 검출한 결과로 바꿀까요?', '바꾸기',
+            '지금 ROI는 되돌리기(Ctrl/⌘+Z)로 다시 불러올 수 있습니다.')
 
     def detect_all(self):
         src = self.item
@@ -1503,8 +1506,8 @@ class RoiPanel(QWidget):
             self.win.update_preview()
 
     def _confirm_load(self):
-        r = QMessageBox.question(self, 'ROI 불러오기', '현재 ROI를 불러온 ROI로 바꿀까요?')
-        return r == QMessageBox.StandardButton.Yes
+        return theme.confirm_destructive(
+            self, 'ROI 불러오기', '현재 ROI를 불러온 ROI로 바꿀까요?', '바꾸기')
 
     def save_all(self):
         items = [it for it in self.win.items if it.cells is not None and len(it.cells)]

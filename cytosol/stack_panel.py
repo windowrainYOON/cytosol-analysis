@@ -5,6 +5,7 @@ in its canvas while this tab is open (see MainWindow._stack_preview)."""
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -22,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .stack import METHODS_2D, METHODS_3D, StackView, z_ratio_from_metadata
 
 PREVIEW_SIZES = [('빠름 (~256 px)', 256), ('보통 (~400 px)', 400), ('선명 (~600 px)', 600),
@@ -122,7 +124,7 @@ class StackPanel(QWidget):
         srow.addWidget(self.manual_sp)
         srow.addWidget(self.spacing, 1)
         self.spacing_note = QLabel()
-        self.spacing_note.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(self.spacing_note)
         self.spacing_note.setWordWrap(True)
         self.preview = QComboBox()
         for name, size in PREVIEW_SIZES:
@@ -143,7 +145,7 @@ class StackPanel(QWidget):
         f3.addRow(self.refresh_btn)
         hint = QLabel('이미지 위에서 왼쪽 드래그: 위치 이동 · 오른쪽 드래그: 회전 '
                       '(좌우 = Y축, 위아래 = X축)')
-        hint.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(hint)
         hint.setWordWrap(True)
         f3.addRow(hint)
         lay.addWidget(self.box_3d)
@@ -161,7 +163,7 @@ class StackPanel(QWidget):
         ll.addWidget(pull)
         from .app import VisibilityRow  # noqa: PLC0415  (app imports this module)
 
-        self.visibility = VisibilityRow()
+        self.visibility = VisibilityRow(boxed=False)  # already inside the LUT box
         ll.addWidget(self.visibility)
         self.lut_box = QVBoxLayout()
         ll.addLayout(self.lut_box)
@@ -206,7 +208,7 @@ class StackPanel(QWidget):
 
         self.status = QLabel()
         self.status.setWordWrap(True)
-        self.status.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(self.status)
         lay.addWidget(self.status)
         lay.addStretch()
 
@@ -282,7 +284,8 @@ class StackPanel(QWidget):
     def set_stale(self, stale: bool):
         """Highlight the refresh button when the LUT changed since the 3D build."""
         self.refresh_btn.setText('새로고침 (LUT 바뀜 · 눌러서 반영)' if stale else '새로고침 (LUT 반영)')
-        self.refresh_btn.setStyleSheet('font-weight: bold; color: #e0a000;' if stale else '')
+        # StatusIndicator on the button: warning dot + the state in words (not colour alone)
+        self.refresh_btn.setIcon(theme.status_icon('warning') if stale else QIcon())
 
     def _show_mode(self):
         three = self.mode_3d.isChecked()

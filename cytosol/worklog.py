@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
+
 COLUMNS = ('time', 'image', 'image_id', 'action')
 TITLES = ('시간', '이미지', '이미지 ID', '내용')
 
@@ -88,7 +90,7 @@ class LogWindow(QWidget):
         note = QLabel('상태 표시줄에 나온 작업(검출, 수정, 측정, 불러오기, 저장 …)이 시간 순서로 쌓이고 '
                       '프로젝트 파일에 함께 저장됩니다. CSV로 저장: 파일 → 작업 기록 저장.')
         note.setWordWrap(True)
-        note.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(note)
         lay.addWidget(note)
         log.listeners.append(self.refresh)
 

@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .coloc import REGRESSIONS, Coloc2Result, Coloc2Settings, ValueType, d2s, run_coloc2
 from .flow import FlowLayout
 from .lut import item_folder, item_stem
@@ -173,7 +174,7 @@ class ColocPanel(QWidget):
         help_ = QLabel('Fiji Coloc 2와 같은 계산(원본 코드를 그대로 옮김)을 세포 ROI마다 실행합니다. '
                        '세포질 ROI 탭에서 ROI를 먼저 검출하거나 불러오세요.')
         help_.setWordWrap(True)
-        help_.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(help_)
         lay.addWidget(help_)
 
         ch = QGroupBox('채널')
@@ -291,9 +292,7 @@ class ColocPanel(QWidget):
         self.values.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.values.setMinimumHeight(220)
         vl.addWidget(self.values)
-        self.warn = QLabel()
-        self.warn.setWordWrap(True)
-        self.warn.setStyleSheet('color: #b35c00; font-size: 11px;')
+        self.warn = theme.StatusLabel(kind='warning')
         vl.addWidget(self.warn)
         lay.addWidget(res, 1)
 

@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .intensity import (
     SHAPES,
     SHAPE_TITLES,
@@ -81,7 +82,7 @@ class ParticlePanel(QWidget):
         help_ = QLabel('세포질 ROI 탭의 세포마다 한 채널에서 입자(점)를 찾아 입자 ROI로 만듭니다. '
                        '현재 Z(또는 MIP)와 시점에서 찾으며, ROI를 고치면 바로 다시 찾습니다.')
         help_.setWordWrap(True)
-        help_.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(help_)
         lay.addWidget(help_)
 
         part = QGroupBox('입자 ROI 추출')
@@ -183,7 +184,7 @@ class ParticlePanel(QWidget):
         self.int_contour.toggled.connect(self._contour_changed)
         self.part_info = QLabel()
         self.part_info.setWordWrap(True)
-        self.part_info.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(self.part_info)
         pl.addRow(self.part_info)
         row = QHBoxLayout()
         b = QPushButton('이 설정을 모든 이미지에 적용')
@@ -245,7 +246,7 @@ class ParticlePanel(QWidget):
             self.shape_boxes[k] = b
             grid.addWidget(b, i // 3, i % 3)
         note = QLabel('면적은 항상 포함. 각 항목에 마우스를 올리면 정의가 보입니다.')
-        note.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(note)
         grid.addWidget(note, len(SHAPES) // 3 + 1, 0, 1, 3)
         self.shape_opts.setVisible(False)
         rl.addWidget(self.shape_opts)

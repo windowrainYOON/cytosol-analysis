@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .figure import (
     CORNERS,
     FigureCell,
@@ -159,7 +160,7 @@ class LevelRow(QWidget):
         self.pick.setToolTip('이 칸(확대 영역)에 보이는 부분의 밝기 분포로 Min/Max 정하기')
         self.pick.clicked.connect(lambda: self.autoPicked.emit(ch))
         self.note = QLabel()
-        self.note.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(self.note)
         self.min_spin, self.max_spin = QDoubleSpinBox(), QDoubleSpinBox()
         self.min_slider = QSlider(Qt.Orientation.Horizontal)
         self.max_slider = QSlider(Qt.Orientation.Horizontal)
@@ -256,8 +257,6 @@ class FigureWindow(QMainWindow):
         for text, fn in (
             ('행 추가', lambda: self._add('row')),
             ('열 추가', lambda: self._add('col')),
-            ('행 삭제', lambda: self._remove('row')),
-            ('열 삭제', lambda: self._remove('col')),
             ('행 ▲', lambda: self._move('row', -1)),
             ('행 ▼', lambda: self._move('row', 1)),
             ('열 ◀', lambda: self._move('col', -1)),
@@ -266,9 +265,14 @@ class FigureWindow(QMainWindow):
             b = QPushButton(text)
             b.clicked.connect(fn)
             tb.addWidget(b)
+        tb.addSpacing(16)  # destructive actions set apart, red text, confirmed
+        for text, kind in (('행 삭제…', 'row'), ('열 삭제…', 'col')):
+            b = theme.destructive(QPushButton(text))
+            b.clicked.connect(lambda _=False, k=kind: self._confirm_remove(k))
+            tb.addWidget(b)
         tb.addStretch()
         hint = QLabel('행/열 이름: 머리글 더블클릭 (우클릭 = 메뉴)')
-        hint.setStyleSheet('color: gray;')
+        theme.secondary(hint)
         tb.addWidget(hint)
         table_box = QWidget()
         tl = QVBoxLayout(table_box)
@@ -413,7 +417,7 @@ class FigureWindow(QMainWindow):
         self._level_key = None
         self.level_hint = QLabel('자동 = LUT 탭 값 (확대 영역은 칸 값). 끄면 이 칸만 따로 조절합니다.')
         self.level_hint.setWordWrap(True)
-        self.level_hint.setStyleSheet('color: gray;')
+        theme.secondary(self.level_hint)
         all_auto = QPushButton('모두 자동으로')
         all_auto.setToolTip('여기서 조절한 값을 지우고 LUT 탭 값(확대 영역은 칸 값)으로 되돌리기')
         all_auto.clicked.connect(self._levels_all_auto)
@@ -466,8 +470,9 @@ class FigureWindow(QMainWindow):
         self.inset_size.setValue(45)
         self.inset_size.setSuffix(' % (칸 너비 대비)')
         self.inset_size.valueChanged.connect(self._inset_changed)
-        del_btn = QPushButton('삭제')
-        del_btn.clicked.connect(self._delete_inset)
+        del_btn = theme.destructive(QPushButton('확대 영역 삭제…'))
+        del_btn.clicked.connect(lambda: theme.confirm_destructive(
+            self, '확대 영역 삭제', '선택한 확대 영역을 삭제할까요?', '삭제') and self._delete_inset())
         row_btn = QPushButton('이 행 전체에 적용')
         row_btn.setToolTip('같은 위치의 확대 영역을 이 행의 모든 칸에 똑같이 넣기')
         row_btn.clicked.connect(lambda: self._insets_to('row'))
@@ -709,6 +714,15 @@ class FigureWindow(QMainWindow):
             self.rebuild_table()
             self.table.setCurrentCell(r, c + 1)
 
+    def _confirm_remove(self, kind, index=None):
+        if index is None:
+            r, c = self.current_rc()
+            index = r if kind == 'row' else c
+        name = f'{index + 1}번째 {"행" if kind == "row" else "열"}'
+        if theme.confirm_destructive(self, 'Figure', f'{name}을 삭제할까요?', '삭제',
+                                     '그 안의 칸과 확대 영역도 함께 지워집니다.'):
+            self._remove(kind, index)
+
     def _remove(self, kind, index=None):
         r, c = self.current_rc()
         if kind == 'row':
@@ -747,12 +761,14 @@ class FigureWindow(QMainWindow):
             menu.addAction('위에 행 삽입', lambda: (self.spec.add_row(index), self.rebuild_table()))
             menu.addAction('아래에 행 삽입',
                            lambda: (self.spec.add_row(index + 1), self.rebuild_table()))
-            menu.addAction('행 삭제', lambda: self._remove('row', index))
+            menu.addSeparator()  # destructive item last, set apart
+            menu.addAction('행 삭제…', lambda: self._confirm_remove('row', index))
         else:
             menu.addAction('왼쪽에 열 삽입', lambda: (self.spec.add_col(index), self.rebuild_table()))
             menu.addAction('오른쪽에 열 삽입',
                            lambda: (self.spec.add_col(index + 1), self.rebuild_table()))
-            menu.addAction('열 삭제', lambda: self._remove('col', index))
+            menu.addSeparator()
+            menu.addAction('열 삭제…', lambda: self._confirm_remove('col', index))
         menu.exec(header.mapToGlobal(pos))
 
     # ------------------------------------------------------------------
@@ -1529,8 +1545,10 @@ class FigureWindow(QMainWindow):
             r, c = (int(v) for v in choice.split(','))
             target = self.spec.cells[r][c]
             if ask and not target.empty and target.zoom_inset is not inset:
-                ans = QMessageBox.question(
-                    self, '확대 영역', f'행 {r + 1}, 열 {c + 1} 칸의 내용을 확대본으로 바꿀까요?')
+                ans = QMessageBox.question(  # replaces a cell: 아니오 is the default
+                    self, '확대 영역', f'행 {r + 1}, 열 {c + 1} 칸의 내용을 확대본으로 바꿀까요?',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No)
                 if ans != QMessageBox.StandardButton.Yes:
                     return False
             inset.offset = (r - r0, c - c0)

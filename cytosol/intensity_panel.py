@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .intensity import (
     ExpressionError,
     make_regions,
@@ -76,7 +77,7 @@ class IntensityPanel(QWidget):
                        '채널별 강도를 원본값으로 잽니다 (ImageJ Measure와 같은 값). 세포·핵·세포질은 '
                        '세포질 ROI 탭에서, 입자는 입자 ROI 탭에서 따로 잴 수 있습니다.')
         help_.setWordWrap(True)
-        help_.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(help_)
         lay.addWidget(help_)
 
         reg = QGroupBox('논리식 영역')
@@ -86,9 +87,7 @@ class IntensityPanel(QWidget):
         self.expr.setToolTip(EXPR_HELP)
         self.expr.textChanged.connect(self.schedule)
         rl.addWidget(self.expr)
-        self.expr_info = QLabel(EXPR_HELP)
-        self.expr_info.setWordWrap(True)
-        self.expr_info.setStyleSheet('color: gray; font-size: 11px;')
+        self.expr_info = theme.StatusLabel(EXPR_HELP)
         rl.addWidget(self.expr_info)
         self.show_regions = QCheckBox('이미지에 영역 표시 (청록색)')
         self.show_regions.setChecked(True)
@@ -107,7 +106,7 @@ class IntensityPanel(QWidget):
         note = QLabel('세포질을 핵에서의 거리가 같은 띠로 나눠 띠마다 강도(와 입자)를 잽니다. '
                       '핵이 있는 세포만 잽니다.')
         note.setWordWrap(True)
-        note.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(note)
         bl.addRow(note)
         self.band_mode = QComboBox()
         for key, text in MODES:
@@ -174,7 +173,7 @@ class IntensityPanel(QWidget):
         hint = QLabel('회색: 세포마다, 빨강: 세포 평균 ± SD (띠별). 표에서 ‘모든 이미지’를 고르면 '
                       '일괄 측정 결과를 그립니다.')
         hint.setWordWrap(True)
-        hint.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(hint)
         gl.addWidget(hint)
         lay.addWidget(graph, 1)
 
@@ -320,7 +319,7 @@ class IntensityPanel(QWidget):
     def draw_regions(self):
         _, bad = self.expressions()
         self.expr_info.setText('\n'.join(bad) if bad else EXPR_HELP)
-        self.expr_info.setStyleSheet(f'color: {"#b35c00" if bad else "gray"}; font-size: 11px;')
+        self.expr_info.set_kind('warning' if bad else None)
         canvas = self.win.canvas
         it = self.win.current
         if (self._hidden or it is None or it.cells is None or not len(it.cells)

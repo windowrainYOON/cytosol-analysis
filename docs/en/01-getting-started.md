@@ -57,8 +57,12 @@ the tools (right: LUT, 이미지 정보 and the feature tabs).
 - Long image names wrap onto more lines, so the whole name is always
   visible.
 - Select several images with `Shift`/`Ctrl` (`⌘`) + click.
-- **목록에서 제거** (Remove from list) or `Delete`: removes the selected images
-  from the list (the files are not deleted).
+- **파일 추가…**, **폴더 불러오기…** and the group buttons are at the top of the
+  pane, the list below them.
+- **이미지를 목록에서 제거…** (Remove images from the list, red text below a
+  separator) or `Delete`: after **제거** (Remove) in the confirmation alert,
+  the selected images leave the list (the files are not deleted). The
+  alert's default button (Return) is **취소** (Cancel).
 
 ### Groups
 
@@ -131,7 +135,9 @@ bar to get the **Crop** tab on the right.
    the image and listed in the tab.
 2. Drag inside an existing crop to move it.
 3. **선택한 Crop만 보기** (Show selected crop only) previews one region.
-4. **선택 삭제** / **전체 삭제** (Delete selected / Delete all).
+4. **선택한 Crop 삭제…** / **모든 Crop 삭제…** (Delete selected / all crops,
+   red text below a separator): deleted after the confirmation alert (its
+   default button is **취소**, Cancel).
 5. **같은 크기 이미지에 복사** (Copy to images of the same size): copies this
    image's crops to every other image with the same size; move them per
    image afterwards by dragging.

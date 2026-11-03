@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .flow import FlowLayout
 from .groups import GROUP_FILE, summarize, write_groups
 from .intensity import STATS, measure_cells, overlay_image, region_names, write_rows
@@ -134,7 +135,7 @@ class MeasureBox(QWidget):
         tl.addWidget(self.table, 1)
         self.info = QLabel()
         self.info.setWordWrap(True)
-        self.info.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(self.info)
         tl.addWidget(self.info)
         row = QHBoxLayout()
         b = QPushButton('지금 측정 (현재 이미지)')

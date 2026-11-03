@@ -1,0 +1,439 @@
+"""Apple HIG design system (Desktop profile) mapped onto Qt.
+
+The owner's "Apple HIG" design system describes web tokens (``--label``,
+``--hig-ctl``, ``hig-text-*``, ...) and says native code must not write
+values but use the system's components, semantic colours and text styles.
+Qt widgets are native on macOS (the ``macos`` style draws AppKit controls),
+so this module maps the design system onto Qt's own system roles:
+
+==========================  =================================================
+design system               Qt
+==========================  =================================================
+``label`` / ``background``  ``QPalette`` roles (WindowText, Window, Base ...)
+``accent``                  ``QPalette.Highlight`` / ``Accent``
+``hig-text-*`` styles       :func:`text_style` (role sizes relative to the
+                            platform's body font; macOS body = 13 pt)
+``label-secondary``         :func:`text_style` ``secondary=True``
+``StatusIndicator``         :class:`StatusLabel` (dot + text, ``status-*-tint``)
+``Button --destructive``    :func:`destructive` + :func:`confirm_destructive`
+``SectionHeader``           :func:`section_header`
+``FormRow`` (desktop)       trailing labels in wide forms (:class:`_Polisher`)
+``Button``/``Select``/...   ``QPushButton``, ``QComboBox``, ``QSpinBox``
+                            (native NumberInput + Stepper), ``QCheckBox``
+==========================  =================================================
+
+On macOS nothing is overridden: the native style and the system palette
+already are the HIG (accent colour, dark mode, Increase Contrast).  On
+Windows / Linux the app uses the Fusion style with a palette built from
+the design system's colour tokens (light and dark), so the app looks the
+same family on every platform.
+
+Measurement plots (matplotlib graphs, Figure window, the image canvas) are
+excluded by the design system's ``measurement-plots.md`` and are not touched
+here.
+"""
+
+from __future__ import annotations
+
+import sys
+
+from PySide6.QtCore import QEvent, QObject, QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
+from PySide6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
+    QFormLayout,
+    QFrame,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QStyleFactory,
+    QWidget,
+)
+
+# Colour tokens of the design system (project/tokens.json), light and dark.
+# Only the semantic tokens the app needs; values are Apple's system colours.
+TOKENS = {
+    'light': {
+        'red': '#ff383c', 'orange': '#ff8d28', 'green': '#34c759', 'blue': '#0088ff',
+        'gray': '#8e8e93', 'gray-3': '#c7c7cc', 'gray-5': '#e5e5ea',
+        'background': '#ffffff', 'background-secondary': '#f2f2f7',
+        'background-tertiary': '#ffffff',
+        'label': '#000000', 'label-secondary': '#3c3c4399', 'label-tertiary': '#3c3c434d',
+        'placeholder': '#3c3c434d', 'separator': '#3c3c434a', 'separator-opaque': '#c6c6c8',
+        'fill-quaternary': '#74748014', 'link': '#007aff', 'on-accent': '#ffffff',
+        'status-success-tint': '#34c75929', 'status-warning-tint': '#ff8d2829',
+        'status-error-tint': '#ff383c29', 'status-info-tint': '#0088ff29',
+        'status-neutral-tint': '#8e8e9329',
+    },
+    'dark': {
+        'red': '#ff4245', 'orange': '#ff9230', 'green': '#30d158', 'blue': '#0091ff',
+        'gray': '#8e8e93', 'gray-3': '#48484a', 'gray-5': '#2c2c2e',
+        'background': '#000000', 'background-secondary': '#1c1c1e',
+        'background-tertiary': '#2c2c2e',
+        'label': '#ffffff', 'label-secondary': '#ebebf599', 'label-tertiary': '#ebebf54d',
+        'placeholder': '#ebebf54d', 'separator': '#54545899', 'separator-opaque': '#38383a',
+        'fill-quaternary': '#7676802e', 'link': '#0984ff', 'on-accent': '#ffffff',
+        'status-success-tint': '#30d1583d', 'status-warning-tint': '#ff92303d',
+        'status-error-tint': '#ff42453d', 'status-info-tint': '#0091ff3d',
+        'status-neutral-tint': '#8e8e933d',
+    },
+}
+
+# status kind → (dot colour token, tint token); StatusIndicator README
+STATUS = {
+    'success': ('green', 'status-success-tint'),
+    'warning': ('orange', 'status-warning-tint'),
+    'error': ('red', 'status-error-tint'),
+    'info': ('blue', 'status-info-tint'),
+    'neutral': ('gray', 'status-neutral-tint'),
+}
+
+# hig-text-* roles on the Desktop (macOS) scale: size relative to body 13,
+# weight.  typography-desktop.md.  Sizes follow the platform's body font, so
+# they are exact on macOS (13 pt) and keep the same steps on Windows.
+TEXT_ROLES = {
+    'title-2': (17, QFont.Weight.Normal),
+    'title-3': (15, QFont.Weight.Normal),
+    'headline': (13, QFont.Weight.Bold),
+    'body': (13, QFont.Weight.Normal),
+    'callout': (12, QFont.Weight.Normal),
+    'subhead': (11, QFont.Weight.Normal),
+    'footnote': (10, QFont.Weight.Normal),
+}
+BODY_PT = 13.0
+
+_ROLE = 'hig_role'
+_SECONDARY = 'hig_secondary'
+_DESTRUCTIVE = 'hig_destructive'
+
+_body_font: QFont | None = None
+
+
+def _hex(value: str) -> QColor:
+    """'#rrggbbaa' (token form) → QColor."""
+    v = value.lstrip('#')
+    c = QColor('#' + v[:6])
+    if len(v) == 8:
+        c.setAlpha(int(v[6:], 16))
+    return c
+
+
+def scheme() -> str:
+    """'light' or 'dark', from the system (Qt ≥ 6.5) or the palette."""
+    app = QGuiApplication.instance()
+    if app is not None:
+        try:
+            cs = app.styleHints().colorScheme()
+            if cs == Qt.ColorScheme.Dark:
+                return 'dark'
+            if cs == Qt.ColorScheme.Light:
+                return 'light'
+        except AttributeError:
+            pass
+        if app.palette().color(QPalette.ColorRole.Window).lightness() < 128:
+            return 'dark'
+    return 'light'
+
+
+def color(name: str) -> QColor:
+    """A colour token for the current light / dark scheme."""
+    return _hex(TOKENS[scheme()][name])
+
+
+def _blend(over: QColor, under: QColor) -> QColor:
+    """A token with alpha drawn over an opaque colour (for palette roles that
+    must be opaque)."""
+    a = over.alphaF()
+    return QColor.fromRgbF(over.redF() * a + under.redF() * (1 - a),
+                           over.greenF() * a + under.greenF() * (1 - a),
+                           over.blueF() * a + under.blueF() * (1 - a))
+
+
+def palette(name: str | None = None) -> QPalette:
+    """QPalette from the design system tokens (Windows / Linux)."""
+    t = {k: _hex(v) for k, v in TOKENS[name or scheme()].items()}
+    R, G = QPalette.ColorRole, QPalette.ColorGroup
+    win = t['background-secondary']  # level 0 of the desktop window
+    base = t['background-tertiary']  # fields, lists, tables (raised)
+    p = QPalette()
+    for group in (G.Active, G.Inactive, G.Disabled):
+        p.setColor(group, R.Window, win)
+        p.setColor(group, R.Base, base)
+        p.setColor(group, R.AlternateBase, _blend(t['fill-quaternary'], base))
+        p.setColor(group, R.Button, base)
+        p.setColor(group, R.ToolTipBase, base)
+        p.setColor(group, R.Light, base)
+        p.setColor(group, R.Midlight, _blend(t['separator'], base).lighter(110))
+        p.setColor(group, R.Mid, t['separator-opaque'])
+        p.setColor(group, R.Dark, t['gray'])
+        p.setColor(group, R.Shadow, t['gray'].darker(160))
+        p.setColor(group, R.Highlight, t['blue'])  # accent
+        p.setColor(group, R.HighlightedText, t['on-accent'])
+        p.setColor(group, R.Link, t['link'])
+        p.setColor(group, R.LinkVisited, t['link'])
+        p.setColor(group, R.BrightText, t['red'])
+        p.setColor(group, R.PlaceholderText, t['placeholder'])
+        if hasattr(R, 'Accent'):
+            p.setColor(group, R.Accent, t['blue'])
+        text = t['label'] if group != G.Disabled else _blend(t['label-tertiary'], win)
+        for role in (R.WindowText, R.Text, R.ButtonText, R.ToolTipText):
+            p.setColor(group, role, text)
+    return p
+
+
+def body_font() -> QFont:
+    global _body_font
+    if _body_font is None:
+        _body_font = QFont(QApplication.font())
+    return _body_font
+
+
+def _role_font(role: str, base: QFont | None = None) -> QFont:
+    size, weight = TEXT_ROLES[role]
+    f = QFont(base or body_font())
+    pt = body_font().pointSizeF()
+    if pt > 0:
+        f.setPointSizeF(pt * size / BODY_PT)
+    f.setWeight(weight)
+    return f
+
+
+def text_style(widget: QWidget, role: str = 'body', secondary: bool = False) -> QWidget:
+    """Give a label the font of a hig-text-* role and, with ``secondary``, the
+    ``label-secondary`` colour.  Re-applied when the system switches between
+    light and dark."""
+    widget.setProperty(_ROLE, role)
+    widget.setProperty(_SECONDARY, bool(secondary))
+    _apply_text(widget)
+    return widget
+
+
+def hint(label: QWidget) -> QWidget:
+    """Help / hint text under a control: Callout in label-secondary (FormRow hint)."""
+    return text_style(label, 'callout', secondary=True)
+
+
+def secondary(label: QWidget) -> QWidget:
+    """Secondary information at body size: Body in label-secondary."""
+    return text_style(label, 'body', secondary=True)
+
+
+def _apply_text(w: QWidget):
+    role = w.property(_ROLE)
+    if role:
+        w.setFont(_role_font(role, w.font()))
+    if w.property(_SECONDARY):
+        p = w.palette()
+        p.setColor(QPalette.ColorRole.WindowText, color('label-secondary'))
+        p.setColor(QPalette.ColorRole.Text, color('label-secondary'))
+        w.setPalette(p)
+
+
+def section_header(text: str) -> QLabel:
+    """SectionHeader (desktop): 11/14, weight 600, label-secondary, above a group."""
+    lab = QLabel(text)
+    lab.setWordWrap(True)
+    text_style(lab, 'subhead', secondary=True)
+    f = lab.font()
+    f.setWeight(QFont.Weight.DemiBold)
+    lab.setFont(f)
+    lab.setProperty(_ROLE, '')  # keep the weight on refresh; colour still follows
+    return lab
+
+
+def separator() -> QFrame:
+    """1 px separator line (used to set destructive actions apart)."""
+    line = QFrame()
+    line.setFrameShape(QFrame.Shape.HLine)
+    line.setFrameShadow(QFrame.Shadow.Plain)
+    line.setProperty('hig_separator', True)
+    _apply_separator(line)
+    return line
+
+
+def _apply_separator(line: QFrame):
+    p = line.palette()
+    p.setColor(QPalette.ColorRole.WindowText, color('separator-opaque'))
+    line.setPalette(p)
+
+
+# ---- destructive actions --------------------------------------------------
+
+def destructive(button: QAbstractButton) -> QAbstractButton:
+    """Button --plain --destructive: no fill, red label (states-and-interaction.md)."""
+    button.setProperty(_DESTRUCTIVE, True)
+    if isinstance(button, QPushButton):
+        button.setFlat(True)
+        button.setAutoDefault(False)
+    _apply_destructive(button)
+    return button
+
+
+def _apply_destructive(button: QAbstractButton):
+    p = button.palette()
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+        p.setColor(group, QPalette.ColorRole.ButtonText, color('red'))
+    button.setPalette(p)
+
+
+def confirm_destructive(parent, title: str, text: str, action: str,
+                        info: str = '') -> bool:
+    """Alert for an action that cannot be undone: the title names the object,
+    the default (Return) and Escape button is 취소, the action is red."""
+    box, act = destructive_alert(parent, title, text, action, info)
+    box.exec()
+    return box.clickedButton() is act
+
+
+def destructive_alert(parent, title: str, text: str, action: str, info: str = ''):
+    """The confirmation alert of :func:`confirm_destructive` (not shown)."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle(title)
+    box.setText(text)
+    box.setInformativeText(info or '이 작업은 되돌릴 수 없습니다.')
+    cancel = box.addButton('취소', QMessageBox.ButtonRole.RejectRole)
+    act = box.addButton(action, QMessageBox.ButtonRole.DestructiveRole)
+    _apply_destructive(act)
+    box.setDefaultButton(cancel)
+    box.setEscapeButton(cancel)
+    return box, act
+
+
+# ---- status ---------------------------------------------------------------
+
+def status_icon(kind: str, size: int = 10) -> QIcon:
+    """The StatusIndicator dot as an icon (e.g. for a button that has a state)."""
+    pm = QPixmap(size * 2, size * 2)
+    pm.setDevicePixelRatio(2)
+    pm.fill(Qt.GlobalColor.transparent)
+    qp = QPainter(pm)
+    qp.setRenderHint(QPainter.RenderHint.Antialiasing)
+    qp.setPen(Qt.PenStyle.NoPen)
+    qp.setBrush(color(STATUS[kind][0]))
+    qp.drawEllipse(QRectF(1, 1, size - 2, size - 2))
+    qp.end()
+    return QIcon(pm)
+
+
+class StatusLabel(QLabel):
+    """StatusIndicator: a status dot and its text in ``label`` colour on the
+    ``status-*-tint`` background, never colour alone.  ``kind=None`` shows
+    plain secondary hint text (no dot, no tint)."""
+
+    DOT = 8
+    GAP = 6
+    PAD_X = 8
+    PAD_Y = 2
+
+    def __init__(self, text: str = '', kind: str | None = None, parent=None):
+        super().__init__(text, parent)
+        self.setWordWrap(True)
+        self._kind = None
+        self.setProperty(_ROLE, 'callout')
+        _apply_text(self)
+        self.set_kind(kind)
+
+    def kind(self):
+        return self._kind
+
+    def set_kind(self, kind: str | None):
+        self._kind = kind if kind in STATUS else None
+        self.setProperty(_SECONDARY, self._kind is None)
+        p = self.palette()
+        p.setColor(QPalette.ColorRole.WindowText,
+                   color('label' if self._kind else 'label-secondary'))
+        self.setPalette(p)
+        if self._kind:
+            self.setContentsMargins(self.PAD_X + self.DOT + self.GAP, self.PAD_Y,
+                                    self.PAD_X, self.PAD_Y)
+        else:
+            self.setContentsMargins(0, 0, 0, 0)
+        self.update()
+
+    def paintEvent(self, ev):
+        if self._kind and self.text():
+            dot, tint = STATUS[self._kind]
+            qp = QPainter(self)
+            qp.setRenderHint(QPainter.RenderHint.Antialiasing)
+            qp.setPen(Qt.PenStyle.NoPen)
+            r = QRectF(self.rect())
+            qp.setBrush(color(tint))
+            qp.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 6, 6)  # radius-control
+            qp.setBrush(color(dot))
+            line = self.fontMetrics().height()
+            y = self.PAD_Y + (line - self.DOT) / 2
+            qp.drawEllipse(QRectF(self.PAD_X, y, self.DOT, self.DOT))
+            qp.end()
+        super().paintEvent(ev)
+
+
+# ---- application ------------------------------------------------------------
+
+class _Polisher(QObject):
+    """Window-level touches when a window is first shown: wide forms get the
+    desktop FormRow layout (trailing labels).  Forms that `flow.reflow` lets
+    wrap (narrow side panes, < 480 px) keep labels above long fields, which is
+    the FormRow rule for narrow containers."""
+
+    def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Type.Show and isinstance(obj, QWidget) and obj.isWindow() \
+                and not obj.property('hig_polished'):
+            obj.setProperty('hig_polished', True)
+            align_forms(obj)
+        return False
+
+
+def align_forms(root: QWidget):
+    trailing = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+    for form in root.findChildren(QFormLayout):
+        if form.rowWrapPolicy() == QFormLayout.RowWrapPolicy.DontWrapRows:
+            form.setLabelAlignment(trailing)
+
+
+def refresh():
+    """Re-apply token colours after the system switched light / dark."""
+    app = QApplication.instance()
+    if app is None:
+        return
+    if _custom_palette:
+        app.setPalette(palette())
+    for w in app.allWidgets():
+        if isinstance(w, StatusLabel):
+            w.set_kind(w.kind())
+        elif w.property(_SECONDARY):
+            _apply_text(w)
+        if w.property(_DESTRUCTIVE):
+            _apply_destructive(w)
+        if w.property('hig_separator'):
+            _apply_separator(w)
+
+
+_custom_palette = False
+_polisher: _Polisher | None = None
+
+
+def native() -> bool:
+    """True where Qt draws the platform's own (AppKit) controls."""
+    return sys.platform == 'darwin'
+
+
+def apply(app: QApplication):
+    """Apply the design system to the whole application (call once, before
+    the first window is built)."""
+    global _custom_palette, _polisher
+    body_font()
+    if not native():
+        fusion = QStyleFactory.create('Fusion')
+        if fusion is not None:
+            app.setStyle(fusion)
+        app.setPalette(palette())
+        _custom_palette = True
+    if _polisher is None:
+        _polisher = _Polisher(app)
+        app.installEventFilter(_polisher)
+    try:
+        app.styleHints().colorSchemeChanged.connect(lambda *_: refresh())
+    except AttributeError:
+        pass

@@ -130,6 +130,40 @@ owner writes in Korean, so reply in Korean.
   project dirty. Use `statusBar().showMessage(...)` for anything the user
   should find later in the work log.
 
+## UI design system (owner rule, 2026-11-03, v0.48)
+
+All UI follows the owner's **"Apple HIG" design system** (a Design System
+artifact on claude.ai; read its `README.md` → `platforms.md` →
+`proportions.md` → `hierarchy.md` → `component-map.md` and the component
+READMEs before UI work, check new screens against `anti-patterns.md`).
+Profile: **Desktop** only (no 44 px touch controls, no bottom tab bar).
+The app is native Qt, so the tokens are mapped onto Qt's system roles in
+`cytosol/theme.py`, never written as values in panels:
+
+- Colours: `QPalette` roles (macOS: the system palette untouched; Windows /
+  Linux: Fusion + `theme.palette()` built from the tokens, light and dark).
+  No `setStyleSheet('color: …')` / hex colours for UI text.
+- Text: `theme.hint(label)` (Callout, label-secondary) for help text,
+  `theme.secondary(label)`, `theme.text_style(w, role)` for `hig-text-*`
+  roles, `theme.section_header(text)` for a group title.
+- Status: `theme.StatusLabel(kind=…)` (dot + text on `status-*-tint`, never
+  colour alone), `theme.status_icon(kind)` on a button.
+- Destructive actions: `theme.destructive(button)` (plain, red), label "동사 +
+  대상…", set apart (separator / spacing, last in a row or menu), confirmed
+  with `theme.confirm_destructive(...)` (default and Escape = 취소) unless an
+  undo exists. Keep the confirmation in the click handler, not in the panel
+  method the self-test calls.
+- No `QGroupBox` inside a `QGroupBox` (use `section_header`); controls of a
+  row the same height; important actions at the top / leading side, nothing
+  important on the window's bottom edge; icon-only buttons need a tool tip.
+- Excluded (`measurement-plots.md`): matplotlib graphs, `graph.py`,
+  `figure.py`, `render.py`, the image canvas: data colours, fonts and white
+  backgrounds stay as they are.
+- Known gaps, kept on purpose: up to 10 right tabs when every feature tab is
+  open (HIG: ≤ 6; only 2 open by default), check boxes instead of switches
+  for instant settings (Qt has no native switch), the T slider and status
+  bar under the preview.
+
 ## Modules (`cytosol/`)
 
 | Module | Role |
@@ -156,6 +190,7 @@ owner writes in Korean, so reply in Korean.
 | `graph.py`, `graph_window.py`, `graph_sources.py` | 그래프 편집 창: `GraphSpec` (every graph setting, JSON `format: cytosol-viewer-graph`) drawn by `graph.draw` from result `Table`s; `GraphWindow` (graph + settings top 70 %, data table bottom 30 %, drag text boxes / legend); `graph_sources` turns each tab's graph into `GraphData` |
 | `groups.py`, `image_tree.py` | Image groups and the grouped image list |
 | `flow.py` | `FlowLayout` and `reflow` (panel rows that follow the pane width) |
+| `theme.py` | Apple HIG design system mapped onto Qt: palette from the tokens, text roles, `StatusLabel`, destructive buttons + confirmation alert, section headers |
 | `project.py` | `.cyproj` project files (see below) |
 | `settings.py` | `QSettings` preferences: mouse sensitivities, recent projects; `SettingsDialog` |
 | `worklog.py` | `WorkLog`, `LoggingStatusBar`, `LogWindow` |
@@ -280,4 +315,5 @@ not affected.
 | #59 | 0.44 | FRAP: 그룹별로 정규화 removed (owner: normalize per image); group means are of each image's own normalized curve (pre-bleach = 1, post-bleach = 0); group check boxes kept |
 | #61 | 0.45 | FRAP: normalization is one check box (정규화: 이미지마다 bleach 전 = 1, 직후 = 0; the 첫 프레임 / bleach 전 평균 choices are gone, so old projects saved with them no longer show 'Normalized recovery' starting above 0); group picker is a scrolling table (check, name, n; `group_table`, 모두 표시 / 숨기기) |
 | #62 | 0.46 | 그래프 편집 창 (owner request): every feature graph (FRAP, line profile, distance bands, Coloc 2, measurement tables) opens in its own window, graph + settings top 70 %, data bottom 30 %; 7 chart types, x / y / error columns, filters, split, mean / median aggregation, all styles (series, axes with automatic tick spacing, fonts, legend, text boxes; drag text and legend), exports (image, plotted / series / summary / all tables CSV, settings JSON), settings kept in projects; Tool › … 그래프 편집 창, View › 현재 탭의 그래프 편집 창 (Ctrl+G), button under each graph |
-| this PR | 0.47 | 그래프 편집 창 (owner request): plot area, title, axis labels, text boxes and legend are objects selected, moved and resized on the graph (handle; font size for text; `*_auto` / `plot_*` in `GraphSpec`); preview zoom like the image preview (scroll area, Cmd/Ctrl+drag, `[` `]`, Ctrl+wheel, fit); 데이터 menu imports any analysis result (`graph_sources(all_data=True)`, incl. 일괄 분석) or a CSV into a window, saved in projects (`_tables`); View › 그래프 편집 창 › 새 그래프 (empty window, keys `free<n>`); axis min / max / step / unit / value scale (`Axis.unit`, `Axis.scale`, unit conversion list) |
+| #63 | 0.47 | 그래프 편집 창 (owner request): plot area, title, axis labels, text boxes and legend are objects selected, moved and resized on the graph (handle; font size for text; `*_auto` / `plot_*` in `GraphSpec`); preview zoom like the image preview (scroll area, Cmd/Ctrl+drag, `[` `]`, Ctrl+wheel, fit); 데이터 menu imports any analysis result (`graph_sources(all_data=True)`, incl. 일괄 분석) or a CSV into a window, saved in projects (`_tables`); View › 그래프 편집 창 › 새 그래프 (empty window, keys `free<n>`); axis min / max / step / unit / value scale (`Axis.unit`, `Axis.scale`, unit conversion list) |
+| this PR | 0.48 | Apple HIG design system (owner request, desktop profile): `theme.py` maps the tokens onto Qt roles (native macOS look kept, Fusion + token palette light/dark elsewhere); help text in label-secondary text roles instead of fixed gray; warnings as StatusIndicator (dot + text); destructive buttons red, set apart, "동사 + 대상…" and confirmed with 취소 as default; no box in a box (markers, stack channel display); image list pane: actions on top, list last; graph editor desk uses a system role; measurement plots unchanged |

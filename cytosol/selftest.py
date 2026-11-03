@@ -144,6 +144,83 @@ def run(out_dir) -> int:
         with h5py.File(p, 'r') as f:
             return int(f['x'][()].sum())
 
+    def design_system():
+        """Apple HIG design system (cytosol/theme.py): semantic colours and text
+        styles instead of fixed values, no box in a box, StatusIndicator,
+        destructive actions with 취소 as the default."""
+        from PySide6.QtGui import QPalette
+        from PySide6.QtWidgets import QApplication, QGroupBox, QLabel, QPushButton, QWidget
+
+        from . import theme
+        from .app import MainWindow
+        app = QApplication.instance() or QApplication([sys.argv[0]])
+        theme.apply(app)
+        if not theme.native():
+            if app.style().name().lower() != 'fusion':
+                raise AssertionError(f'style {app.style().name()}')
+            want = theme.color('blue').name()
+            if app.palette().color(QPalette.ColorRole.Highlight).name() != want:
+                raise AssertionError('accent is not the Highlight role')
+        for name in ('light', 'dark'):
+            p = theme.palette(name)
+            if p.color(QPalette.ColorRole.WindowText).name() != theme.TOKENS[name]['label']:
+                raise AssertionError(f'{name}: label token not WindowText')
+        win = MainWindow()
+        win.resize(1400, 900)
+        win.show()
+        for key in list(win.tab_pages):
+            win.show_tab(key)
+        app.processEvents()
+        try:
+            def boxed(w):
+                p = w.parentWidget()
+                while p is not None:
+                    if isinstance(p, QGroupBox):
+                        return True
+                    p = p.parentWidget()
+                return False
+            nested = [g.title() for g in win.findChildren(QGroupBox) if boxed(g)]
+            if nested:
+                raise AssertionError(f'box in a box: {nested}')
+            fixed = [w.objectName() or type(w).__name__ for w in win.findChildren(QWidget)
+                     if 'gray' in w.styleSheet() or '#b3' in w.styleSheet()]
+            if fixed:
+                raise AssertionError(f'fixed colours in style sheets: {fixed[:5]}')
+            hints = [w for w in win.findChildren(QLabel) if w.property('hig_secondary')]
+            if not hints or hints[0].palette().color(QPalette.ColorRole.WindowText).rgba() \
+                    != theme.color('label-secondary').rgba():
+                raise AssertionError('hint labels not label-secondary')
+            red = theme.color('red').name()
+            danger = [b for b in win.findChildren(QPushButton) if b.property('hig_destructive')]
+            if len(danger) < 4 or any(
+                    b.palette().color(QPalette.ColorRole.ButtonText).name() != red for b in danger):
+                raise AssertionError(f'destructive buttons: {[b.text() for b in danger]}')
+            box, act = theme.destructive_alert(win, '삭제', '지울까요?', '삭제')
+            if box.defaultButton() is act or box.escapeButton() is act:
+                raise AssertionError('destructive alert: default must be 취소')
+            box.deleteLater()
+            lab = theme.StatusLabel('경고 문구', kind='warning')
+            lab.resize(200, 30)
+            img = lab.grab().toImage()
+            dot = img.pixelColor(lab.PAD_X + lab.DOT // 2,
+                                 lab.PAD_Y + lab.fontMetrics().height() // 2)
+            if abs(dot.hue() - theme.color('orange').hue()) > 10:
+                raise AssertionError(f'status dot colour {dot.name()}')
+            lab.set_kind(None)
+            if lab.contentsMargins().left():
+                raise AssertionError('plain hint keeps the status margin')
+            # left pane: the image list is last (nothing on the bottom edge)
+            ll = win.file_list.parentWidget().layout()
+            if ll.itemAt(ll.count() - 1).widget() is not win.file_list:
+                raise AssertionError('image list is not the last item of the left pane')
+            return (f'{len(danger)} destructive buttons, {len(hints)} hint labels, '
+                    f'style {app.style().name()}')
+        finally:
+            win.dirty = False
+            win.close()
+            win.deleteLater()
+            app.processEvents()
+
     item = _synthetic_item()
 
     export_item_files = []
@@ -623,6 +700,8 @@ def run(out_dir) -> int:
         from .app import MainWindow
         from .figure_window import FigureWindow  # noqa: F401
         app = QApplication.instance() or QApplication([sys.argv[0]])
+        from . import theme
+        theme.apply(app)
         win = MainWindow()
         win.show()
         app.processEvents()
@@ -1129,8 +1208,10 @@ def run(out_dir) -> int:
             raise AssertionError(f'size range estimate {rp.min_cell.value()}–{rp.max_cell.value()}')
         # 자동: each image gets its own range, shown in the fields
         from PySide6.QtWidgets import QMessageBox as _MB
-        _q = _MB.question
+        from . import theme as _theme
+        _q, _cd = _MB.question, _theme.confirm_destructive
         _MB.question = staticmethod(lambda *a, **k: _MB.StandardButton.Yes)
+        _theme.confirm_destructive = lambda *a, **k: True
         kept = [(it, it.cells, it.roi_roles) for it in win.items]
         try:
             rp.detect_current()
@@ -1157,6 +1238,7 @@ def run(out_dir) -> int:
                 raise AssertionError('same range for all images not applied')
         finally:
             _MB.question = _q
+            _theme.confirm_destructive = _cd
             rp.__dict__.pop('_jobs', None)
             for it, cells, roles in kept:
                 it.cells, it.roi_roles = cells, roles
@@ -1907,6 +1989,7 @@ def run(out_dir) -> int:
     step('batch analysis', batch_step)
     step('graph editor', graph_step)
     step('main window', window)
+    step('design system', design_system)
 
     text = '\n'.join(log) + f'\n\n{"PASSED" if ok else "FAILED"}\n'
     (out / 'selftest.log').write_text(text, encoding='utf-8')
