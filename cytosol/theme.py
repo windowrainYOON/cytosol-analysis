@@ -112,7 +112,8 @@ TEXT_ROLES = {
 }
 BODY_PT = 13.0
 NUMBER_MIN_W, SELECT_MIN_W = 80, 96  # FormRow control widths (desktop)
-NUMBER_MAX_W = 140  # a number field never spans a wide form row
+NUMBER_MAX_W = 150  # a number field never spans a wide form row
+NUMBER_FIT_W = 118  # at least this wide when its text needs it (suffix, special text)
 BODY_PX = 13  # Desktop body text (typography-desktop.md)
 
 _ROLE = 'hig_role'
@@ -488,7 +489,9 @@ class _Polisher(QObject):
             # NumberInput width: digits + 2 (72–96 px); the field still grows
             # to its size hint when the pane is wide enough
             if not obj.minimumWidth():
-                obj.setMinimumWidth(NUMBER_MIN_W)
+                # wide enough for its suffix / special text ('80.0 µm²', '제한 없음')
+                need = obj.sizeHint().width()
+                obj.setMinimumWidth(max(NUMBER_MIN_W, min(need, NUMBER_FIT_W)))
             # ... but not across a whole form row: a number field is short
             if obj.maximumWidth() >= 16777215:
                 obj.setMaximumWidth(NUMBER_MAX_W)

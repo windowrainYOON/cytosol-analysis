@@ -96,7 +96,7 @@ class Chip(QAbstractButton):
 
     closeClicked = Signal()
     H = 26
-    PAD = 12
+    PAD = 10
     X = 14  # close glyph size
 
     def __init__(self, text: str, closable: bool, parent=None):
@@ -182,7 +182,7 @@ class ChipTabs(QTabWidget):
         self.setDocumentMode(True)
         self.chips = QWidget()
         self.chips.setObjectName('hig_chips')
-        self._flow = FlowLayout(self.chips, spacing=6)
+        self._flow = FlowLayout(self.chips, spacing=4)
         self._flow.setContentsMargins(0, 0, 0, 0)
         self._fixed: set[QWidget] = set()
         self.currentChanged.connect(lambda _i: self._sync())

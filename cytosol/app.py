@@ -249,7 +249,7 @@ class Canvas(QGraphicsView):
         self.rect_item.setZValue(10)
         self.rect_item.hide()
         self.scene().addItem(self.rect_item)
-        self.setBackgroundBrush(QColor(30, 30, 30))
+        self.refresh_theme()  # letterbox around the image = window background
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.crop_mode = False
@@ -324,6 +324,12 @@ class Canvas(QGraphicsView):
         self.scene().addItem(self._hover_box)
         self.viewport().setMouseTracking(True)
 
+    def refresh_theme(self):
+        """The area around the image follows the window background (light /
+        dark), so the preview shows no dark band in light mode."""
+        from . import theme  # noqa: PLC0415
+
+        self.setBackgroundBrush(theme.color('background-secondary'))
     def set_image(self, qimg: QImage, refit=False):
         self.pix.setPixmap(QPixmap.fromImage(qimg))
         self._scene_rect()
@@ -1435,6 +1441,8 @@ class MainWindow(QMainWindow):
         view_row.addWidget(self.canvas, 1)
         cl.addLayout(view_row, 1)
         cl.addWidget(self.t_row)
+        self.t_row.setVisible(False)  # shown for images with T
+        self.z_col.setVisible(False)  # shown once an image is open
         cl.addLayout(bar2)
 
         # right: channel panels + batch LUT
@@ -3245,6 +3253,9 @@ class MainWindow(QMainWindow):
         for w in (self.z_slider, self.z_mip):
             w.blockSignals(False)
         self.z_col.setEnabled(nz > 1 and not self._stack_on())
+        self.z_col.setVisible(it is not None)  # empty list: no Z / T controls
+        if it is None:
+            self.t_row.setVisible(False)
         self._z_label()
 
     def _z_label(self):

@@ -237,6 +237,8 @@ QGroupBox::title {{
     left: {ROW_PAD}px; top: 4px; padding: 0;
     color: {c('label-secondary')}; font-weight: 600;
 }}
+QGroupBox[checkable="true"]::title {{ color: {c('label')}; }}
+QGroupBox[checkable="true"]:!checked::title {{ color: {c('label-secondary')}; }}
 QGroupBox::indicator {{ width: {CHECK}px; height: {CHECK}px; margin-right: 2px; }}
 QGroupBox::indicator:checked {{ image: {url('check_on')}; }}
 QGroupBox::indicator:unchecked {{ image: {url('check_off')}; }}

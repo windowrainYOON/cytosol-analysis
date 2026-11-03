@@ -46,7 +46,9 @@ class ColorButton(QPushButton):
 
     def set_rgb(self, rgb):
         self.rgb = tuple(float(c) for c in rgb)
-        self.setStyleSheet(f'background-color: {QColor.fromRgbF(*self.rgb).name()};')
+        # the swatch shows the data colour; a hairline keeps white visible on a light card
+        self.setStyleSheet(f'background-color: {QColor.fromRgbF(*self.rgb).name()};'
+                           'border: 1px solid rgba(128, 128, 128, 0.55);')
 
     def _pick(self):
         c = QColorDialog.getColor(QColor.fromRgbF(*self.rgb), self, '마커 색')
