@@ -1449,7 +1449,7 @@ class MainWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setWidget(chan_widget)
 
-        all_luts = QPushButton('모든 채널 LUT를 전체 이미지에 적용')
+        all_luts = theme.prominent(QPushButton('모든 채널 LUT를 전체 이미지에 적용'))
         all_luts.clicked.connect(self.apply_all_channels)
         self.copy_color = QCheckBox('색상도 함께 적용')
         self.copy_color.setChecked(True)

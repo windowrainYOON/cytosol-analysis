@@ -145,8 +145,8 @@ class MarkerPanel(QWidget):
         self.bl_show = QCheckBox('화면에 표시')
         self.bl_show.setChecked(True)
         self.bl_show.setToolTip('미리보기 이미지 위에 bleach 영역 선을 보이거나 숨깁니다.')
-        self.bl_export = QCheckBox('저장하는 RGB 이미지(합성·채널별, MP4)에 선 포함')
-        self.bl_export.setToolTip('켜면 내보내는 RGB TIFF / MP4에 bleach 영역 선을 그려 넣습니다.\n'
+        self.bl_export = QCheckBox('내보내는 RGB 이미지에 선 포함')
+        self.bl_export.setToolTip('켜면 내보내는 RGB 이미지(합성·채널별 TIFF, MP4)에 bleach 영역 선을 그려 넣습니다.\n'
                                   '원본값 스택(raw)에는 그리지 않습니다. bleach 영역은 항상 '
                                   '_bleach_rois.zip (ImageJ ROI)로도 저장됩니다.')
         self.bl_label = QCheckBox('영역 이름 표시')

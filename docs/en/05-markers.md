@@ -47,7 +47,7 @@ bleaching in the experiment). The box lists each region's size in px and µm.
 | Setting | Meaning |
 |---|---|
 | **화면에 표시** (Show on screen) | Show/hide the outlines on the preview |
-| **저장하는 RGB 이미지(합성·채널별, MP4)에 선 포함** | Draw the outlines into exported RGB TIFFs / MP4s (never into the raw stack) |
+| **내보내는 RGB 이미지에 선 포함** | Draw the outlines into exported RGB TIFFs / MP4s (never into the raw stack) |
 | **영역 이름 표시** (Show region names) | Label each outline |
 | **선 두께** (Line width), **색** (Color) | Outline style |
 
