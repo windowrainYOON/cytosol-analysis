@@ -137,8 +137,22 @@ artifact on claude.ai; read its `README.md` → `platforms.md` →
 `proportions.md` → `hierarchy.md` → `component-map.md` and the component
 READMEs before UI work, check new screens against `anti-patterns.md`).
 Profile: **Desktop** only (no 44 px touch controls, no bottom tab bar).
-The app is native Qt, so the tokens are mapped onto Qt's system roles in
-`cytosol/theme.py`, never written as values in panels:
+The tokens are mapped onto Qt in `cytosol/theme.py` and
+`cytosol/hig_style.py`, never written as values in panels. Since v0.49 every
+platform (macOS too) runs Fusion + `theme.palette()` + one app-wide style
+sheet generated from the tokens (`hig_style.stylesheet(scheme)`, light/dark,
+re-applied on colour-scheme change; indicator SVGs written to a temp dir):
+buttons (radius 6, height 28, `theme.prominent(btn)` = filled accent, at most
+2 per tab), fields / combos / steppers, `QCheckBox` = switch in panes but a
+check box inside a `QDialog` and in item views, `QGroupBox` = rounded card
+(`background-tertiary`, title above), tabs = centred segmented control,
+lists, menus, sliders, scroll bars. Surfaces: window and panes
+`background-secondary`, centre `#hig_content` `background`. Liquid Glass
+(`cytosol/glass.py`, macOS, pyobjc): an `NSVisualEffectView` (sidebar
+material, behind window) under the Qt view, panes `#hig_sidebar` /
+`#hig_inspector` tinted see-through; opaque when pyobjc is missing or Reduce
+Transparency is on. New widgets get the style automatically; don't add
+per-widget style sheets.
 
 - Colours: `QPalette` roles (macOS: the system palette untouched; Windows /
   Linux: Fusion + `theme.palette()` built from the tokens, light and dark).
@@ -160,9 +174,9 @@ The app is native Qt, so the tokens are mapped onto Qt's system roles in
   `figure.py`, `render.py`, the image canvas: data colours, fonts and white
   backgrounds stay as they are.
 - Known gaps, kept on purpose: up to 10 right tabs when every feature tab is
-  open (HIG: ≤ 6; only 2 open by default), check boxes instead of switches
-  for instant settings (Qt has no native switch), the T slider and status
-  bar under the preview.
+  open (HIG: ≤ 6; only 2 open by default), the T slider and status bar
+  under the preview, Fusion-drawn controls instead of native AppKit ones
+  on macOS (needed for one styled look).
 
 ## Modules (`cytosol/`)
 
@@ -191,6 +205,8 @@ The app is native Qt, so the tokens are mapped onto Qt's system roles in
 | `groups.py`, `image_tree.py` | Image groups and the grouped image list |
 | `flow.py` | `FlowLayout` and `reflow` (panel rows that follow the pane width) |
 | `theme.py` | Apple HIG design system mapped onto Qt: palette from the tokens, text roles, `StatusLabel`, destructive buttons + confirmation alert, section headers |
+| `hig_style.py` | App-wide style sheet generated from the tokens (all controls, light/dark), indicator SVGs |
+| `glass.py` | macOS Liquid Glass sidebar material (NSVisualEffectView via pyobjc) behind the side panes |
 | `project.py` | `.cyproj` project files (see below) |
 | `settings.py` | `QSettings` preferences: mouse sensitivities, recent projects; `SettingsDialog` |
 | `worklog.py` | `WorkLog`, `LoggingStatusBar`, `LogWindow` |
@@ -316,4 +332,5 @@ not affected.
 | #61 | 0.45 | FRAP: normalization is one check box (정규화: 이미지마다 bleach 전 = 1, 직후 = 0; the 첫 프레임 / bleach 전 평균 choices are gone, so old projects saved with them no longer show 'Normalized recovery' starting above 0); group picker is a scrolling table (check, name, n; `group_table`, 모두 표시 / 숨기기) |
 | #62 | 0.46 | 그래프 편집 창 (owner request): every feature graph (FRAP, line profile, distance bands, Coloc 2, measurement tables) opens in its own window, graph + settings top 70 %, data bottom 30 %; 7 chart types, x / y / error columns, filters, split, mean / median aggregation, all styles (series, axes with automatic tick spacing, fonts, legend, text boxes; drag text and legend), exports (image, plotted / series / summary / all tables CSV, settings JSON), settings kept in projects; Tool › … 그래프 편집 창, View › 현재 탭의 그래프 편집 창 (Ctrl+G), button under each graph |
 | #63 | 0.47 | 그래프 편집 창 (owner request): plot area, title, axis labels, text boxes and legend are objects selected, moved and resized on the graph (handle; font size for text; `*_auto` / `plot_*` in `GraphSpec`); preview zoom like the image preview (scroll area, Cmd/Ctrl+drag, `[` `]`, Ctrl+wheel, fit); 데이터 menu imports any analysis result (`graph_sources(all_data=True)`, incl. 일괄 분석) or a CSV into a window, saved in projects (`_tables`); View › 그래프 편집 창 › 새 그래프 (empty window, keys `free<n>`); axis min / max / step / unit / value scale (`Axis.unit`, `Axis.scale`, unit conversion list) |
-| this PR | 0.48 | Apple HIG design system (owner request, desktop profile): `theme.py` maps the tokens onto Qt roles (native macOS look kept, Fusion + token palette light/dark elsewhere); help text in label-secondary text roles instead of fixed gray; warnings as StatusIndicator (dot + text); destructive buttons red, set apart, "동사 + 대상…" and confirmed with 취소 as default; no box in a box (markers, stack channel display); image list pane: actions on top, list last; graph editor desk uses a system role; measurement plots unchanged |
+| #64 | 0.48 | Apple HIG design system (owner request, desktop profile): `theme.py` maps the tokens onto Qt roles (native macOS look kept, Fusion + token palette light/dark elsewhere); help text in label-secondary text roles instead of fixed gray; warnings as StatusIndicator (dot + text); destructive buttons red, set apart, "동사 + 대상…" and confirmed with 취소 as default; no box in a box (markers, stack channel display); image list pane: actions on top, list last; graph editor desk uses a system role; measurement plots unchanged |
+| this PR | 0.49 | Full HIG visual style (owner request): token-generated app-wide style sheet on every platform (rounded buttons, filled accent main actions, switches, steppers, rounded group cards, segmented tabs, lists, menus, sliders), Liquid Glass sidebar material on macOS (`glass.py`, pyobjc), pane surfaces; measurement plots unchanged |

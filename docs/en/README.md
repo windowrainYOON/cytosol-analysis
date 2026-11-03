@@ -75,9 +75,20 @@ tab's results.
 
 The screens follow the desktop rules of the Apple Human Interface Guidelines.
 
-- On macOS the app uses the system controls and colors (accent color, dark
-  mode, Increase Contrast). On Windows it is drawn with the same family of
-  colors (light and dark).
+- Every platform is drawn in the same design-system style (light and dark,
+  following the system setting); all colors come from the design tokens
+  (accent blue, secondary label, separator, fills).
+- Buttons have rounded corners (6 px) and are 28 px high. Only each tab's
+  main action (e.g. **ROI 검출 (현재 이미지)**, **지금 측정**) is a filled
+  blue button; the others are gray filled buttons.
+- On / off settings are switches; choices in dialogs and items in lists are
+  check boxes.
+- Settings sit in rounded cards (groups) with the group name above the card
+  in bold secondary text. Sub-tabs are centered segmented controls.
+- On macOS the image list on the left and the tab pane on the right use the
+  translucent sidebar material (Liquid Glass), so the desktop shows through;
+  the image preview in the centre stays opaque. With **Reduce transparency**
+  on (Accessibility) they are drawn opaque.
 - Help text is one step smaller in the secondary label color; warnings are a
   colored dot plus text (e.g. an orange dot and the message on a tinted
   background), never color alone.

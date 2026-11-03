@@ -58,7 +58,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import theme
+from . import glass, theme
 from .lut import (
     ImageItem,
     apply_lut_to_all,
@@ -1283,6 +1283,8 @@ class MainWindow(QMainWindow):
         # destructive one set apart by a separator, and the list last so no
         # control sits on the window's bottom edge
         left = QWidget()
+        left.setObjectName('hig_sidebar')  # functional layer: sidebar material
+        left.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         ll = QVBoxLayout(left)
         title = QLabel('이미지 (TCF / CZI / OIR / TIF, 끌어다 놓기 가능)')
         title.setWordWrap(True)
@@ -1418,6 +1420,8 @@ class MainWindow(QMainWindow):
         bar2.addStretch()
         bar2.addWidget(self.info)
         center = QWidget()
+        center.setObjectName('hig_content')  # content layer between the two side panes
+        center.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         cl = QVBoxLayout(center)
         cl.addLayout(bar1)
         self.z_col = QWidget()
@@ -1510,7 +1514,7 @@ class MainWindow(QMainWindow):
         lut_top = QWidget()
         rl = QVBoxLayout(lut_top)
         rl.setContentsMargins(0, 0, 0, 0)
-        rl.addWidget(QLabel('채널 LUT'))
+        rl.addWidget(theme.text_style(QLabel('채널 LUT'), 'headline'))
         self.visibility = VisibilityRow()
         rl.addWidget(self.visibility)
         rl.addWidget(scroll, 1)
@@ -1553,6 +1557,7 @@ class MainWindow(QMainWindow):
         self.intensity_panel = IntensityPanel(self)
         self.info_panel = InfoPanel()
         right = QTabWidget()
+        right.setObjectName('hig_inspector')  # functional layer: inspector material
         self.right_tabs = right
         right.setTabsClosable(True)
         right.tabCloseRequested.connect(lambda i: self.hide_tab(self._tab_name(right.widget(i))))
@@ -1597,6 +1602,8 @@ class MainWindow(QMainWindow):
         split.splitterMoved.connect(lambda *_: self._remember_panes())
         self.setCentralWidget(split)
         self._restore_panes()
+        # Liquid Glass sidebar material behind the window (macOS, see glass.py)
+        self.setProperty('hig_glass', glass.prepare(self))
 
         self.figure_win = None
         self.graph_wins = {}  # graph source key -> GraphWindow (그래프 편집 창)

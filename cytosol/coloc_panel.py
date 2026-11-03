@@ -255,7 +255,7 @@ class ColocPanel(QWidget):
         lay.addWidget(opt)
 
         row = QHBoxLayout()
-        run_one = QPushButton('계산 (현재 이미지)')
+        run_one = theme.prominent(QPushButton('계산 (현재 이미지)'))
         run_one.clicked.connect(self.run_current)
         run_all = QPushButton('모든 이미지')
         run_all.setToolTip('ROI가 있는 모든 이미지에서 같은 이름의 채널로 계산')

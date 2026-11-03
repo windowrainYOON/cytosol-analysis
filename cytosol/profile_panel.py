@@ -49,7 +49,7 @@ class ProfilePanel(QWidget):
 
         line_box = QGroupBox('선')
         ll = QVBoxLayout(line_box)
-        self.draw_btn = QPushButton('선 그리기 (드래그)')
+        self.draw_btn = theme.prominent(QPushButton('선 그리기 (드래그)'))
         self.draw_btn.setCheckable(True)
         ll.addWidget(self.draw_btn)
         row = QHBoxLayout()

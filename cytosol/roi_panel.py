@@ -328,7 +328,7 @@ class RoiPanel(QWidget):
                 self._size_sliders[w].setEnabled(not box.isChecked())
         dl.addRow('프레임에 걸친 세포', self.edge_combo)
         dl.addRow('안쪽 경계 여백', self._with_auto(self.edge_margin))
-        run_one = QPushButton('ROI 검출 (현재 이미지)')
+        run_one = theme.prominent(QPushButton('ROI 검출 (현재 이미지)'))
         run_one.clicked.connect(self.detect_current)
         run_all = QPushButton('모든 이미지')
         run_all.setToolTip('같은 이름의 채널을 같은 역할로 모든 이미지에서 검출 (선택한 자동/수동 방식)')
