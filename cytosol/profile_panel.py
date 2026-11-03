@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .lineprofile import (Profile, draw_profile, line_overlay, line_profile, write_line_roi,
                           write_profile_csv)
 
@@ -43,7 +44,7 @@ class ProfilePanel(QWidget):
                        '(원본값)를 그래프로 보여줍니다. 현재 Z(또는 MIP)와 시점의 값이며, '
                        'Z·시점·LUT 색을 바꾸면 그래프도 따라 바뀝니다.')
         help_.setWordWrap(True)
-        help_.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(help_)
         lay.addWidget(help_)
 
         line_box = QGroupBox('선')
@@ -85,7 +86,7 @@ class ProfilePanel(QWidget):
         pl.addLayout(row)
         self.info = QLabel()
         self.info.setWordWrap(True)
-        self.info.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(self.info)
         pl.addWidget(self.info)
         # the 라인 프로파일 menu saves; with_roi (set by the window):
         # also <name>_line.roi and <name>_image.png next to the file

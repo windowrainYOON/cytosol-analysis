@@ -95,8 +95,10 @@ objects you select, move and resize.
 
 ### 데이터 시리즈 (data series)
 
-The series list (ticked = shown) with add, duplicate, delete, ▲ ▼ (drawing order) and
-**값마다 나누기…** (split into one series per value of a column, e.g. a colored series per group).
+The series list (ticked = shown) with add, duplicate, ▲ ▼ (drawing order),
+**값마다 나누기…** (split into one series per value of a column, e.g. a colored series per group)
+and, last and in red, **시리즈 삭제…** (Delete series, confirmed in an alert). Legend
+entries and text boxes are deleted the same way (**항목 삭제…**, **글자 상자 삭제…**).
 
 - **Data**: table, x, y, ± error column, z (heat map), two conditions (column = value),
   **같은 스타일로 나눠 그리기** (one line per value of a column in the same style, e.g. per

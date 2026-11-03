@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .imageinfo import InfoSummary, summarize
 
 NOTE = ('레이저 세기는 소프트웨어에 저장된 설정값(%)입니다. 정격 최대 출력과 곱한 명목 출력은 '
@@ -62,7 +63,7 @@ class InfoPanel(QWidget):
         lay.addWidget(self.gen, 2)
         note = QLabel(NOTE)
         note.setWordWrap(True)
-        note.setStyleSheet('color: gray;')
+        theme.secondary(note)
         lay.addWidget(note)
 
         row = QHBoxLayout()
@@ -71,7 +72,7 @@ class InfoPanel(QWidget):
         self.copy_btn.clicked.connect(self.copy)
         row.addWidget(self.copy_btn)
         hint = QLabel('저장: 메뉴 막대의 이미지 정보')
-        hint.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(hint)
         row.addWidget(hint, 1)
         lay.addLayout(row)
         self._enable(False)

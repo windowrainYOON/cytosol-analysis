@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
+
 # key -> (label, tooltip, default multiplier)
 SENSITIVITIES = {
     'zoom_drag': ('확대/축소 드래그 (Cmd/Ctrl + 드래그)',
@@ -126,7 +128,7 @@ class SettingsDialog(QDialog):
         note = QLabel('확대/축소: Cmd(Windows는 Ctrl) + 드래그, [ 축소, ] 확대. '
                       'Cmd 없이 휠을 굴리면 타임시리즈에서는 시점을 옮기고, 아니면 화면을 움직입니다.')
         note.setWordWrap(True)
-        note.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(note)
         lay.addWidget(note)
         box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         box.rejected.connect(self.reject)

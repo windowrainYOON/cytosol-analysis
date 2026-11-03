@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from . import frap
 from .flow import FlowLayout
 from .frap import ROI_NAMES, FrapCurve, FrapState
@@ -86,7 +87,7 @@ class FrapPanel(QWidget):
                        '신호가 없는 가까운 곳에 자동으로 놓입니다. 이미지 위에서 ROI를 끌어 옮기면 값과 '
                        '그래프가 바로 바뀝니다.')
         help_.setWordWrap(True)
-        help_.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(help_)
         lay.addWidget(help_)
 
         # ---- data (same for every image) ----
@@ -137,7 +138,7 @@ class FrapPanel(QWidget):
         fl.addRow('추적 창', _row(self.drift_win, self.drift_win_auto))
         self._drift_info = QLabel()
         self._drift_info.setWordWrap(True)
-        self._drift_info.setStyleSheet('color: gray; font-size: 11px;')
+        theme.hint(self._drift_info)
         fl.addRow(self._drift_info)
         lay.addWidget(data)
 
@@ -163,7 +164,7 @@ class FrapPanel(QWidget):
             rl.addLayout(_row(title, b))
             info = QLabel()
             info.setWordWrap(True)
-            info.setStyleSheet('color: gray; font-size: 11px;')
+            theme.hint(info)
             self._roi_info[n] = info
             rl.addWidget(info)
             if n == 'bleach':
@@ -218,9 +219,8 @@ class FrapPanel(QWidget):
         reset = QPushButton('모두 자동 배치')
         reset.setToolTip('이 이미지의 ROI·프레임·threshold를 모두 자동으로 되돌립니다.')
         reset.clicked.connect(self.reset_auto)
-        self.notes = QLabel()
+        self.notes = theme.StatusLabel(kind='warning')
         self.notes.setWordWrap(True)
-        self.notes.setStyleSheet('color: #b36b00; font-size: 11px;')
         rl.addLayout(_row(reset))
         rl.addWidget(self.notes)
         lay.addWidget(rbox)
@@ -278,7 +278,7 @@ class FrapPanel(QWidget):
         self.summary = QLabel()
         self.summary.setWordWrap(True)
         self.summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.summary.setStyleSheet('font-size: 11px;')
+        theme.text_style(self.summary, 'callout')
         pl.addWidget(self.summary)
         lay.addWidget(pbox, 1)
 

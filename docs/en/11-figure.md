@@ -12,8 +12,9 @@ main window appear when you come back to the figure window.
 
 ## The table
 
-- **행 추가 / 열 추가** (Add row / column), **행 삭제 / 열 삭제** (Delete),
-  **행 ▲ / 행 ▼ / 열 ◀ / 열 ▶** (Move).
+- **행 추가 / 열 추가** (Add row / column), **행 ▲ / 행 ▼ / 열 ◀ / 열 ▶** (Move), and set
+  apart in red **행 삭제… / 열 삭제…** (Delete row / column; confirmed in an
+  alert whose default button is **취소**, Cancel).
 - **Double-click a row or column header** to edit its label (Enter for a new
   line) and its text color (**색상…**, **기본 색상** = default). Right-click a
   header for **이름/색상 수정…**, **위에/아래에 행 삽입**, **왼쪽에/오른쪽에 열 삽입**.
@@ -78,7 +79,8 @@ for CH1, while CH2 left at **LUT 탭 (자동)** keeps the LUT tab values.
 3. **이 행 전체에 적용** / **이 열 전체에 적용**: the same inset in every cell of
    the row/column with the same image size (separate zoom cells keep the same
    offset, e.g. a zoom row under the image row).
-4. **삭제**: delete the selected inset.
+4. **확대 영역 삭제…** (Delete inset): deletes the selected inset after the
+   confirmation alert.
 
 ### Same size, copy and paste
 

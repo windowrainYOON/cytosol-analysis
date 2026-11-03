@@ -71,6 +71,23 @@ tab's results.
 | Remove images from the list | Select, then `Delete` / `Backspace` |
 | Cell ROI editing | `V` select, `A` add, `S` subtract, `N` new cell, `Delete` delete cell, `Ctrl+Z` / `Ctrl+Shift+Z` undo/redo |
 
+## Screen design (Apple HIG)
+
+The screens follow the desktop rules of the Apple Human Interface Guidelines.
+
+- On macOS the app uses the system controls and colors (accent color, dark
+  mode, Increase Contrast). On Windows it is drawn with the same family of
+  colors (light and dark).
+- Help text is one step smaller in the secondary label color; warnings are a
+  colored dot plus text (e.g. an orange dot and the message on a tinted
+  background), never color alone.
+- Delete / remove buttons that cannot be undone are set apart from the other
+  buttons in red text; a trailing `…` means a confirmation alert follows, and
+  its default button (Return) is **취소** (Cancel). Deleting cell ROIs, which
+  can be undone, needs no confirmation.
+- Measurement graphs (FRAP, line profile, graph editor, Figure) and the image
+  preview are not restyled.
+
 ## Citing the analysis
 
 For the Methods section of a paper, use the statement in the repository
