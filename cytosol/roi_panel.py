@@ -243,14 +243,14 @@ class RoiPanel(QWidget):
         auto = QWidget()
         dl = QFormLayout(auto)
         row = QHBoxLayout()
+        row.addWidget(self.sat, 1)  # [value][자동] like every other value row
         row.addWidget(self.sat_auto)
-        row.addWidget(self.sat, 1)
         dl.addRow('배경 포화값', row)
         dl.addRow(self.input_view)
         for key, t in self.thr.items():
             row = QHBoxLayout()
-            row.addWidget(t['auto'])
             row.addWidget(t['spin'], 1)
+            row.addWidget(t['auto'])
             dl.addRow(t['label'], row)
             dl.addRow('', t['slider'])
         dl.addRow(self.thr_view)
