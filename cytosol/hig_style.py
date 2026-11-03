@@ -5,31 +5,30 @@ Every value comes from the design system: colours from the tokens in
 and the component READMEs.  The sheet is built once per colour scheme and
 re-applied when the system switches between light and dark.
 
+Since v0.50 the macOS **tahoe** style layer (components/MacOSStyle):
+concentric radii (panel 18 → row 10, inset group 12, field 8, value 6,
+menu 12), capsule buttons and chips, borderless filled fields, inset groups
+(translucent background, 1 px glass line, title above at the row padding),
+accent-pill selection in menus and the sidebar, no dividers.
+
 Component mapping (design system component → Qt widget):
 
 ==================  ==========================================================
-Button              QPushButton: 28 high, radius 6, 12 padding, gray fill +
-                    1 px separator; ``prominent`` = accent fill (1–2 a screen);
-                    ``destructive`` = plain red text; checkable = tinted
-TextField           QLineEdit / QPlainTextEdit: background-tertiary, 1 px
-                    separator-opaque, radius 6, 8 padding, accent focus border
-Select              QComboBox: TextField shape + chevron.up.chevron.down
-NumberInput+Stepper QSpinBox / QDoubleSpinBox: end-aligned digits, stacked
-                    chevrons 20 wide inside the field end
-Toggle              QCheckBox: switch 38 × 22 (instant settings); inside a
-                    dialog (applied on OK) a 16 px check box; QRadioButton 16
-Box                 QGroupBox: background-tertiary (raised-2), radius 10, title
-                    above the box (subhead 600, label-secondary)
-TabView             QTabBar: segmented track (fill-secondary, radius 6), the
-                    selected tab raised with weight 600
-List / Table        item views: radius 10 wrapper (clipped), rows 28 (+ 2 px
-                    inset highlight radius 6), selection = accent 16 % tint +
-                    label text, hover 6 % tint (always different)
-Menu / Tooltip      QMenu radius 12 (items 24, radius 6), QToolTip radius 6
+Button              QPushButton: capsule 28, ``fill``, no border; prominent =
+                    accent fill; destructive = plain red; checked = accent
+TextField / Select  QLineEdit / QComboBox: ``fill-tertiary``, radius 8,
+NumberInput         accent border on focus; spin boxes with stacked chevrons
+Toggle              QCheckBox = check box; ``hig_switch`` = switch (only the
+                    자동 / 수동 choice); ``hig_chip`` = multi-select chip;
+                    QRadioButton = radio
+TabView             sub-tabs (QTabBar) = choice chips; the inspector uses
+                    ``hig_widgets.ChipTabs`` (painted capsule chips)
+Inset group         QGroupBox
+List / Table        item views radius 12; sidebar rows = accent pill
+Menu / Tooltip      QMenu radius 12, items accent pill on hover
 Progress / Slider   6 px capsule, accent fill; slider knob 18
-Surfaces            window and side panes background-secondary (level 1,
-                    the material fallback), groups background-tertiary
-                    (level 2), the centre content area ``background`` (0)
+Surfaces            window background-secondary; floating sidebar panel
+                    (#hig_sidebar), transparent centre / inspector
 ==================  ==========================================================
 
 Not styled here (design system exclusion ``measurement-plots.md``): the image
@@ -138,6 +137,9 @@ def _icons(scheme: str) -> dict[str, str]:
         'menu_check_sel': _svg('<path d="M2.5 7.5 L5.5 10.5 L11.5 3.5" fill="none" '
                                'stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" '
                                'stroke-linejoin="round"/>', 14, 14),
+        'chip_check': _svg(f'<path d="M2 6.3 L4.8 9 L10 3.2" fill="none" stroke="{accent}" '
+                           'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+                           12, 12),
         'xmark': _svg(f'<path d="M3 3 L9 9 M9 3 L3 9" {stroke}/>', 12, 12),
         # chevron.up.chevron.down (Select)
         'updown': _svg(f'<path d="M3 5.5 L6 2.5 L9 5.5 M3 8.5 L6 11.5 L9 8.5" {stroke}/>', 12, 14),
@@ -167,6 +169,25 @@ def icon_dir(scheme: str) -> Path:
 # materials.md: regular sidebar material over the blurred desktop (macOS)
 GLASS_ALPHA = 0.45
 
+# macOS tahoe style (components/MacOSStyle): concentric radii
+R_CAPSULE = CTL // 2  # buttons, chips, segmented controls
+R_FIELD = 8
+R_VALUE = 6
+R_PANEL = 18  # floating sidebar panel
+R_ROW = 10  # selected row inside the panel (18 - inset 8)
+R_INSET_GROUP = 12
+R_MENU = 12
+INSET = 8
+ROW_PAD = 12  # inset row padding = title / section header start (one grid line)
+CHIP_H = 24
+
+
+def _more(name: str, add: float, scheme: str) -> str:
+    """A fill token made `add` more opaque (hover / pressed of a filled control)."""
+    c = theme._hex(theme.TOKENS[scheme][name])
+    a = min(1.0, c.alphaF() + add)
+    return f'rgba({c.red()}, {c.green()}, {c.blue()}, {round(a * 255)})'
+
 
 def stylesheet(scheme: str | None = None, glass: bool | None = None) -> str:
     from . import glass as _glass  # noqa: PLC0415
@@ -175,140 +196,172 @@ def stylesheet(scheme: str | None = None, glass: bool | None = None) -> str:
     glass = _glass.active() if glass is None else glass
     c = lambda n: rgba(n, s)  # noqa: E731
     tint = lambda n, a: _tint(n, a, s)  # noqa: E731
+    more = lambda n, a: _more(n, a, s)  # noqa: E731
     d = icon_dir(s).as_posix()
     url = lambda n: f'url("{d}/{n}.svg")'  # noqa: E731
     accent = c('blue')
-    pressed_btn = tint('gray', 0.30)
-    if glass:  # functional layer (side panes, status bar) see-through, content opaque
+    line = tint('label', 0.12)  # hig-glass-line
+    group_bg = tint('background', 0.62)
+    if glass:  # functional layer (window, sidebar panel) see-through, content opaque
         surfaces = f"""
 QMainWindow {{ background: transparent; }}
-QWidget#hig_sidebar, QTabWidget#hig_inspector {{
-    background: {tint('background-secondary', GLASS_ALPHA)}; }}
-QStatusBar {{ background: {tint('background-secondary', GLASS_ALPHA)}; }}
+QWidget#hig_sidebar {{ background: {tint('background-secondary', 0.34)}; }}
+QWidget#hig_inspector, QStatusBar {{ background: transparent; }}
 """
     else:
         surfaces = ''
     return f"""
-/* ---- surfaces: grouped background → raised groups ---- */
+/* ---- surfaces: one window sheet, a floating sidebar panel, transparent panes ---- */
 QMainWindow, QDialog {{ background: {c('background-secondary')}; }}
-QWidget#hig_content {{ background: {c('background-secondary')}; }}
+QWidget#hig_content, QWidget#hig_inspector {{ background: transparent; }}
+QWidget#hig_sidebar {{
+    background: {tint('background', 0.55)}; border: 1px solid {line};
+    border-radius: {R_PANEL}px;
+}}
 QScrollArea, QScrollArea > QWidget > QWidget#qt_scrollarea_viewport,
 QScrollArea > QWidget#qt_scrollarea_viewport {{ background: transparent; border: none; }}
-QSplitter::handle {{ background: {c('separator-opaque')}; }}
-QSplitter::handle:horizontal {{ width: 1px; }}
-QSplitter::handle:vertical {{ height: 1px; }}
-QStatusBar {{ background: {c('background-secondary')}; color: {c('label-secondary')}; }}
+QSplitter::handle {{ background: transparent; }}
+QSplitter::handle:horizontal {{ width: {INSET}px; }}
+QSplitter::handle:vertical {{ height: {INSET}px; }}
+QStatusBar {{ background: transparent; color: {c('label-secondary')}; }}
 QStatusBar QLabel {{ color: {c('label-secondary')}; }}
+QStatusBar::item {{ border: none; }}
 
-/* ---- Box: grouped, rounded section with its title above ---- */
+/* ---- inset group (hig-inset-group): rounded translucent card, title above ---- */
 QGroupBox {{
-    background: {c('background-tertiary')};
-    border: 1px solid {c('separator')};
-    border-radius: {R_GROUP}px;
-    margin-top: 22px;
-    padding: {GAP_GROUP}px {GAP_GROUP}px {GAP_GROUP - 2}px {GAP_GROUP}px;
+    background: {group_bg}; border: 1px solid {line};
+    border-radius: {R_INSET_GROUP}px; margin-top: 24px; padding: 0;
 }}
 QGroupBox::title {{
     subcontrol-origin: margin; subcontrol-position: top left;
-    left: 4px; top: 2px; padding: 0;
+    left: {ROW_PAD}px; top: 4px; padding: 0;
     color: {c('label-secondary')}; font-weight: 600;
 }}
-QGroupBox::indicator {{ width: {SW_W}px; height: {SW_H}px; }}
-QGroupBox::indicator:checked {{ image: {url('switch_on')}; }}
-QGroupBox::indicator:unchecked {{ image: {url('switch_off')}; }}
+QGroupBox::indicator {{ width: {CHECK}px; height: {CHECK}px; margin-right: 2px; }}
+QGroupBox::indicator:checked {{ image: {url('check_on')}; }}
+QGroupBox::indicator:unchecked {{ image: {url('check_off')}; }}
+QLabel[hig_section="true"] {{ padding: 12px 0 2px {ROW_PAD}px; }}
+QGroupBox QLabel[hig_section="true"] {{ padding: 6px 0 2px 0; }}
+/* inspector pages: text and options outside a group start on the same grid
+   line as the group titles and rows (ROW_PAD) */
+QWidget#hig_page QLabel {{ padding-left: {ROW_PAD}px; padding-right: 4px; }}
+QWidget#hig_page QCheckBox, QWidget#hig_page QRadioButton {{ margin-left: {ROW_PAD}px; }}
+QWidget#hig_page QGroupBox QLabel {{ padding-left: 0; padding-right: 0; }}
+QWidget#hig_page QGroupBox QCheckBox, QWidget#hig_page QGroupBox QRadioButton {{
+    margin-left: 0; }}
+QWidget#hig_page QGroupBox QLabel[hig_section="true"] {{ padding: 6px 0 2px 0; }}
 
-/* ---- Button ---- */
+/* ---- Button: capsule, gray fill, no border ---- */
 QPushButton {{
-    min-height: {CTL - 2}px; padding: 0 {PAD}px;
-    border: 1px solid {c('separator')}; border-radius: {R_CTL}px;
-    background: {c('background-tertiary')}; color: {c('label')};
+    min-height: {CTL - 4}px; padding: 0 {PAD + 2}px;
+    border: 2px solid transparent; border-radius: {R_CAPSULE}px;
+    background: {c('fill')}; color: {c('label')}; font-weight: 500;
 }}
-QPushButton:hover {{ background: {tint('gray', 0.14)}; }}
-QPushButton:pressed {{ background: {pressed_btn}; }}
-QPushButton:checked {{
-    background: {tint('blue', 0.16)}; border-color: {accent}; font-weight: 600;
-}}
+QPushButton:hover {{ background: {more('fill', 0.08)}; }}
+QPushButton:pressed {{ background: {more('fill', 0.18)}; }}
+QPushButton:checked {{ background: {accent}; color: {c('on-accent')}; font-weight: 600; }}
 QPushButton:disabled {{ color: {c('label-tertiary')}; background: {c('fill-quaternary')}; }}
-QPushButton:focus {{ border: 2px solid {accent}; padding: 0 {PAD - 1}px; }}
+QPushButton:focus {{ border-color: {tint('blue', 0.45)}; }}
 QPushButton[hig_prominent="true"] {{
-    background: {accent}; color: {c('on-accent')}; border: 1px solid {accent};
-    font-weight: 500;
+    background: {accent}; color: {c('on-accent')}; font-weight: 600;
+    border-bottom: 2px solid {tint('blue', 0.55)};
 }}
-QPushButton[hig_prominent="true"]:hover {{ background: {tint('blue', 0.86)}; }}
-QPushButton[hig_prominent="true"]:pressed {{ background: {tint('blue', 0.60)}; }}
+QPushButton[hig_prominent="true"]:hover {{ background: {tint('blue', 0.88)}; }}
+QPushButton[hig_prominent="true"]:pressed {{ background: {tint('blue', 0.65)}; }}
 QPushButton[hig_prominent="true"]:disabled {{ background: {tint('blue', 0.40)}; }}
-QPushButton[hig_destructive="true"] {{
-    background: transparent; border: 1px solid transparent; color: {c('red')};
-}}
-QPushButton[hig_destructive="true"]:hover {{ background: {tint('red', 0.08)}; }}
-QPushButton[hig_destructive="true"]:pressed {{ background: {tint('red', 0.16)}; }}
+QPushButton[hig_destructive="true"] {{ background: transparent; color: {c('red')}; }}
+QPushButton[hig_destructive="true"]:hover {{ background: {tint('red', 0.10)}; }}
+QPushButton[hig_destructive="true"]:pressed {{ background: {tint('red', 0.18)}; }}
 QPushButton[hig_destructive="true"]:disabled {{ color: {tint('red', 0.40)}; }}
 QDialogButtonBox QPushButton {{ min-width: 64px; }}
 QToolButton {{
-    min-height: {CTL - 2}px; min-width: {CTL - 2}px; border-radius: {R_CTL}px;
-    border: 1px solid transparent; background: transparent; color: {c('label')};
+    min-height: {CTL - 4}px; min-width: {CTL - 4}px; border-radius: {R_CAPSULE}px;
+    border: 2px solid transparent; background: transparent; color: {c('label')};
 }}
-QToolButton:hover {{ background: {tint('gray', 0.14)}; }}
-QToolButton:checked {{ background: {tint('blue', 0.16)}; }}
+QToolButton:hover {{ background: {c('fill-tertiary')}; }}
+QToolButton:pressed {{ background: {c('fill')}; }}
+QToolButton:checked {{ background: {accent}; }}
+QToolButton:focus {{ border-color: {tint('blue', 0.45)}; }}
+/* toolbar capsule (hig-glass-capsule): icon buttons float on one capsule */
+QWidget#hig_capsule {{
+    background: {tint('background', 0.62)}; border: 1px solid {line};
+    border-radius: {(CTL + 6) // 2}px;
+}}
 
-/* ---- TextField / Select / NumberInput ---- */
+/* ---- TextField / Select / NumberInput: radius 8, filled, no border ---- */
 QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox,
 QAbstractSpinBox {{
-    background: {c('background-tertiary')}; color: {c('label')};
-    border: 1px solid {c('separator-opaque')}; border-radius: {R_CTL}px;
+    background: {c('fill-tertiary')}; color: {c('label')};
+    border: 1px solid transparent; border-radius: {R_FIELD}px;
     selection-background-color: {tint('blue', 0.30)}; selection-color: {c('label')};
 }}
-QLineEdit, QComboBox {{ min-height: {CTL - 2}px; padding: 0 {FIELD_PAD}px; }}
+QLineEdit, QComboBox {{ min-height: {CTL - 4}px; padding: 0 {FIELD_PAD}px; }}
 QPlainTextEdit, QTextEdit {{ padding: 4px {FIELD_PAD - 2}px; }}
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus,
-QAbstractSpinBox:focus {{ border: 2px solid {accent}; }}
+QAbstractSpinBox:focus {{ border: 1px solid {accent}; background: {c('background-tertiary')}; }}
 QLineEdit:disabled, QComboBox:disabled, QAbstractSpinBox:disabled {{
     color: {c('label-tertiary')}; background: {c('fill-quaternary')};
 }}
 QComboBox {{ padding-right: {FIELD_PAD + 22}px; }}
+QComboBox:hover {{ background: {c('fill-secondary')}; }}
 QComboBox::drop-down {{
     subcontrol-origin: padding; subcontrol-position: center right;
     width: 22px; border: none;
 }}
 QComboBox::down-arrow {{ image: {url('updown')}; width: 12px; height: 14px; }}
 QComboBox QAbstractItemView {{
-    background: {c('background-tertiary')}; border: 1px solid {c('separator')};
-    border-radius: {R_CTL}px; padding: 4px; outline: none;
-    selection-background-color: {tint('blue', 0.16)}; selection-color: {c('label')};
+    background: {c('background-tertiary')}; border: 1px solid {line};
+    border-radius: {R_MENU}px; padding: 6px; outline: none;
+    selection-background-color: {accent}; selection-color: {c('on-accent')};
 }}
 QAbstractSpinBox {{
-    min-height: {CTL - 2}px; padding: 0 {STEPPER_W + 4}px 0 {FIELD_PAD}px;
+    min-height: {CTL - 4}px; padding: 0 {STEPPER_W + 2}px 0 {FIELD_PAD}px;
 }}
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
-    subcontrol-origin: border; width: {STEPPER_W}px; border: none;
-    border-left: 1px solid {c('separator')}; background: transparent;
+    subcontrol-origin: border; width: {STEPPER_W}px; border: none; background: transparent;
 }}
 QAbstractSpinBox::up-button {{ subcontrol-position: top right;
-    border-top-right-radius: {R_CTL}px; border-bottom: 1px solid {c('separator')}; }}
+    border-top-right-radius: {R_FIELD}px; }}
 QAbstractSpinBox::down-button {{ subcontrol-position: bottom right;
-    border-bottom-right-radius: {R_CTL}px; }}
+    border-bottom-right-radius: {R_FIELD}px; }}
 QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{
-    background: {tint('gray', 0.14)}; }}
+    background: {c('fill-tertiary')}; }}
 QAbstractSpinBox::up-button:pressed, QAbstractSpinBox::down-button:pressed {{
-    background: {pressed_btn}; }}
+    background: {c('fill')}; }}
 QAbstractSpinBox::up-arrow {{ image: {url('up')}; width: 10px; height: 7px; }}
 QAbstractSpinBox::down-arrow {{ image: {url('down')}; width: 10px; height: 7px; }}
 
-/* ---- Toggle: switch for instant settings, check box in dialogs ---- */
-QCheckBox {{ spacing: 8px; min-height: {SW_H}px; }}
-QCheckBox::indicator {{ width: {SW_W}px; height: {SW_H}px; }}
-QCheckBox::indicator:checked {{ image: {url('switch_on')}; }}
-QCheckBox::indicator:unchecked, QCheckBox::indicator:indeterminate {{
-    image: {url('switch_off')}; }}
-QCheckBox::indicator:checked:disabled {{ image: {url('switch_on_dis')}; }}
-QCheckBox::indicator:unchecked:disabled {{ image: {url('switch_off_dis')}; }}
-QDialog QCheckBox {{ spacing: 6px; min-height: {CHECK}px; }}
-QDialog QCheckBox::indicator {{ width: {CHECK}px; height: {CHECK}px; }}
-QDialog QCheckBox::indicator:checked {{ image: {url('check_on')}; }}
-QDialog QCheckBox::indicator:unchecked {{ image: {url('check_off')}; }}
-QDialog QCheckBox::indicator:indeterminate {{ image: {url('check_mixed')}; }}
-QDialog QCheckBox::indicator:checked:disabled {{ image: {url('check_on_dis')}; }}
-QDialog QCheckBox::indicator:unchecked:disabled {{ image: {url('check_off_dis')}; }}
+/* ---- selection controls (owner rule 2026-11-03):
+   check box = on / off option; switch = only the 자동 / 수동 choice;
+   multi-select chip = several short values picked together; radio = one of
+   several ---- */
+QCheckBox {{ spacing: 6px; min-height: {CHECK + 2}px; }}
+QCheckBox::indicator {{ width: {CHECK}px; height: {CHECK}px; }}
+QCheckBox::indicator:checked {{ image: {url('check_on')}; }}
+QCheckBox::indicator:unchecked {{ image: {url('check_off')}; }}
+QCheckBox::indicator:indeterminate {{ image: {url('check_mixed')}; }}
+QCheckBox::indicator:checked:disabled {{ image: {url('check_on_dis')}; }}
+QCheckBox::indicator:unchecked:disabled {{ image: {url('check_off_dis')}; }}
+QCheckBox[hig_switch="true"] {{ spacing: 6px; min-height: {SW_H}px; }}
+QCheckBox[hig_switch="true"]::indicator {{ width: {SW_W}px; height: {SW_H}px; }}
+QCheckBox[hig_switch="true"]::indicator:checked {{ image: {url('switch_on')}; }}
+QCheckBox[hig_switch="true"]::indicator:unchecked {{ image: {url('switch_off')}; }}
+QCheckBox[hig_switch="true"]::indicator:checked:disabled {{ image: {url('switch_on_dis')}; }}
+QCheckBox[hig_switch="true"]::indicator:unchecked:disabled {{
+    image: {url('switch_off_dis')}; }}
+QCheckBox[hig_chip="true"] {{
+    min-height: {CHIP_H - 2}px; padding: 0 10px; spacing: 0;
+    border: 1px solid {c('separator-opaque')}; border-radius: {CHIP_H // 2}px;
+    background: transparent; color: {c('label')};
+}}
+QCheckBox[hig_chip="true"]:hover {{ background: {c('fill-quaternary')}; }}
+QCheckBox[hig_chip="true"]:checked {{
+    background: {tint('blue', 0.16)}; border-color: {accent}; font-weight: 600;
+}}
+QCheckBox[hig_chip="true"]:disabled {{ color: {c('label-tertiary')}; }}
+QCheckBox[hig_chip="true"]::indicator {{ width: 0; height: 0; image: none; }}
+QCheckBox[hig_chip="true"]::indicator:checked {{
+    width: 12px; height: 12px; margin-right: 4px; image: {url('chip_check')}; }}
 QRadioButton {{ spacing: 6px; }}
 QRadioButton::indicator {{ width: {CHECK}px; height: {CHECK}px; }}
 QRadioButton::indicator:checked {{ image: {url('radio_on')}; }}
@@ -316,37 +369,32 @@ QRadioButton::indicator:unchecked {{ image: {url('radio_off')}; }}
 QRadioButton::indicator:checked:disabled {{ image: {url('radio_on_dis')}; }}
 QRadioButton::indicator:unchecked:disabled {{ image: {url('radio_off_dis')}; }}
 
-/* ---- TabView: segmented tab row ---- */
+/* ---- sub-tabs inside a panel: choice chips (one of several) ---- */
 QTabWidget::pane {{ border: none; background: transparent; top: 0; }}
-QTabWidget#hig_inspector::pane {{ padding: 6px 10px 10px 12px; }}
-QTabWidget::tab-bar {{ alignment: center; }}
+QTabWidget::tab-bar {{ alignment: left; }}
 QTabBar {{ background: transparent; }}
 QTabBar::tab {{
-    min-height: {CTL_SM}px; padding: 0 {PAD - 2}px; margin: 4px 1px 8px 1px;
-    border: none; border-radius: {R_CTL - 2}px;
-    background: {c('fill-secondary')}; color: {c('label')};
+    min-height: {CHIP_H}px; padding: 0 {PAD}px; margin: 2px 6px 10px 0;
+    border: none; border-radius: {CHIP_H // 2}px;
+    background: {tint('blue', 0.12)}; color: {c('label')}; font-weight: 500;
 }}
-QTabBar::tab:hover {{ background: {c('fill')}; }}
-QTabBar::tab:selected {{
-    background: {c('background-tertiary')}; font-weight: 600;
-    border: 1px solid {c('separator')};
-}}
-QTabBar::close-button {{ subcontrol-position: right; }}
-QTabBar QToolButton {{ background: {c('background-secondary')}; }}
+QTabBar::tab:hover {{ background: {tint('blue', 0.20)}; }}
+QTabBar::tab:selected {{ background: {accent}; color: {c('on-accent')}; font-weight: 600; }}
 QTabBar::close-button {{ image: {url('xmark')}; width: 12px; height: 12px;
-    border-radius: 3px; margin-left: 4px; }}
+    subcontrol-position: right; border-radius: 6px; margin-left: 4px; }}
 QTabBar::close-button:hover {{ background: {c('fill')}; }}
+QTabBar QToolButton {{ background: {c('background-secondary')}; }}
 
 /* ---- List / Table / Tree ---- */
 QAbstractItemView {{
     background: {c('background-tertiary')}; color: {c('label')};
     alternate-background-color: {c('fill-quaternary')};
-    border: 1px solid {c('separator')}; border-radius: {R_GROUP}px;
+    border: 1px solid {line}; border-radius: {R_INSET_GROUP}px;
     outline: none; padding: 2px;
     selection-background-color: {tint('blue', 0.16)}; selection-color: {c('label')};
 }}
 QListView::item, QTreeView::item {{
-    min-height: {ROW - 4}px; padding: 2px {FIELD_PAD}px; border-radius: {R_CTL}px;
+    min-height: {ROW - 4}px; padding: 2px {FIELD_PAD}px; border-radius: {R_VALUE}px;
 }}
 QListView::item:hover, QTreeView::item:hover, QTableView::item:hover {{
     background: {tint('blue', 0.06)}; }}
@@ -365,20 +413,29 @@ QHeaderView::section {{
     font-weight: 600; border: none; border-bottom: 1px solid {c('separator')};
 }}
 QHeaderView::section:vertical {{ border-bottom: none; border-right: 1px solid {c('separator')}; }}
+/* sidebar list: rows on the panel itself, selection = accent pill + white text */
+QWidget#hig_sidebar QAbstractItemView {{ background: transparent; border: none; padding: 0; }}
+QWidget#hig_sidebar QTreeView::item, QWidget#hig_sidebar QTreeView::item:hover,
+QWidget#hig_sidebar QTreeView::item:selected {{
+    background: transparent; color: {c('label')}; padding: 3px 6px; }}
+QWidget#hig_sidebar QTreeView {{ show-decoration-selected: 0; }}
+QTreeView::branch:selected, QTreeView::branch:hover, QTreeView::branch:selected:active,
+QTreeView::branch:selected:!active, QTreeView::branch:!has-children {{
+    background: transparent; border: none; }}
 
-/* ---- Menu / Tooltip ---- */
-QMenuBar {{ background: {c('background-secondary')}; }}
-QMenuBar::item {{ padding: 4px 8px; border-radius: {R_CTL}px; background: transparent; }}
-QMenuBar::item:selected {{ background: {c('fill-secondary')}; }}
+/* ---- Menu / Tooltip: accent pill on hover ---- */
+QMenuBar {{ background: transparent; }}
+QMenuBar::item {{ padding: 4px 10px; border-radius: {R_CAPSULE}px; background: transparent; }}
+QMenuBar::item:selected {{ background: {c('fill')}; }}
 QMenu {{
-    background: {c('background-tertiary')}; border: 1px solid {c('separator')};
-    border-radius: {R_WINDOW}px; padding: 4px;
+    background: {c('background-tertiary')}; border: 1px solid {line};
+    border-radius: {R_MENU}px; padding: 6px;
 }}
-QMenu::item {{ min-height: {CTL_SM}px; padding: 0 24px 0 22px; border-radius: {R_CTL}px; }}
+QMenu::item {{ min-height: {CTL_SM}px; padding: 0 24px 0 24px; border-radius: {R_VALUE}px; }}
 QMenu::item:selected {{ background: {accent}; color: {c('on-accent')}; }}
 QMenu::item:disabled {{ color: {c('label-tertiary')}; }}
 QMenu::separator {{ height: 1px; background: {c('separator')}; margin: 4px 10px; }}
-QMenu::indicator {{ width: 14px; height: 14px; left: 4px; }}
+QMenu::indicator {{ width: 14px; height: 14px; left: 6px; }}
 QMenu::indicator:checked {{ image: {url('menu_check')}; }}
 QMenu::indicator:checked:selected {{ image: {url('menu_check_sel')}; }}
 QAbstractItemView::indicator {{ width: {CHECK}px; height: {CHECK}px; }}
@@ -387,7 +444,7 @@ QAbstractItemView::indicator:unchecked {{ image: {url('check_off')}; }}
 QAbstractItemView::indicator:indeterminate {{ image: {url('check_mixed')}; }}
 QToolTip {{
     background: {c('background-tertiary')}; color: {c('label')};
-    border: 1px solid {c('separator')}; border-radius: {R_CTL}px; padding: 3px 8px;
+    border: 1px solid {line}; border-radius: {R_VALUE}px; padding: 3px 8px;
 }}
 
 /* ---- Progress / Slider / Scroll bars ---- */

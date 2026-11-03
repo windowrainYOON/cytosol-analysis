@@ -84,7 +84,7 @@ class MeasureBox(QWidget):
         row = QHBoxLayout()
         self.stat_boxes = {}
         for k in STATS:
-            b = QCheckBox(k)
+            b = theme.chip(QCheckBox(k))
             b.setChecked(k == 'Mean')
             b.toggled.connect(self.schedule)
             self.stat_boxes[k] = b
@@ -202,7 +202,7 @@ class MeasureBox(QWidget):
         it = self.win.current
         names = list(it.channels) if it is not None else []
         for name in names:
-            b = QCheckBox(name)
+            b = theme.chip(QCheckBox(name))
             b.setChecked(name not in self.channels_off)
             b.toggled.connect(lambda on, n=name: self._channel_toggled(n, on))
             self._chan_flow.addWidget(b)

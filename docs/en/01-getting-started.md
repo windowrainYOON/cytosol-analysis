@@ -16,12 +16,12 @@ channel (e.g. 0–4095 for 12-bit) are taken from the file's metadata.
 
 ## Adding images
 
-- **파일 추가…** (Add files) under the image list, **파일 › 불러오기 (자동 인식)…**
-  (File › Load files, `Ctrl+O`), or drag files onto the window. **불러오기**
+- **파일 › 불러오기 (자동 인식)…** (File › Load files, `Ctrl+O`), or drag files
+  onto the window. An empty list shows a drop icon. **불러오기**
   also recognises projects (`.cyproj`), ROIs, crops and LUT presets (see
   [Menus, project files and the work log](13-project-menus.md#loading)). Files
   already in the list are not opened again.
-- **폴더 불러오기…** (Load folder), **파일 › 불러오기 (폴더)…**
+- **파일 › 불러오기 (폴더)…** (Load folder)
   (`Ctrl+Shift+O`), or drop a folder: scans the
   folder and its subfolders and pairs original images, exported TIFFs and ROI
   files (`.zip` / `.roi`) by image ID (see below). If an original is missing,
@@ -42,7 +42,10 @@ entries. The setting applies to files added afterwards.
 ## Window layout
 
 The window has three panes: the image list (left), the preview (centre) and
-the tools (right: LUT, 이미지 정보 and the feature tabs).
+the tools (right: LUT, 마커, 이미지 정보 and the feature tabs). The image list is
+a rounded panel inset from the window edge; the capsule buttons at the top of
+the tools pane switch tabs. A feature tab's **×** (or right-click › 탭 닫기)
+closes it.
 
 - The image list and the tools pane keep their width; making the window
   larger or smaller only changes the preview.
@@ -57,10 +60,11 @@ the tools (right: LUT, 이미지 정보 and the feature tabs).
 - Long image names wrap onto more lines, so the whole name is always
   visible.
 - Select several images with `Shift`/`Ctrl` (`⌘`) + click.
-- **파일 추가…**, **폴더 불러오기…** and the group buttons are at the top of the
-  pane, the list below them.
-- **이미지를 목록에서 제거…** (Remove images from the list, red text below a
-  separator) or `Delete`: after **제거** (Remove) in the confirmation alert,
+- Only **자동 그룹** (Auto group) sits at the top of the pane; everything else
+  happens in the list.
+- The trash icon at the end of an image name (shown on hover and on the
+  selected row), right-click › **이미지를 목록에서 제거…** (Remove images from
+  the list, last in the menu) or `Delete`: after **제거** (Remove) in the confirmation alert,
   the selected images leave the list (the files are not deleted). The
   alert's default button (Return) is **취소** (Cancel).
 
@@ -69,6 +73,9 @@ the tools (right: LUT, 이미지 정보 and the feature tabs).
 Groups are used for the `group` column and the per-group summaries of the
 measurement tabs.
 
+- Select two or more images (or a group folder) and right-click for **그룹
+  지정…** (Assign group), **그룹 이름 변경…** (Rename group) and **그룹 해제**
+  (Ungroup).
 - **그룹 지정…** (Assign group): puts the selected images in a group. The name
   offered is what their file names share without the trailing number
   (`abc`, `abc_0001`, `abc_0002` → `abc`); type another name or pick an
@@ -76,7 +83,6 @@ measurement tabs.
 - **자동 그룹** (Auto group): groups images whose names differ only in the
   trailing number. Applies to the selected images when two or more are
   selected, otherwise to all images. A confirmation lists the groups first.
-- **그룹 이름 변경…** (Rename group), **그룹 해제** (Ungroup).
 - Groups appear as folders in the list; click a folder to select all its
   images. Saving measurements or exports writes `image_groups.csv`, which
   folder loading reads back.
@@ -112,9 +118,9 @@ measurement tabs.
   pressed, down to zoom out. The wheel does not zoom. The speed is
   **확대/축소 드래그** (Zoom drag) in **파일 › 설정…** (default 0.6).
 - `]` zooms in, `[` zooms out (around the view centre, 1.25× per press).
-- **영역 확대** (Zoom to area): press it and drag a rectangle; `Shift`+drag
+- **영역 확대** (Zoom to area, magnifier icon at the top right of the preview): press it and drag a rectangle; `Shift`+drag
   does the same without the button.
-- **화면 맞춤** (Fit to window): back to the whole image.
+- **화면 맞춤** (Fit to window, the corner icon next to it): back to the whole image.
 - Pan with a middle-button drag (right-button drag too when the image has no
   Z or T).
 

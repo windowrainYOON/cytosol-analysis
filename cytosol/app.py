@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressDialog,
     QPushButton,
@@ -58,7 +59,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import glass, theme
+from . import glass, hig_widgets, theme
 from .lut import (
     ImageItem,
     apply_lut_to_all,
@@ -1001,7 +1002,7 @@ class ChannelPanel(QGroupBox):
         self.steps = SLIDER_STEPS
 
         # placed in the shared row under the LUT section title (see visibility_row)
-        self.visible = QCheckBox()
+        self.visible = theme.chip(QCheckBox())
         self.visible.setToolTip('이 채널을 미리보기와 내보내기 합성 이미지에 표시')
         self.color_btn = QPushButton()
         self.color_btn.setFixedWidth(40)
@@ -1250,63 +1251,50 @@ class MainWindow(QMainWindow):
         self.file_list.setToolTip('Shift/Ctrl(⌘)+클릭으로 여러 개 선택, Delete 키로 목록에서 제거.\n'
                                   '그룹은 폴더처럼 펼치거나 접을 수 있고, 그룹을 고르면 그 안의 이미지가 모두 선택됩니다.')
         self.file_list.currentRowChanged.connect(self._select)
+        QTimer.singleShot(0, self.file_list.setFocus)  # no focus ring on a button at start
         for key in (QKeySequence.StandardKey.Delete, QKeySequence(Qt.Key.Key_Backspace)):
             sc = QShortcut(key, self.file_list)
             sc.setContext(Qt.ShortcutContext.WidgetShortcut)
             sc.activated.connect(self.confirm_remove_selected)
-        add_btn = QPushButton('파일 추가…')
-        add_btn.clicked.connect(self.add_files_dialog)
-        folder_btn = QPushButton('폴더 불러오기…')
-        folder_btn.setToolTip(
-            '폴더 안의 원본 이미지, 내보낸 TIFF, ROI(.zip/.roi)를 이미지 ID로 짝지어 불러옵니다.\n'
-            '원본이 없으면 내보낸 TIFF(raw 스택 우선)로 열고, ROI는 해당 이미지에 자동으로 붙입니다.')
-        folder_btn.clicked.connect(self.add_folder_dialog)
-        rm_btn = theme.destructive(QPushButton('이미지를 목록에서 제거…'))
-        rm_btn.setToolTip('선택한 이미지를 모두 목록에서 제거합니다 (파일은 지우지 않습니다). '
-                          '단축키: Delete')
-        rm_btn.clicked.connect(self.confirm_remove_selected)
-        group_btn = QPushButton('그룹 지정…')
-        group_btn.setToolTip('선택한 이미지들을 한 그룹으로 묶습니다 (새 이름을 쓰거나 있는 그룹을 고르세요).\n'
-                             '입자 ROI 측정 결과에 group 열과 그룹별 요약이 붙고, 저장할 때 '
-                             f'{GROUP_FILE}에 기록돼 폴더를 다시 불러오면 복원됩니다.')
-        group_btn.clicked.connect(self.assign_group)
+        # files come in through 파일 → 불러오기 or drag and drop (empty state of
+        # the list); the remove action sits at the end of each image row and in
+        # the row's context menu; group actions only in the context menu of a
+        # multiple selection
+        self.file_list.removeClicked.connect(self._remove_row)
+        self.file_list.customContextMenuRequested.connect(self._list_menu)
         auto_btn = QPushButton('자동 그룹')
         auto_btn.setToolTip('이름이 끝의 번호만 다른 이미지끼리 묶습니다 (abc, abc_0001, abc_0002 → abc).\n'
-                            '2개 이상 선택하면 선택한 이미지만, 아니면 모든 이미지를 대상으로 합니다.')
+                            '2개 이상 선택하면 선택한 이미지만, 아니면 모든 이미지를 대상으로 합니다.\n'
+                            '그룹 지정 · 이름 변경 · 해제: 여러 이미지를 고른 뒤 우클릭')
         auto_btn.clicked.connect(self.auto_group)
-        rename_btn = QPushButton('그룹 이름 변경…')
-        rename_btn.clicked.connect(self.rename_group)
-        ungroup_btn = QPushButton('그룹 해제')
-        ungroup_btn.setToolTip('선택한 이미지를 그룹에서 뺍니다.')
-        ungroup_btn.clicked.connect(lambda: self.set_group(self._selected_items(), ''))
-        # HIG desktop layout: actions at the top (most important first), the
-        # destructive one set apart by a separator, and the list last so no
-        # control sits on the window's bottom edge
+        self.auto_group_btn = auto_btn
+        # tahoe sidebar: a floating panel inset 8 px from the window edge
         left = QWidget()
         left.setObjectName('hig_sidebar')  # functional layer: sidebar material
         left.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         ll = QVBoxLayout(left)
-        title = QLabel('이미지 (TCF / CZI / OIR / TIF, 끌어다 놓기 가능)')
-        title.setWordWrap(True)
-        theme.text_style(title, 'headline')
-        ll.addWidget(title)
-        add_row = QHBoxLayout()
-        add_row.addWidget(add_btn)
-        add_row.addWidget(folder_btn)
-        ll.addLayout(add_row)
+        ll.setContentsMargins(8, 12, 8, 8)
+        ll.setSpacing(8)
+        head = QHBoxLayout()
+        head.setContentsMargins(6, 0, 0, 0)
+        title = theme.text_style(QLabel('이미지'), 'headline')
+        head.addWidget(title, 1)
+        head.addWidget(auto_btn)
+        ll.addLayout(head)
         self.align_tcf = QCheckBox()
         self.align_tcf.setChecked(True)
         tip = ('FL을 HT 픽셀 격자에 맞춰 리샘플링합니다 (XY: 픽셀 크기와 자동 미세 보정, '
                'Z: 3DFL OffsetZ). 끄면 HT와 FL이 따로 열립니다. 새로 추가하는 파일부터 적용됩니다.')
         self.align_tcf.setToolTip(tip)
-        ll.addLayout(wrapped_check(self.align_tcf, 'TCF: HT와 FL을 정렬해 한 이미지로', tip))
-        grid = QGridLayout()  # two per row so the list can stay narrow
-        for i, b in enumerate((group_btn, auto_btn, rename_btn, ungroup_btn)):
-            grid.addWidget(b, i // 2, i % 2)
-        ll.addLayout(grid)
-        ll.addWidget(theme.separator())
-        ll.addWidget(rm_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        tcf_row = wrapped_check(self.align_tcf, 'TCF: HT와 FL을 정렬해 한 이미지로', tip)
+        tcf_row.setContentsMargins(6, 0, 0, 0)
+        ll.addLayout(tcf_row)
         ll.addWidget(self.file_list, 1)
+        left_holder = QWidget()  # the panel floats: inset from the window edge
+        lh = QVBoxLayout(left_holder)
+        lh.setContentsMargins(8, 8, 0, 8)
+        lh.addWidget(left)
+        self.sidebar = left
 
         # crop regions of the current image (Crop menu > Crop 탭)
         self.crop_list = QListWidget()
@@ -1374,14 +1362,16 @@ class MainWindow(QMainWindow):
         # line drawing is switched from the 라인 프로파일 tab (draw_btn mirrors this)
         self.line_btn = QPushButton('라인 프로파일 (선 그리기)')
         self.line_btn.setCheckable(True)
-        fit_btn = QPushButton('화면 맞춤')
-        fit_btn.setToolTip('확대/축소: Cmd(Windows는 Ctrl) + 위/아래 드래그, [ 축소, ] 확대.\n'
-                           '민감도는 파일 → 설정…에서 바꿉니다.')
+        # toolbar icon buttons (28 × 28, 16 px glyph, tool tip; the same
+        # commands: Shift+drag, [ ], View menu)
+        fit_btn = hig_widgets.IconButton(
+            'fit', '화면 맞춤\n확대/축소: Cmd(Windows는 Ctrl) + 위/아래 드래그, [ 축소, ] 확대.\n'
+            '민감도는 파일 → 설정…에서 바꿉니다.')
         fit_btn.clicked.connect(self.canvas.fit)
-        self.zoom_btn = QPushButton('영역 확대')
-        self.zoom_btn.setCheckable(True)
-        self.zoom_btn.setToolTip('누른 뒤 이미지 위에서 사각형을 드래그하면 그 영역을 확대합니다.\n'
-                                 '버튼 없이 Shift + 드래그로도 됩니다. 원래대로: 화면 맞춤.')
+        self.fit_btn = fit_btn
+        self.zoom_btn = hig_widgets.IconButton(
+            'zoom.region', '영역 확대\n누른 뒤 이미지 위에서 사각형을 드래그하면 그 영역을 확대합니다.\n'
+            '버튼 없이 Shift + 드래그로도 됩니다. 원래대로: 화면 맞춤.', checkable=True)
         self.zoom_btn.toggled.connect(self.canvas.set_zoom_mode)
         self.canvas.zoomDone.connect(lambda: self.zoom_btn.setChecked(False))
         self.t_slider = QSlider(Qt.Orientation.Horizontal)
@@ -1408,8 +1398,15 @@ class MainWindow(QMainWindow):
         theme.hint(hint)
         bar1.addWidget(hint)
         bar1.addStretch()
-        bar1.addWidget(self.zoom_btn)
-        bar1.addWidget(fit_btn)
+        capsule = QWidget()  # hig-glass-capsule: the toolbar items float on one capsule
+        capsule.setObjectName('hig_capsule')
+        capsule.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        cap = QHBoxLayout(capsule)
+        cap.setContentsMargins(3, 3, 3, 3)
+        cap.setSpacing(2)
+        cap.addWidget(self.zoom_btn)
+        cap.addWidget(fit_btn)
+        bar1.addWidget(capsule)
         self.t_row = QWidget()
         tl = QHBoxLayout(self.t_row)
         tl.setContentsMargins(0, 0, 0, 0)
@@ -1443,21 +1440,19 @@ class MainWindow(QMainWindow):
         # right: channel panels + batch LUT
         self.channel_box = QVBoxLayout()
         self.channel_box.addStretch()
-        chan_widget = QWidget()
-        chan_widget.setLayout(self.channel_box)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(chan_widget)
+        self.channel_box.setContentsMargins(0, 0, 0, 0)
+        self.channel_box.setSpacing(12)
 
         all_luts = theme.prominent(QPushButton('모든 채널 LUT를 전체 이미지에 적용'))
         all_luts.clicked.connect(self.apply_all_channels)
         self.copy_color = QCheckBox('색상도 함께 적용')
         self.copy_color.setChecked(True)
+        self.all_luts_btn = all_luts
         batch = QGroupBox('일괄 적용')
         bl = QVBoxLayout(batch)
         bl.addWidget(all_luts)
         bl.addWidget(self.copy_color)
-        note = QLabel('LUT 프리셋 저장·불러오기와 이미지 내보내기: 메뉴 막대의 LUT')
+        note = QLabel('LUT 프리셋 저장·불러오기와 이미지 내보내기: Tool → LUT')
         note.setWordWrap(True)
         theme.hint(note)
         bl.addWidget(note)
@@ -1510,28 +1505,18 @@ class MainWindow(QMainWindow):
             s.setWidget(w)
             return s
 
-        # LUT tab: channel LUTs on top, the markers (always used) fixed below
-        lut_top = QWidget()
-        rl = QVBoxLayout(lut_top)
-        rl.setContentsMargins(0, 0, 0, 0)
-        rl.addWidget(theme.text_style(QLabel('채널 LUT'), 'headline'))
+        # LUT tab: one scrolling page (no inner scroll): the batch action on
+        # top, channel visibility, then every channel's LUT
+        lut_page = QWidget()
+        rl = QVBoxLayout(lut_page)
+        rl.addWidget(batch)
         self.visibility = VisibilityRow()
         rl.addWidget(self.visibility)
-        rl.addWidget(scroll, 1)
-        rl.addWidget(batch)
-        # the marker settings are boxes themselves: a section header above
-        # them instead of an enclosing box (no box in a box)
-        marker_box = QWidget()
-        ml = QVBoxLayout(marker_box)
-        ml.setContentsMargins(0, 4, 0, 0)
-        ml.addWidget(theme.section_header('마커 (scale bar · 시간 · bleach ROI)'))
-        ml.addWidget(scrolled(self.markers), 1)
-        lut_tab = QSplitter(Qt.Orientation.Vertical)
-        lut_tab.addWidget(lut_top)
-        lut_tab.addWidget(marker_box)
-        lut_tab.setStretchFactor(0, 3)
-        lut_tab.setStretchFactor(1, 2)
-        lut_tab.setChildrenCollapsible(False)
+        rl.addLayout(self.channel_box)
+        lut_tab = scrolled(lut_page)
+        # 마커 tab (fixed, next to LUT): scale bar, time stamp, bleach ROI
+        marker_tab = scrolled(self.markers)
+        self.marker_tab = marker_tab
 
         self.roi_panel = RoiPanel(self)
         self.particle_panel = ParticlePanel(self)
@@ -1556,16 +1541,16 @@ class MainWindow(QMainWindow):
         self.canvas.frapMoved.connect(self.frap_panel.move_roi)
         self.intensity_panel = IntensityPanel(self)
         self.info_panel = InfoPanel()
-        right = QTabWidget()
-        right.setObjectName('hig_inspector')  # functional layer: inspector material
+        # inspector: capsule chips switch the pages (hig_widgets.ChipTabs)
+        right = hig_widgets.ChipTabs()
         self.right_tabs = right
         right.setTabsClosable(True)
         right.tabCloseRequested.connect(lambda i: self.hide_tab(self._tab_name(right.widget(i))))
-        right.addTab(lut_tab, 'LUT')
-        right.addTab(self.info_panel, '이미지 정보')
-        for i in range(right.count()):  # the two base tabs stay
-            for side in (QTabBar.ButtonPosition.LeftSide, QTabBar.ButtonPosition.RightSide):
-                right.tabBar().setTabButton(i, side, None)
+        info_tab = scrolled(self.info_panel)
+        self.info_tab = info_tab
+        for page, title in ((lut_tab, 'LUT'), (marker_tab, '마커'), (info_tab, '이미지 정보')):
+            right.set_fixed(page)  # the base tabs stay
+            right.addTab(page, title)
         # feature tabs, opened from each feature's menu (in this order)
         self.tab_pages = {
             'crop_tab': (crop_page, 'Crop'),
@@ -1583,18 +1568,21 @@ class MainWindow(QMainWindow):
         self.crop_btn.toggled.connect(lambda on: on and self.line_btn.setChecked(False))
         right.currentChanged.connect(self._tab_changed)
         self._last_shape = None
-        for page, _title in self.tab_pages.values():
+        for page in [lut_tab, marker_tab, info_tab] + [p for p, _t in self.tab_pages.values()]:
             reflow(page)
-        reflow(lut_tab)
-        right.setMinimumWidth(RIGHT_MIN_W)
+            inner = page.widget() if isinstance(page, QScrollArea) else page
+            theme.unify(inner)
+        inspector = hig_widgets.inspector(right)
+        self.inspector = inspector
+        inspector.setMinimumWidth(RIGHT_MIN_W)
 
         # the file list and the tools keep their widths; only the preview
         # grows or shrinks with the window.  Dragged widths are remembered.
         split = QSplitter()
         self.main_split = split
-        split.addWidget(left)
+        split.addWidget(left_holder)
         split.addWidget(center)
-        split.addWidget(right)
+        split.addWidget(inspector)
         split.setChildrenCollapsible(False)
         for i, f in enumerate((0, 1, 0)):
             split.setStretchFactor(i, f)
@@ -1992,7 +1980,7 @@ class MainWindow(QMainWindow):
         tabs = self.right_tabs
         if tabs.indexOf(page) < 0:
             order = list(self.tab_pages)
-            pos = 2
+            pos = 3  # after LUT, 마커, 이미지 정보
             for other in order[:order.index(name)]:
                 i = tabs.indexOf(self.tab_pages[other][0])
                 if i >= 0:
@@ -2928,6 +2916,45 @@ class MainWindow(QMainWindow):
         """Run a destructive action after the HIG confirmation alert (취소 is the default)."""
         if theme.confirm_destructive(self, title, text, action, info):
             fn()
+
+    def _remove_row(self, row: int):
+        """The remove glyph of an image row: that image, or the whole selection
+        when the row is part of it."""
+        if row not in self.file_list.selected_rows():
+            self.file_list.clearSelection()
+            self.file_list.setCurrentRow(row)
+            self.file_list.item(row).setSelected(True)
+        self.confirm_remove_selected()
+
+    def list_menu(self, item=None) -> QMenu:
+        """Context menu of the image list: group actions only for a multiple
+        selection (or a group folder), the destructive remove last, set apart."""
+        m = QMenu(self)
+        rows = self.file_list.selected_rows()
+        folder = item is not None and item.data(0, Qt.ItemDataRole.UserRole) is None
+        if len(rows) >= 2 or folder:
+            m.addAction('그룹 지정…', self.assign_group)
+            if self.groups():
+                m.addAction('그룹 이름 변경…', self.rename_group)
+            if any(self.items[r].group for r in rows):
+                m.addAction('그룹 해제', lambda: self.set_group(self._selected_items(), ''))
+            m.addSeparator()
+        if rows:
+            act = m.addAction(f'이미지를 목록에서 제거… ({len(rows)})' if len(rows) > 1
+                              else '이미지를 목록에서 제거…', self.confirm_remove_selected)
+            act.setProperty('hig_destructive', True)
+            act.setIcon(hig_widgets.icon('trash', 16, 'red'))
+        return m
+
+    def _list_menu(self, pos):
+        it = self.file_list.itemAt(pos)
+        if it is not None and not it.isSelected():
+            self.file_list.clearSelection()
+            self.file_list.setCurrentItem(it)
+            it.setSelected(True)
+        m = self.list_menu(it)
+        if not m.isEmpty():
+            m.exec(self.file_list.viewport().mapToGlobal(pos))
 
     def confirm_remove_selected(self):
         n = len(self.file_list.selected_rows()) or (1 if self.file_list.currentRow() >= 0 else 0)

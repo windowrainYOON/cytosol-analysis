@@ -190,7 +190,7 @@ class ColocPanel(QWidget):
         row = QHBoxLayout()
         self.region_boxes = {}
         for key, text, _ in REGIONS:
-            b = QCheckBox(text)
+            b = theme.chip(QCheckBox(text))
             b.setChecked(key in ('cell', 'cyto'))
             self.region_boxes[key] = b
             row.addWidget(b)

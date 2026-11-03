@@ -163,7 +163,9 @@ def run(out_dir) -> int:
             raise AssertionError('accent is not the Highlight role')
         sheet = app.styleSheet()
         for part in ('QPushButton[hig_prominent="true"]', 'QGroupBox', 'QCheckBox::indicator',
-                     'QAbstractSpinBox::up-button', 'QTabBar::tab:selected'):
+                     'QAbstractSpinBox::up-button', 'QTabBar::tab:selected',
+                     'QCheckBox[hig_switch="true"]', 'QCheckBox[hig_chip="true"]',
+                     'QWidget#hig_sidebar'):
             if part not in sheet:
                 raise AssertionError(f'style sheet lacks {part}')
         for scheme in ('light', 'dark'):
@@ -203,7 +205,7 @@ def run(out_dir) -> int:
                 raise AssertionError('hint labels not label-secondary')
             red = theme.color('red').name()
             danger = [b for b in win.findChildren(QPushButton) if b.property('hig_destructive')]
-            if len(danger) < 4 or any(
+            if len(danger) < 3 or any(
                     b.palette().color(QPalette.ColorRole.ButtonText).name() != red for b in danger):
                 raise AssertionError(f'destructive buttons: {[b.text() for b in danger]}')
             for key, (page, title) in win.tab_pages.items():
@@ -224,11 +226,48 @@ def run(out_dir) -> int:
             lab.set_kind(None)
             if lab.contentsMargins().left():
                 raise AssertionError('plain hint keeps the status margin')
-            # left pane: the image list is last (nothing on the bottom edge)
+            # left pane: the image list is last (nothing on the bottom edge),
+            # the only button is 자동 그룹 (files come in by 파일 → 불러오기 / drop)
             ll = win.file_list.parentWidget().layout()
             if ll.itemAt(ll.count() - 1).widget() is not win.file_list:
                 raise AssertionError('image list is not the last item of the left pane')
+            btns = [b.text() for b in win.sidebar.findChildren(QPushButton)]
+            if btns != ['자동 그룹']:
+                raise AssertionError(f'left pane buttons: {btns}')
+            # selection controls: a switch only for the 자동 / 수동 choice
+            from PySide6.QtWidgets import QCheckBox
+            boxes = win.findChildren(QCheckBox)
+            switches = [b for b in boxes if b.property('hig_switch')]
+            wrong = [b.text() for b in switches if not theme.is_auto_choice(b)]
+            chips = [b for b in boxes if b.property('hig_chip')]
+            if wrong or not switches or not chips:
+                raise AssertionError(f'switches {len(switches)} (not 자동: {wrong}), '
+                                     f'chips {len(chips)}')
+            # inspector: capsule chips mirror the pages; base tabs have no ×
+            tabs = win.right_tabs
+            if tabs.tabBar().isVisible() or tabs.chip_texts() != [
+                    tabs.tabText(i) for i in range(tabs.count())]:
+                raise AssertionError(f'chip tabs: {tabs.chip_texts()}')
+            closable = [c.text() for c in tabs._chips() if c.closable]
+            if closable[:1] == ['LUT'] or '마커' in closable or len(closable) != len(win.tab_pages):
+                raise AssertionError(f'closable chips: {closable}')
+            # toolbar icon buttons: glyph + tool tip
+            for b in (win.zoom_btn, win.fit_btn):
+                if b.icon().isNull() or not b.toolTip() or b.width() != 28:
+                    raise AssertionError('toolbar icon button')
+            # one grid line: every group of every page has the same padding
+            from PySide6.QtWidgets import QScrollArea
+            pads = set()
+            for page in [tabs.widget(i) for i in range(tabs.count())]:
+                inner = page.widget() if isinstance(page, QScrollArea) else page
+                for g in inner.findChildren(QGroupBox):
+                    if g.layout() is not None:
+                        m = g.layout().contentsMargins()
+                        pads.add((m.left(), m.right()))
+            if pads != {theme.GROUP_MARGINS[0::2]}:
+                raise AssertionError(f'group paddings differ: {pads}')
             return (f'{len(danger)} destructive buttons, {len(hints)} hint labels, '
+                    f'{len(switches)} switches, {len(chips)} chips, '
                     f'style sheet {len(sheet)} chars')
         finally:
             win.dirty = False
@@ -721,7 +760,7 @@ def run(out_dir) -> int:
         win.show()
         app.processEvents()
         tabs = [win.right_tabs.tabText(i) for i in range(win.right_tabs.count())]
-        if tabs != ['LUT', '이미지 정보']:
+        if tabs != ['LUT', '마커', '이미지 정보']:
             raise AssertionError(f'tabs at start: {tabs}')
         # side panes keep their widths: a wider window only widens the preview
         # (start wide enough that the preview is above its minimum width)
@@ -905,7 +944,7 @@ def run(out_dir) -> int:
         win.tool_actions['crop_tab'].setChecked(True)
         win.tool_actions['coloc_tab'].setChecked(True)
         tabs = [win.right_tabs.tabText(i) for i in range(win.right_tabs.count())]
-        if tabs[:3] != ['LUT', '이미지 정보', 'Crop'] or 'Coloc 2' not in tabs \
+        if tabs[:4] != ['LUT', '마커', '이미지 정보', 'Crop'] or 'Coloc 2' not in tabs \
                 or '라인 프로파일' in tabs or not win.tab_current('coloc_tab'):
             raise AssertionError(f'menu tabs: {tabs}')
         win.tool_actions['coloc_tab'].setChecked(False)
@@ -935,9 +974,26 @@ def run(out_dir) -> int:
         win.view_actions['stack_tab'].setChecked(False)
         if win.tab_open('stack_tab') or list(win.view_actions) != list(win.tab_pages):
             raise AssertionError('View did not close the 스택 tab')
+        # 마커 is its own fixed tab; the LUT tab scrolls as one page (no inner scroll)
+        from PySide6.QtWidgets import QScrollArea
         lut_page = win.right_tabs.widget(0)
-        if not lut_page.isAncestorOf(win.markers):
-            raise AssertionError('markers are not in the LUT tab')
+        if win.right_tabs.widget(1) is not win.marker_tab \
+                or not win.marker_tab.isAncestorOf(win.markers) \
+                or lut_page.isAncestorOf(win.markers) \
+                or lut_page.widget().findChildren(QScrollArea):
+            raise AssertionError('마커 tab / LUT tab scroll')
+        lay = lut_page.widget().layout()
+        if lay.itemAt(0).widget() is None or not lay.itemAt(0).widget().isAncestorOf(
+                win.all_luts_btn):
+            raise AssertionError('batch LUT action is not at the top of the LUT tab')
+        # a chip's × closes its feature tab (same as the View item)
+        win.show_tab('crop_tab', focus=False)
+        chip = next(c for c in win.right_tabs._chips() if c.text() == 'Crop')
+        chip.closeClicked.emit()
+        app.processEvents()
+        if win.tab_open('crop_tab') or win.view_actions['crop_tab'].isChecked():
+            raise AssertionError('chip × did not close the Crop tab')
+        win.show_tab('crop_tab', focus=False)  # later checks expect it open
         # marker settings: save, change, load back (also through 불러오기)
         import json as _json
         win.markers.sb_len.setValue(7.5)
@@ -1460,6 +1516,25 @@ def run(out_dir) -> int:
         folder.setSelected(True)
         if win.file_list.selected_rows() != [n - 2, n - 1] or win.file_list.selected_group() != 'tcf':
             raise AssertionError('group folder selection')
+        # image list context menu: group actions only for a multiple selection,
+        # the destructive remove last
+        def menu_texts():
+            return [a.text() for a in win.list_menu().actions() if not a.isSeparator()]
+        win.file_list.clearSelection()
+        win.file_list.item(n - 2).setSelected(True)
+        one = menu_texts()
+        win.file_list.item(n - 1).setSelected(True)
+        two = menu_texts()
+        win.file_list.clearSelection()
+        win.file_list.setCurrentRow(n - 1)
+        # the remove glyph at the end of a row asks first (confirmation)
+        asked = []
+        win.confirm_remove_selected, keep = (lambda: asked.append(1)), win.confirm_remove_selected
+        win.file_list.removeClicked.emit(n - 1)
+        win.confirm_remove_selected = keep
+        if any('그룹' in t for t in one) or not asked or '그룹 지정…' not in two \
+                or not two[-1].startswith('이미지를 목록에서 제거'):
+            raise AssertionError(f'list menu: {one} / {two}')
         win.file_list.clearSelection()
         win.file_list.setCurrentRow(n - 1)
         win.file_list.item(n - 2).setSelected(True)

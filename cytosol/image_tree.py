@@ -5,8 +5,8 @@ name stays visible at any panel width."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QFont, QPalette, QTextLayout, QTextOption
+from PySide6.QtCore import QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtGui import QFont, QPainter, QPalette, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QStyle,
@@ -21,6 +21,8 @@ GROUP = Qt.ItemDataRole.UserRole + 1  # group name, on folder items
 
 
 PAD = 3  # px above / below the text of a row
+TRASH = 16  # remove glyph at the end of an image row (hover / selected)
+TRASH_W = TRASH + 8  # room kept for it at the end of every row
 BREAK_AFTER = '._-+'  # file-name separators that may end a line
 
 
@@ -55,7 +57,7 @@ class WrapDelegate(QStyledItemDelegate):
             depth += 1
             p = p.parent()
         indent = view.indentation() * (depth + (1 if view.rootIsDecorated() else 0))
-        return view.viewport().width() - indent - 8
+        return view.viewport().width() - indent - 8 - TRASH_W
 
     def sizeHint(self, option, index):
         opt = QStyleOptionViewItem(option)
@@ -68,13 +70,32 @@ class WrapDelegate(QStyledItemDelegate):
         self.initStyleOption(opt, index)
         text, opt.text = opt.text, ''
         style = opt.widget.style() if opt.widget is not None else None
+        view = self.parent()
+        selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        active = selected and view.hasFocus()
+        # tahoe sidebar selection: accent pill + white text while the list is
+        # active, a neutral fill otherwise; hover a faint fill (radius 10)
+        from . import theme  # noqa: PLC0415
+
+        pill = None
+        if selected:
+            pill = theme.color('blue') if active else theme.color('fill')
+        elif opt.state & QStyle.StateFlag.State_MouseOver:
+            pill = theme.color('fill-quaternary')
+        if pill is not None:
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(pill)
+            painter.drawRoundedRect(QRectF(opt.rect).adjusted(0, 1, 0, -1), 10, 10)
+            painter.restore()
+        opt.state &= ~(QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver
+                       | QStyle.StateFlag.State_HasFocus)
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
         r = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, opt.widget)
-        role = (QPalette.ColorRole.HighlightedText
-                if opt.state & QStyle.StateFlag.State_Selected else QPalette.ColorRole.Text)
         painter.save()
         painter.setFont(opt.font)
-        painter.setPen(opt.palette.color(role))
+        painter.setPen(theme.color('on-accent') if active else opt.palette.color(QPalette.ColorRole.Text))
         fm = opt.fontMetrics
         lines = wrap_lines(text, opt.font, self._text_width(opt, index))
         y = r.top() + max((r.height() - len(lines) * fm.lineSpacing()) / 2, 0)
@@ -82,11 +103,23 @@ class WrapDelegate(QStyledItemDelegate):
             painter.drawText(QRectF(r.left() + 2, y, r.width(), fm.lineSpacing()),
                              Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, line)
             y += fm.lineSpacing()
+        if index.data(ROW) is not None and (selected or option.state & QStyle.StateFlag.State_MouseOver):
+            from . import hig_widgets  # noqa: PLC0415
+
+            token = 'on-accent' if active else 'label-secondary'
+            painter.drawPixmap(view.trash_rect(opt.rect), hig_widgets.pixmap('trash', TRASH, token))
         painter.restore()
 
 
 class ImageTree(QTreeWidget):
+    """Rows: images (by row), group folders.  A remove glyph sits at the end of
+    the hovered / selected image row (`removeClicked`); with no image the
+    viewport shows the drop target (empty state)."""
+
     currentRowChanged = Signal(int)
+    removeClicked = Signal(int)
+    EMPTY_TITLE = '이미지를 여기로 끌어다 놓으세요'
+    EMPTY_HINT = 'TCF · CZI · OIR · TIF 파일이나 폴더 · 파일 → 불러오기'
 
     def __init__(self):
         super().__init__()
@@ -105,6 +138,64 @@ class ImageTree(QTreeWidget):
         self.itemCollapsed.connect(lambda n: self._collapsed.add(n.data(0, GROUP)))
         self.itemExpanded.connect(lambda n: self._collapsed.discard(n.data(0, GROUP)))
         self.currentItemChanged.connect(self._current_changed)
+        self.setMouseTracking(True)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+    def trash_rect(self, row_rect: QRect) -> QRect:
+        x = self.viewport().width() - TRASH - 6
+        return QRect(x, row_rect.center().y() - TRASH // 2 + 1, TRASH, TRASH)
+
+    def mousePressEvent(self, ev):
+        it = self.itemAt(ev.position().toPoint())
+        if it is not None and it.data(0, ROW) is not None \
+                and ev.button() == Qt.MouseButton.LeftButton:
+            r = self.trash_rect(self.visualItemRect(it)).adjusted(-3, -3, 3, 3)
+            if r.contains(ev.position().toPoint()):
+                self.removeClicked.emit(it.data(0, ROW))
+                return
+        super().mousePressEvent(ev)
+
+    def drawBranches(self, painter, rect, index):
+        # image rows have no disclosure triangle: draw nothing in their indent,
+        # so the selection is one pill on the name (tahoe sidebar)
+        if index.data(ROW) is None:
+            super().drawBranches(painter, rect, index)
+
+    def mouseMoveEvent(self, ev):
+        super().mouseMoveEvent(ev)
+        self.viewport().update()
+
+    def paintEvent(self, ev):
+        super().paintEvent(ev)
+        if self._leaves:
+            return
+        # empty state: a translucent drop glyph, one sentence, the next action
+        from . import hig_widgets, theme  # noqa: PLC0415
+
+        vp = self.viewport()
+        qp = QPainter(vp)
+        qp.setRenderHint(QPainter.RenderHint.Antialiasing)
+        size = 44
+        cy = vp.height() * 0.40
+        qp.drawPixmap(round((vp.width() - size) / 2), round(cy - size), hig_widgets.pixmap(
+            'tray.and.arrow.down', size, 'label-tertiary'))
+        f = QFont(self.font())
+        f.setWeight(QFont.Weight.DemiBold)
+        qp.setFont(f)
+        qp.setPen(theme.color('label-secondary'))
+        w = vp.width() - 24
+        qp.drawText(QRectF(12, cy + 10, w, 40),
+                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop
+                    | Qt.TextFlag.TextWordWrap, self.EMPTY_TITLE)
+        f.setWeight(QFont.Weight.Normal)
+        f.setPixelSize(max(10, round(self.font().pixelSize() * 12 / 13)) if
+                       self.font().pixelSize() > 0 else 12)
+        qp.setFont(f)
+        qp.setPen(theme.color('label-tertiary'))
+        qp.drawText(QRectF(12, cy + 50, w, 40),
+                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop
+                    | Qt.TextFlag.TextWordWrap, self.EMPTY_HINT)
+        qp.end()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
