@@ -41,6 +41,8 @@ from PySide6.QtCore import QEvent, QObject, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QAbstractSpinBox,
+    QComboBox,
     QApplication,
     QFormLayout,
     QFrame,
@@ -61,7 +63,10 @@ TOKENS = {
         'background-tertiary': '#ffffff',
         'label': '#000000', 'label-secondary': '#3c3c4399', 'label-tertiary': '#3c3c434d',
         'placeholder': '#3c3c434d', 'separator': '#3c3c434a', 'separator-opaque': '#c6c6c8',
+        'fill': '#78788033', 'fill-secondary': '#78788029', 'fill-tertiary': '#7676801f',
         'fill-quaternary': '#74748014', 'link': '#007aff', 'on-accent': '#ffffff',
+        'grouped-background': '#f2f2f7', 'grouped-background-secondary': '#ffffff',
+        'gray-2': '#aeaeb2', 'gray-4': '#d1d1d6', 'gray-6': '#f2f2f7',
         'status-success-tint': '#34c75929', 'status-warning-tint': '#ff8d2829',
         'status-error-tint': '#ff383c29', 'status-info-tint': '#0088ff29',
         'status-neutral-tint': '#8e8e9329',
@@ -73,7 +78,10 @@ TOKENS = {
         'background-tertiary': '#2c2c2e',
         'label': '#ffffff', 'label-secondary': '#ebebf599', 'label-tertiary': '#ebebf54d',
         'placeholder': '#ebebf54d', 'separator': '#54545899', 'separator-opaque': '#38383a',
+        'fill': '#7878805c', 'fill-secondary': '#78788052', 'fill-tertiary': '#7676803d',
         'fill-quaternary': '#7676802e', 'link': '#0984ff', 'on-accent': '#ffffff',
+        'grouped-background': '#000000', 'grouped-background-secondary': '#1c1c1e',
+        'gray-2': '#636366', 'gray-4': '#3a3a3c', 'gray-6': '#1c1c1e',
         'status-success-tint': '#30d1583d', 'status-warning-tint': '#ff92303d',
         'status-error-tint': '#ff42453d', 'status-info-tint': '#0091ff3d',
         'status-neutral-tint': '#8e8e933d',
@@ -102,6 +110,8 @@ TEXT_ROLES = {
     'footnote': (10, QFont.Weight.Normal),
 }
 BODY_PT = 13.0
+NUMBER_MIN_W, SELECT_MIN_W = 80, 96  # FormRow control widths (desktop)
+BODY_PX = 13  # Desktop body text (typography-desktop.md)
 
 _ROLE = 'hig_role'
 _SECONDARY = 'hig_secondary'
@@ -192,9 +202,11 @@ def body_font() -> QFont:
 def _role_font(role: str, base: QFont | None = None) -> QFont:
     size, weight = TEXT_ROLES[role]
     f = QFont(base or body_font())
-    pt = body_font().pointSizeF()
-    if pt > 0:
-        f.setPointSizeF(pt * size / BODY_PT)
+    body = body_font()
+    if body.pixelSize() > 0:
+        f.setPixelSize(max(1, round(body.pixelSize() * size / BODY_PT)))
+    elif body.pointSizeF() > 0:
+        f.setPointSizeF(body.pointSizeF() * size / BODY_PT)
     f.setWeight(weight)
     return f
 
@@ -378,10 +390,28 @@ class _Polisher(QObject):
     the FormRow rule for narrow containers."""
 
     def eventFilter(self, obj, ev):
+        if ev.type() == QEvent.Type.Polish and isinstance(obj, QAbstractSpinBox) \
+                and not obj.property('hig_num'):
+            # NumberInput: digits end-aligned (tabular figures come with the font)
+            obj.setProperty('hig_num', True)
+            obj.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            # NumberInput width: digits + 2 (72–96 px); the field still grows
+            # to its size hint when the pane is wide enough
+            if not obj.minimumWidth():
+                obj.setMinimumWidth(NUMBER_MIN_W)
+        if ev.type() == QEvent.Type.Polish and isinstance(obj, QComboBox) \
+                and not obj.property('hig_sel') and not obj.minimumWidth():
+            obj.setProperty('hig_sel', True)
+            obj.setMinimumWidth(SELECT_MIN_W)  # can shrink in a narrow pane
         if ev.type() == QEvent.Type.Show and isinstance(obj, QWidget) and obj.isWindow() \
                 and not obj.property('hig_polished'):
             obj.setProperty('hig_polished', True)
             align_forms(obj)
+            if obj.property('hig_glass'):
+                from . import glass  # noqa: PLC0415
+
+                glass.attach(obj)
+                _apply_sheet(QApplication.instance())  # see-through panes, or opaque fallback
         return False
 
 
@@ -399,6 +429,7 @@ def refresh():
         return
     if _custom_palette:
         app.setPalette(palette())
+        _apply_sheet(app)
     for w in app.allWidgets():
         if isinstance(w, StatusLabel):
             w.set_kind(w.kind())
@@ -421,19 +452,39 @@ def native() -> bool:
 
 def apply(app: QApplication):
     """Apply the design system to the whole application (call once, before
-    the first window is built)."""
-    global _custom_palette, _polisher
-    body_font()
-    if not native():
-        fusion = QStyleFactory.create('Fusion')
-        if fusion is not None:
-            app.setStyle(fusion)
-        app.setPalette(palette())
-        _custom_palette = True
+    the first window is built): Fusion as the neutral base, the token
+    palette, the body font (13 px, typography-desktop.md) and the component
+    style sheet of `hig_style` on every platform, so macOS and Windows show
+    the same design system components."""
+    global _custom_palette, _polisher, _body_font
+    if not app.property('hig_applied'):
+        app.setProperty('hig_applied', True)
+        f = QFont(app.font())
+        f.setPixelSize(BODY_PX)
+        app.setFont(f)
+        _body_font = QFont(f)
+    fusion = QStyleFactory.create('Fusion')
+    if fusion is not None:
+        app.setStyle(fusion)
+    app.setPalette(palette())
+    _custom_palette = True
+    _apply_sheet(app)
     if _polisher is None:
         _polisher = _Polisher(app)
         app.installEventFilter(_polisher)
-    try:
-        app.styleHints().colorSchemeChanged.connect(lambda *_: refresh())
-    except AttributeError:
-        pass
+        try:
+            app.styleHints().colorSchemeChanged.connect(lambda *_: refresh())
+        except AttributeError:
+            pass
+
+
+def _apply_sheet(app: QApplication):
+    from . import hig_style  # noqa: PLC0415
+
+    app.setStyleSheet(hig_style.stylesheet())
+
+
+def prominent(button: QPushButton) -> QPushButton:
+    """Button --prominent: the accent-filled main action (one, at most two, a screen)."""
+    button.setProperty('hig_prominent', True)
+    return button

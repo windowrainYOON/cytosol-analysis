@@ -155,12 +155,23 @@ def run(out_dir) -> int:
         from .app import MainWindow
         app = QApplication.instance() or QApplication([sys.argv[0]])
         theme.apply(app)
-        if not theme.native():
-            if app.style().name().lower() != 'fusion':
-                raise AssertionError(f'style {app.style().name()}')
-            want = theme.color('blue').name()
-            if app.palette().color(QPalette.ColorRole.Highlight).name() != want:
-                raise AssertionError('accent is not the Highlight role')
+        from . import hig_style
+        if not app.property('hig_applied'):
+            raise AssertionError('design system not applied')
+        want = theme.color('blue').name()
+        if app.palette().color(QPalette.ColorRole.Highlight).name() != want:
+            raise AssertionError('accent is not the Highlight role')
+        sheet = app.styleSheet()
+        for part in ('QPushButton[hig_prominent="true"]', 'QGroupBox', 'QCheckBox::indicator',
+                     'QAbstractSpinBox::up-button', 'QTabBar::tab:selected'):
+            if part not in sheet:
+                raise AssertionError(f'style sheet lacks {part}')
+        for scheme in ('light', 'dark'):
+            icons = hig_style.icon_dir(scheme)
+            import re
+            if not (icons / 'switch_on.svg').exists() or re.search(
+                    r'#[0-9a-fA-F]{6}', hig_style.stylesheet(scheme)):
+                raise AssertionError(f'{scheme}: icons / token colours in the style sheet')
         for name in ('light', 'dark'):
             p = theme.palette(name)
             if p.color(QPalette.ColorRole.WindowText).name() != theme.TOKENS[name]['label']:
@@ -195,6 +206,10 @@ def run(out_dir) -> int:
             if len(danger) < 4 or any(
                     b.palette().color(QPalette.ColorRole.ButtonText).name() != red for b in danger):
                 raise AssertionError(f'destructive buttons: {[b.text() for b in danger]}')
+            for key, (page, title) in win.tab_pages.items():
+                n = sum(1 for b in page.findChildren(QPushButton) if b.property('hig_prominent'))
+                if n > 2:
+                    raise AssertionError(f'{title}: {n} prominent buttons (max 2)')
             box, act = theme.destructive_alert(win, '삭제', '지울까요?', '삭제')
             if box.defaultButton() is act or box.escapeButton() is act:
                 raise AssertionError('destructive alert: default must be 취소')
@@ -214,7 +229,7 @@ def run(out_dir) -> int:
             if ll.itemAt(ll.count() - 1).widget() is not win.file_list:
                 raise AssertionError('image list is not the last item of the left pane')
             return (f'{len(danger)} destructive buttons, {len(hints)} hint labels, '
-                    f'style {app.style().name()}')
+                    f'style sheet {len(sheet)} chars')
         finally:
             win.dirty = False
             win.close()

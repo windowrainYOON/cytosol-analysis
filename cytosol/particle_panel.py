@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
+from .flow import FlowLayout
 from .intensity import (
     SHAPES,
     SHAPE_TITLES,
@@ -140,7 +141,8 @@ class ParticlePanel(QWidget):
         self.min_px.setSuffix(' px')
         self.min_px.setToolTip('이보다 작은 입자는 버립니다 (ImageJ Analyze Particles의 최소 크기).')
         pl.addRow('최소 입자 크기', self.min_px)
-        self.show_particles = QCheckBox('이미지에 입자 경계 표시 (픽셀 ROI 자홍색, 등강도선 주황색)')
+        self.show_particles = QCheckBox('이미지에 입자 경계 표시')
+        self.show_particles.setToolTip('픽셀 ROI는 자홍색, 등강도선은 주황색으로 그립니다.')
         self.show_particles.setChecked(True)
         self.show_particles.toggled.connect(lambda _: self.schedule())
         pl.addRow(self.show_particles)
@@ -158,11 +160,14 @@ class ParticlePanel(QWidget):
         self.contour_level.setValue(0.5)
         self.contour_level.setToolTip('배경(0)과 입자 봉우리(1) 사이 어느 높이에 윤곽을 그릴지. '
                                       '0.5 = half-max (반치폭).')
-        row = QHBoxLayout()
+        row = FlowLayout()  # wraps the level under the switch in a narrow pane
         row.addWidget(self.contour_on)
-        row.addWidget(QLabel('레벨'))
-        row.addWidget(self.contour_level)
-        row.addStretch()
+        lev = QWidget()
+        ll = QHBoxLayout(lev)
+        ll.setContentsMargins(0, 0, 0, 0)
+        ll.addWidget(QLabel('레벨'))
+        ll.addWidget(self.contour_level)
+        row.addWidget(lev)
         pl.addRow(row)
         self.int_pixel = QRadioButton('픽셀 ROI')
         self.int_pixel.setToolTip('입자로 잡힌 픽셀 그대로 강도를 잽니다 (ImageJ Analyze Particles와 같음).')

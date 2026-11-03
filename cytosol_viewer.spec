@@ -14,7 +14,9 @@ hiddenimports = (
        'matplotlib.backends.backend_pdf', 'matplotlib.backends.backend_svg',
        'matplotlib.backends.backend_ps',
        # line profile plot embedded in the window
-       'matplotlib.backends.backend_qtagg', 'imageio_ffmpeg']
+       'matplotlib.backends.backend_qtagg', 'imageio_ffmpeg',
+       # Liquid Glass sidebar material (cytosol/glass.py)
+       'objc', 'AppKit', 'Foundation']
 )
 # imageio-ffmpeg ships the ffmpeg binary used for MP4 export
 datas = collect_data_files('skimage') + collect_data_files('imageio_ffmpeg', include_py_files=False) + [('cytosol/assets', 'cytosol/assets')]

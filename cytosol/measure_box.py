@@ -138,7 +138,7 @@ class MeasureBox(QWidget):
         theme.hint(self.info)
         tl.addWidget(self.info)
         row = QHBoxLayout()
-        b = QPushButton('지금 측정 (현재 이미지)')
+        b = theme.prominent(QPushButton('지금 측정 (현재 이미지)'))
         b.clicked.connect(lambda: self.refresh(force=True))
         row.addWidget(b, 1)
         b = QPushButton('모든 이미지 측정')

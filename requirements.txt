@@ -12,3 +12,4 @@ scipy
 scikit-image  # cell ROI segmentation
 roifile     # ImageJ .roi / RoiSet.zip
 imageio-ffmpeg  # MP4 export (bundled ffmpeg binary)
+pyobjc-framework-Cocoa; sys_platform == "darwin"  # Liquid Glass sidebar material (NSVisualEffectView)
