@@ -19,7 +19,7 @@ and exports the graph and its data. Like the Figure window, it is a separate win
 |---|---|
 | FRAP 측정 | The graph picked in the tab: recovery curve + fit, ROI mean intensities, or group means ± SEM/SD (+ single curves, fits) |
 | 라인 프로파일 | One line per channel (channel colors, channels hidden in the LUT tab left out, 0–1 normalization as set) |
-| 강도 측정 › distance bands | A gray line per cell + the red mean ± SD band (the x / y picked in the tab) |
+| 세포질 ROI › distance bands | A gray line per cell + the red mean ± SD band (the x / y picked in the tab) |
 | 세포질 ROI · 입자 ROI · 강도 측정 tables | Bars (mean ± SD, one dot per value) of the first mean column (area for per-particle rows) by group, image, region or ROI |
 | Coloc 2 | The selected ROI's 2D histogram as a heat map (regression line, thresholds); per-ROI Pearson R bars when a result image was shown |
 

@@ -120,6 +120,17 @@ def run(out_dir) -> int:
     ok = True
 
     only = os.environ.get('CYTOSOL_SELFTEST_ONLY')  # run just these steps (comma separated)
+    # the user's own preferences (initial values, TCF alignment) stay untouched and unused
+    try:
+        from PySide6.QtCore import QSettings
+
+        from .settings import view_settings
+        prefs = out / 'preferences.ini'
+        if prefs.exists():
+            prefs.unlink()
+        view_settings.use_store(QSettings(str(prefs), QSettings.Format.IniFormat))
+    except Exception:
+        traceback.print_exc()
 
     def step(name, fn):
         nonlocal ok
@@ -143,6 +154,64 @@ def run(out_dir) -> int:
             f['x'] = np.arange(3)
         with h5py.File(p, 'r') as f:
             return int(f['x'][()].sum())
+
+    def preferences_step():
+        """Preferences: TCF alignment out of the sidebar, initial values of
+        the markers and the tabs saved and used by a new window / 새 프로젝트."""
+        from PySide6.QtWidgets import QApplication, QLabel
+
+        from .app import MainWindow
+        from .settings import PreferencesDialog, view_settings
+        app = QApplication.instance() or QApplication([sys.argv[0]])
+        win = MainWindow()
+        if hasattr(win, 'align_tcf') or 'HT와 FL' in ' '.join(
+                w.text() for w in win.sidebar.findChildren(QLabel)):
+            raise AssertionError('TCF alignment option still in the sidebar')
+        if not view_settings.flag('align_tcf'):
+            raise AssertionError('TCF alignment not on by default')
+        dlg = PreferencesDialog(win)
+        dlg.flags['align_tcf'].setChecked(False)
+        if view_settings.flag('align_tcf'):
+            raise AssertionError('TCF alignment preference not stored')
+        dlg.flags['align_tcf'].setChecked(True)
+        # marker initial values (an automatic value switched off = a fixed value)
+        dlg.markers.sb_len.auto_box.setChecked(False)
+        dlg.markers.sb_len.setValue(25)
+        dlg.markers.sb_font.setValue(31)
+        st = view_settings.defaults('markers')
+        if not st or st['state']['sb_len']['value'] != 25:
+            raise AssertionError(f'marker initial values not stored: {st}')
+        # tab initial values
+        win.roi_panel.bands.band_n.setValue(7)
+        win.particle_panel.measure.stat_boxes['Max'].setChecked(True)
+        dlg.save_tab_defaults()
+        dlg.close()
+        win.roi_panel.bands.band_n.setValue(3)
+        win2 = MainWindow()
+        app.processEvents()
+        if win2.markers.sb_len.value() != 25 or win2.markers.sb_font.value() != 31:
+            raise AssertionError('new window did not start with the marker initial values')
+        if win2.roi_panel.bands.band_n.value() != 7 \
+                or not win2.particle_panel.measure.stat_boxes['Max'].isChecked():
+            raise AssertionError('new window did not start with the tab initial values')
+        win.set_dirty(False)
+        win.new_project()
+        if win.roi_panel.bands.band_n.value() != 7:
+            raise AssertionError('새 프로젝트 did not start with the tab initial values')
+        dlg = PreferencesDialog(win)
+        if dlg.markers.sb_len.value() != 25 or not dlg.clear_tabs_btn.isEnabled():
+            raise AssertionError('Preferences did not show the stored initial values')
+        dlg.clear_tab_defaults()
+        dlg.reset_markers()
+        if view_settings.defaults('tabs') or view_settings.defaults('markers'):
+            raise AssertionError('initial values not cleared')
+        dlg.close()
+        for w in (win, win2):
+            w.set_dirty(False)
+            w.close()
+            w.deleteLater()
+        app.processEvents()
+        return 'TCF option, marker + tab initial values'
 
     def design_system():
         """Apple HIG design system (cytosol/theme.py): semantic colours and text
@@ -1501,8 +1570,10 @@ def run(out_dir) -> int:
                 raise AssertionError(f'{box.suffix}: all-image measurement skipped the image')
             box.save_item(own, out / 'intensity_gui', res[id(own)])
         # distance bands from the nucleus: n bands per cell, particles per band, graph
-        bm = ip.bands_measure
-        ip.band_n.setValue(5)
+        # (in the 세포질 ROI tab since v0.57)
+        bp = win.roi_panel.bands
+        bm = bp.bands_measure
+        bp.band_n.setValue(5)
         bm.refresh(force=True)
         cells_nuc = [l for l in own.cells.ids() if (own.cells.nuclei == l).any()]
         bands = {r['band'] for r in bm.rows}
@@ -1513,18 +1584,27 @@ def run(out_dir) -> int:
         cyto = sum(((own.cells.labels == l) & (own.cells.nuclei != l)).sum() for l in cells_nuc)
         if area != cyto:
             raise AssertionError(f'bands cover {area} px of {cyto} cytosol px')
-        if ip.graph_x.currentText() != 'distance_rel' or not ip.graph_y.currentText().endswith('_Mean') \
-                or not ip.ax.lines:
-            raise AssertionError(f'band graph {ip.graph_x.currentText()} / {ip.graph_y.currentText()}')
-        ip.graph_y.setCurrentIndex(ip.graph_y.findText('n_particles'))
-        if ip.graph_y.currentText() != 'n_particles' or not ip.ax.lines:
+        if bp.graph_x.currentText() != 'distance_rel' or not bp.graph_y.currentText().endswith('_Mean') \
+                or not bp.ax.lines:
+            raise AssertionError(f'band graph {bp.graph_x.currentText()} / {bp.graph_y.currentText()}')
+        bp.graph_y.setCurrentIndex(bp.graph_y.findText('n_particles'))
+        if bp.graph_y.currentText() != 'n_particles' or not bp.ax.lines:
             raise AssertionError('graph axis not switched to a particle value')
-        ip.show_bands.setChecked(True)
-        ip.draw_regions()
+        if hasattr(ip, 'bands_measure') or 'bands' in {a.text() for a in win.tool_menu.actions()}:
+            raise AssertionError('distance bands still in the 강도 측정 tab')
+        win.show_tab('roi_tab')
+        app.processEvents()
+        bp.show_bands.setChecked(True)
+        bp.draw_regions()
         if win.canvas._logic_item is None:
-            raise AssertionError('bands not drawn on the image')
-        ip.show_bands.setChecked(False)
-        ip.fig.savefig(out / 'intensity_gui' / 'bands.png')
+            raise AssertionError('bands not drawn on the image in the 세포질 ROI tab')
+        bp.show_bands.setChecked(False)
+        bp.draw_regions()
+        if win.canvas._logic_item is not None:
+            raise AssertionError('bands still drawn after switching them off')
+        win.show_tab('intensity_tab')
+        app.processEvents()
+        bp.fig.savefig(out / 'intensity_gui' / 'bands.png')
         # bands and the measurement table in the graph editor: a line per cell + mean ± SD
         gw = win.open_graph('bands')
         if gw is None or gw.spec.series[0].split != 'cell' or gw.spec.series[-1].agg != 'mean':
@@ -1534,7 +1614,7 @@ def run(out_dir) -> int:
         if gw is None or gw.spec.chart != 'bar' or not gw.spec.series[0].y:
             raise AssertionError('measurement graph in the graph editor')
         gw.close()
-        ip.band_n.setValue(10)
+        bp.band_n.setValue(10)
         from .lut import item_stem
         stem = item_stem(own)
         for name in ('cell_intensity.csv', 'particle_intensity.csv', 'intensity.csv', 'bands.csv',
@@ -2196,6 +2276,7 @@ def run(out_dir) -> int:
     step('batch analysis', batch_step)
     step('graph editor', graph_step)
     step('main window', window)
+    step('preferences', preferences_step)
     step('design system', design_system)
 
     text = '\n'.join(log) + f'\n\n{"PASSED" if ok else "FAILED"}\n'

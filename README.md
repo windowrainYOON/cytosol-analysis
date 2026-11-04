@@ -137,7 +137,7 @@ A GUI for working on a whole set of images at once:
   grid (channels `RI`, `CH0…`): FL is resampled by pixel size around the shared
   image center plus a small automatic registration (at most 2 µm), and in Z
   from `3DFL/OffsetZ` (the center of the FL stack measured from the bottom of
-  the HT volume). Turn off **TCF: HT와 FL을 정렬해 한 이미지로** to get HT and
+  the HT volume). Turn off **Preferences › TCF: HT와 FL을 정렬해 한 이미지로** to get HT and
   FL as two entries instead (`read_image(path, aligned=True)` from Python).
 - **Time series** (TCF, CZI, OIR with a T axis, together with Z): a **T** slider
   under the image. The image follows the slider while it is dragged (each
@@ -275,8 +275,9 @@ A GUI for working on a whole set of images at once:
     `&` intersection, `|` union, `-` difference), shown filled in cyan on the
     image and saved as `<name>_regions.zip` (one ImageJ ROI per cell and
     region, `rgnCCC-R`, the expression in its `region` property) →
-    `<name>_intensity.csv` / `intensity.csv`. Below it, **핵 → 세포막 등거리
-    띠** (`cytosol/radial.py`): every cytosol pixel of a cell with a nucleus
+    `<name>_intensity.csv` / `intensity.csv`.
+  - **핵 → 세포막 등거리 띠** (세포질 ROI tab since v0.57, `cytosol/radial.py`,
+    `cytosol/bands_panel.py`): every cytosol pixel of a cell with a nucleus
     gets its distance from the nucleus, relative (d_nuc / (d_nuc + d_edge),
     Euclidean distance maps; 0 = nucleus edge, 1 = cell edge) or in µm from
     the nucleus outline; the chosen range is cut into n equal bands (default

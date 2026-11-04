@@ -39,7 +39,7 @@ hidden, and the open tabs are saved in the project.
 | **측정·프로파일 저장 시 ROI와 ROI가 그려진 이미지(.png)도 함께** (check item) | | Next to measurement CSVs and line profiles also `<name>_RoiSet.zip`, `<name>_particles.zip`, `<name>_line.roi`, `<name>_image.png` |
 | **작업 기록 보기…** (Work log) | `Ctrl+Shift+L` | The [work log](#work-log) window |
 | **작업 기록 저장 (CSV)…** (Save work log) | | The whole work log |
-| **설정…** (Settings; on macOS in the app menu, `⌘,`) | | Mouse sensitivity (see [Settings](#settings)) |
+| **Preferences…** (on macOS in the app menu, `⌘,`) | | Loading options, mouse sensitivity, initial values of markers and tabs (see [Preferences](#preferences)) |
 | **종료** (Quit) | `⌘Q` (macOS) | Asks first about unsaved changes |
 
 ## Feature menus (Tool)
@@ -129,10 +129,36 @@ loading, saving, grouping, …) is recorded with the time, the image and its ID.
 View it with **파일 › 작업 기록 보기…** and save it with **파일 › 작업 기록 저장
 (CSV)…**. It is saved in the project, so reopening a project continues the log.
 
-## Settings
+## Preferences
 
-**파일 › 설정…** sets the mouse sensitivities (1.0 = the default speed,
-0.1–3.0×). They are remembered on the computer.
+Everything in **Preferences…** (macOS: app menu › Preferences…, `⌘,`;
+Windows: 파일 › Preferences…) is stored on the computer as soon as it is
+changed and used again at the next start (macOS: the app's preferences file,
+Windows: the registry).
+
+**이미지 불러오기** (loading)
+
+- **TCF: HT와 FL을 정렬해 한 이미지로** (on by default): the option that used to
+  sit above the image list; applies to files added afterwards
+  ([Getting started](01-getting-started.md)).
+
+**탭 설정 초기값** (initial values of the tabs)
+
+- **지금 탭 설정을 초기값으로 저장**: stores every tab's settings of the window
+  (세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, line profile, FRAP, stack, export
+  options, channels to measure …) as initial values, used at start-up and by
+  **새 프로젝트**. Opening a project uses the project's own settings.
+- **저장한 탭 초기값 지우기…**: start with the program's defaults again.
+
+**마커 초기값** (initial values of the markers)
+
+The same cards as the 마커 tab (scale bar, time stamp, bleach ROI outlines).
+Switch **자동** off and enter a value to make it the initial value; changes
+are stored at once. **지금 마커 탭 설정 가져오기** (take the 마커 tab's
+settings), **지금 창에 적용** (apply to the window), **프로그램 기본값으로**
+(program defaults).
+
+**마우스 민감도** (mouse sensitivity; 1.0 = the default speed, 0.1–3.0×):
 
 | Item | Default | Meaning |
 |---|---|---|

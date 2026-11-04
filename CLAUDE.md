@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.56.0)
+## Window structure (v0.57.0)
 
 - **Regions** (owner request 2026-11-04, v0.52; design system
   `components/RegionLayout`): Sidebar | Canvas | Inspector are told apart by
@@ -43,6 +43,7 @@ owner writes in Korean, so reply in Korean.
 - **Left**: image list with group folders (`image_tree.py`, `groups.py`;
   long names wrap, `WrapDelegate`) in the sidebar region (`MainWindow.sidebar`,
   `#hig_sidebar`). Only one button, 자동 그룹 (owner request 2026-11-03);
+  the TCF HT + FL alignment option lives in Preferences since v0.57;
   files come in by 파일 › 불러오기 or drag and drop (the empty list paints a
   drop glyph). Remove: trash glyph at the end of the hovered / selected row
   (`ImageTree.removeClicked`) and the context menu (`MainWindow.list_menu`:
@@ -71,6 +72,13 @@ owner writes in Korean, so reply in Korean.
   then View (`view_menu`, v0.43): one check item per feature tab
   (`view_actions`, kept in step with `tool_actions` by `_check_tab_actions`)
   plus 모든 기능 탭 열기 / 닫기:
+  - **Preferences…** (`settings.PreferencesDialog`, owner request 2026-11-04,
+    v0.57; macOS app menu, `⌘,`): loading flags (`settings.FLAGS`,
+    `view_settings.flag('align_tcf')`), mouse sensitivities, 탭 설정 초기값
+    (`MainWindow.tab_defaults()` → `view_settings.set_defaults('tabs', …)`)
+    and 마커 초기값 (an own `MarkerPanel`, `defaults('markers')`), all in
+    QSettings; `MainWindow.apply_defaults()` runs at start-up and in
+    `new_project`. The self-test uses its own ini store (`use_store`).
   - **파일**: 새 프로젝트, 불러오기 (자동 인식) / (폴더), 최근 프로젝트,
     프로젝트에서 설정(파이프라인)만 불러오기, 프로젝트 저장 / 다른 이름으로,
     일괄 분석 실행 / 결과 보기 / 결과 저장 / 설정 저장·불러오기, 모든 분석 결과
@@ -137,7 +145,11 @@ owner writes in Korean, so reply in Korean.
   `RoiParams` default). Editing: Shift+click (`Canvas.cellShiftClicked`)
   builds a multi-selection (`RoiPanel.selection()`), 합치기 (M) joins it
   (`CellRois.merge`, bridges gaps ≤ 3 µm), Option/Alt+drag with 선택 draws a
-  cut line (`Canvas.roi_edit_active`, `_lasso_tool`).
+  cut line (`Canvas.roi_edit_active`, `_lasso_tool`). At the bottom since
+  v0.57: **핵 → 세포막 등거리 띠** (`bands_panel.BandsPanel` =
+  `roi_panel.bands`, moved from 강도 측정; projects keep it as panel `bands`
+  + `intensity_bands`, older projects' band keys under `intensity` are read
+  via `bands_panel.LEGACY_KEYS`).
   - Rule from the owner (2026-10-27, v0.26): the plain manual threshold mode
     (at or above the threshold = ROI, below = discarded, nothing else) must
     always stay, whatever detection algorithms are added later; automatic
@@ -242,7 +254,8 @@ per-widget style sheets.
 | `cellroi.py`, `roi_panel.py` | Cell / nucleus / cytosol ROI detection, editing, ImageJ ROI I/O (세포질 ROI tab) |
 | `intensity.py` | ImageJ Measure values, particle detection (Otsu / Hessian spot seeds + watershed), shape (iso-contours), logic regions |
 | `particle_panel.py` | 입자 ROI tab, per-cell and per-particle measurement, summaries |
-| `intensity_panel.py`, `radial.py` | 강도 측정 tab (regions from expressions like `cyto - particle`; distance bands from the nucleus with graph) |
+| `intensity_panel.py` | 강도 측정 tab (regions from expressions like `cyto - particle`) |
+| `bands_panel.py`, `radial.py` | 핵 → 세포막 등거리 띠 in the 세포질 ROI tab (distance bands from the nucleus, per-band measurement, graph) |
 | `measure_box.py` | Measurement table shared by the three measuring tabs |
 | `coloc.py`, `coloc_panel.py` | Fiji Coloc 2 port, per cell |
 | `lineprofile.py`, `profile_panel.py` | Line profile (ImageJ RGB Profiler) |
@@ -257,7 +270,7 @@ per-widget style sheets.
 | `hig_style.py` | App-wide style sheet generated from the tokens (all controls, light/dark), indicator SVGs |
 | `glass.py` | macOS Liquid Glass sidebar material (NSVisualEffectView via pyobjc) behind the side panes |
 | `project.py` | `.cyproj` project files (see below) |
-| `settings.py` | `QSettings` preferences: mouse sensitivities, recent projects; `SettingsDialog` |
+| `settings.py` | `QSettings` preferences: loading flags, mouse sensitivities, tab / marker initial values, recent projects; `PreferencesDialog` |
 | `worklog.py` | `WorkLog`, `LoggingStatusBar`, `LogWindow` |
 | `batch.py` | 일괄 분석: steps × groups run on all images, results window, batch-only save, batch settings JSON |
 | `selftest.py` | Headless smoke test of the whole app (CI and built apps; `CYTOSOL_SELFTEST_ONLY='step name,…'` runs only some steps) |
@@ -393,3 +406,4 @@ not affected.
 | dev branch | 0.54.0 | Owner request: settings rows: titles left, controls at the row end (`theme.settings_rows`: field items aligned right, a trailing stretch of a [value][자동] row moved to the front), steppers' text left, hairlines between rows (`theme.RowLines` overlay per group, row gap 12 = 40 px rows); dialogs' forms the same |
 | dev branch | 0.55.0 | Owner request + design system (SettingsPane › 자동 / 수동, slider rows): slider values on one row (title – slider – plain number field), one row height per card, single fields 140 wide, every 자동 / 수동 choice a switch (ROI 검출 방식, particle 검출 방식, stack Z 간격, marker / figure / graph special-value autos), only the chosen mode's inputs shown; hairlines full card width |
 | dev branch | 0.56.0 | Owner request: FRAP 측정 tab in settings cards like the others: 측정 ROI card is a form (`_roi_form`: ■ ROI 위치 + 자동 switch, hint under it without a hairline (`theme.hint` sets `hig_hint`), Bleach / Control 지름, Control 자리, threshold slider row), rows that don't apply are hidden (Bleach 지름 for the file's region, 파일 영역 with one region, 추적 방식 / 추적 창 by the drift settings, empty hints); short Control 자리 names |
+| dev branch | 0.57.0 | Owner request: Preferences window (`PreferencesDialog`, app menu `⌘,`): TCF HT + FL alignment moved there from the sidebar, mouse sensitivities, 탭 설정 초기값 (save the window's tab settings as initial values / clear) and 마커 초기값 (marker cards incl. 자동 values), stored in QSettings and applied at start-up and 새 프로젝트; 핵 → 세포막 등거리 띠 moved from 강도 측정 to the bottom of the 세포질 ROI tab (`bands_panel.py`, menu items under Tool › 세포질 ROI, batch step tab, old projects' band settings migrated) |

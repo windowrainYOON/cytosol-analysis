@@ -63,7 +63,7 @@ tab's results.
 | Figure window | `Ctrl+Shift+F`; inside it, save with `Ctrl+S` |
 | Graph editor of the current tab | `Ctrl+G`; inside it, save the image with `Ctrl+S`, reload with `Ctrl+R` |
 | Work log | `Ctrl+Shift+L` |
-| Zoom | `Cmd` (Windows `Ctrl`) + drag up/down, `]` in / `[` out; **영역 확대** (zoom to area) or `Shift`+drag a rectangle; **화면 맞춤** (fit) to reset. Sensitivity in **파일 › 설정…** |
+| Zoom | `Cmd` (Windows `Ctrl`) + drag up/down, `]` in / `[` out; **영역 확대** (zoom to area) or `Shift`+drag a rectangle; **화면 맞춤** (fit) to reset. Sensitivity in **Preferences** |
 | Mouse wheel | Time series: moves through time (one timepoint per notch). Otherwise scrolls the view |
 | Pan | Middle-button drag (right-button drag too on images without Z or T) |
 | Move through T and Z | Right-button drag on the image: left/right = T, up/down = Z |

@@ -464,6 +464,10 @@ class RoiPanel(QWidget):
         lay.addWidget(ed, 1)
         lay.addWidget(meas)
         lay.addWidget(self.measure, 1)
+        # 핵 → 세포막 등거리 띠 (moved here from 강도 측정, owner request 2026-11-04)
+        from .bands_panel import BandsPanel
+        self.bands = BandsPanel(win)
+        lay.addWidget(self.bands, 1)
 
         self._hover = {}  # label -> (text, anchor) of the ROIs drawn now
         self._hover_rois = None
@@ -694,6 +698,8 @@ class RoiPanel(QWidget):
 
     def bind(self, item: ImageItem | None):
         """Called by the main window when the current image changes."""
+        if hasattr(self, 'bands'):
+            self.bands.bind(item)
         self._busy = True
         self.nuc_combo.clear()
         self.bg_combo.clear()

@@ -94,7 +94,7 @@ from .particle_panel import ParticlePanel
 from .roi_panel import RoiPanel, write_csv
 from .stack import StackView, export_projection, export_rotation
 from .stack_panel import StackPanel
-from .settings import SettingsDialog, view_settings
+from .settings import PreferencesDialog, view_settings
 from .worklog import LoggingStatusBar, LogWindow, WorkLog
 from .version import __version__
 
@@ -1285,14 +1285,6 @@ class MainWindow(QMainWindow):
         head.addWidget(title, 1)
         head.addWidget(auto_btn)
         ll.addLayout(head)
-        self.align_tcf = QCheckBox()
-        self.align_tcf.setChecked(True)
-        tip = ('FL을 HT 픽셀 격자에 맞춰 리샘플링합니다 (XY: 픽셀 크기와 자동 미세 보정, '
-               'Z: 3DFL OffsetZ). 끄면 HT와 FL이 따로 열립니다. 새로 추가하는 파일부터 적용됩니다.')
-        self.align_tcf.setToolTip(tip)
-        tcf_row = wrapped_check(self.align_tcf, 'TCF: HT와 FL을 정렬해 한 이미지로', tip)
-        tcf_row.setContentsMargins(0, 0, 0, 0)
-        ll.addLayout(tcf_row)
         ll.addWidget(self.file_list, 1)
         left_holder = left
         self.sidebar = left
@@ -1367,7 +1359,7 @@ class MainWindow(QMainWindow):
         # commands: Shift+drag, [ ], View menu)
         fit_btn = hig_widgets.IconButton(
             'fit', '화면 맞춤\n확대/축소: Cmd(Windows는 Ctrl) + 위/아래 드래그, [ 축소, ] 확대.\n'
-            '민감도는 파일 → 설정…에서 바꿉니다.')
+            '민감도는 Preferences에서 바꿉니다.')
         fit_btn.clicked.connect(self.canvas.fit)
         self.fit_btn = fit_btn
         self.zoom_btn = hig_widgets.IconButton(
@@ -1608,6 +1600,7 @@ class MainWindow(QMainWindow):
         self.batch = BatchState()  # 일괄 분석: steps, groups, results per image
         self.batch_win = None
         self._build_menus()
+        self.apply_defaults()  # initial values from Preferences
         self.statusBar().showMessage('파일을 추가하세요.', 5000)
 
     # ---- menus ------------------------------------------------------------
@@ -1682,7 +1675,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         act(m, '작업 기록 보기…', self.open_log, 'Ctrl+Shift+L')
         act(m, '작업 기록 저장 (CSV)…', self.save_log_csv)
-        s = act(m, '설정…', self.open_settings, QKeySequence.StandardKey.Preferences)
+        s = act(m, 'Preferences…', self.open_settings, QKeySequence.StandardKey.Preferences)
         s.setMenuRole(QAction.MenuRole.PreferencesRole)
         m.addSeparator()
         q = act(m, '종료', self.close, QKeySequence.StandardKey.Quit)
@@ -1722,6 +1715,13 @@ class MainWindow(QMainWindow):
         sub.addSeparator()
         self._measure_menu(sub, rp.measure)
         self._graph_action(sub, 'roi')
+        sub.addSeparator()
+        bp = rp.bands
+        act(sub, '등거리 띠 CSV 저장 (현재 이미지)…', bp.bands_measure.save_current)
+        act(sub, '등거리 띠: 모든 이미지 측정 + 저장 (폴더)…', bp.bands_measure.save_all,
+            tip=bp.bands_measure.save_tip)
+        act(sub, '등거리 띠 그래프 저장 (PNG / PDF / SVG / TIFF)…', bp.save_plot)
+        self._graph_action(sub, 'bands')
 
         sub = tools.addMenu('입자 ROI')
         tab_action(sub, 'particle_tab')
@@ -1735,13 +1735,7 @@ class MainWindow(QMainWindow):
         tab_action(sub, 'intensity_tab')
         self._measure_menu(sub, ip.measure)
         sub.addSeparator()
-        act(sub, '등거리 띠 CSV 저장 (현재 이미지)…', ip.bands_measure.save_current)
-        act(sub, '등거리 띠: 모든 이미지 측정 + 저장 (폴더)…', ip.bands_measure.save_all,
-            tip=ip.bands_measure.save_tip)
-        act(sub, '등거리 띠 그래프 저장 (PNG / PDF / SVG / TIFF)…', ip.save_plot)
-        sub.addSeparator()
         self._graph_action(sub, 'intensity')
-        self._graph_action(sub, 'bands')
 
         sub = tools.addMenu('Coloc 2')
         tab_action(sub, 'coloc_tab')
@@ -1831,8 +1825,8 @@ class MainWindow(QMainWindow):
                          '입자 ROI 탭에서 먼저 측정하세요.'),
             'intensity': ('강도 측정', 'intensity_tab', lambda: S.measure(ip.measure, '강도 측정'),
                           '강도 측정 탭에서 먼저 측정하세요.'),
-            'bands': ('등거리 띠', 'intensity_tab', lambda: S.bands(ip),
-                      '강도 측정 탭에서 등거리 띠를 먼저 측정하세요.'),
+            'bands': ('등거리 띠', 'roi_tab', lambda: S.bands(rp.bands),
+                      '세포질 ROI 탭에서 등거리 띠를 먼저 측정하세요.'),
             'coloc': ('Coloc 2', 'coloc_tab', lambda: S.coloc(self.coloc_panel),
                       'Coloc 2 탭에서 먼저 계산하세요.'),
             'profile': ('라인 프로파일', 'profile_tab', lambda: S.profile(self.profile_panel),
@@ -1851,7 +1845,7 @@ class MainWindow(QMainWindow):
         """A ‘그래프 편집 창…’ button under each tab's graph / result table."""
         ip, cp = self.intensity_panel, self.coloc_panel
         spots = [(self.profile_panel.plot, 'profile'), (self.frap_panel.plot, 'frap'),
-                 (ip.plot, 'bands'), (cp.plot, 'coloc'), (self.roi_panel.measure.table, 'roi'),
+                 (self.roi_panel.bands.plot, 'bands'), (cp.plot, 'coloc'), (self.roi_panel.measure.table, 'roi'),
                  (self.particle_panel.measure.table, 'particle'), (ip.measure.table, 'intensity')]
         for w, key in spots:
             lay = w.parentWidget().layout() if w.parentWidget() is not None else None
@@ -1920,8 +1914,6 @@ class MainWindow(QMainWindow):
         srcs = self.graph_sources()
         for key, (_, tab, _, _) in srcs.items():
             if self.tab_current(tab):
-                if key == 'intensity' and self.intensity_panel.bands_measure._rows_shown()[0]:
-                    key = 'bands'
                 return self.open_graph(key)
         QMessageBox.information(self, '그래프 편집 창', '그래프가 있는 탭(세포질 ROI, 입자 ROI, 강도 측정, '
                                 'Coloc 2, 라인 프로파일, FRAP 측정)을 오른쪽에 여세요.')
@@ -1953,7 +1945,34 @@ class MainWindow(QMainWindow):
             self.recent_menu.addAction('목록 지우기', view_settings.clear_recent)
 
     def open_settings(self):
-        SettingsDialog(self).exec()
+        PreferencesDialog(self).exec()
+
+    def tab_defaults(self) -> dict:
+        """Every tab's settings, kept by Preferences as initial values (the
+        markers have their own initial values)."""
+        panels = {k: v for k, v in self._panel_state().items() if k != 'markers'}
+        off = {key: sorted(obj.channels_off) for key, obj in self._panel_objects().items()
+               if obj in self._measure_boxes()}
+        return {'panels': panels, 'measure_channels_off': off}
+
+    def apply_defaults(self):
+        """Start-up / 새 프로젝트: the tab and marker initial values saved in Preferences."""
+        from .project import restore_widgets
+
+        tabs = view_settings.defaults('tabs')
+        if tabs:
+            objs = self._panel_objects()
+            for key, st in (tabs.get('panels') or {}).items():
+                if key in objs and key != 'markers':
+                    restore_widgets(objs[key], st)
+            off = tabs.get('measure_channels_off') or {}
+            for key, obj in objs.items():
+                if obj in self._measure_boxes() and key in off:
+                    obj.set_channels_off(off[key])
+        markers = view_settings.defaults('markers')
+        if markers:
+            restore_widgets(self.markers, markers.get('state') or {})
+            self.markers.changed.emit()
 
     def open_log(self):
         if self.log_win is None:
@@ -2299,13 +2318,13 @@ class MainWindow(QMainWindow):
             'window': self, 'roi': self.roi_panel, 'roi_measure': self.roi_panel.measure,
             'particle': self.particle_panel, 'particle_measure': self.particle_panel.measure,
             'intensity': self.intensity_panel, 'intensity_measure': self.intensity_panel.measure,
-            'intensity_bands': self.intensity_panel.bands_measure,
+            'intensity_bands': self.roi_panel.bands.bands_measure, 'bands': self.roi_panel.bands,
             'coloc': self.coloc_panel, 'profile': self.profile_panel, 'markers': self.markers,
             'frap': self.frap_panel,
             'stack': self.stack_panel,
         }
 
-    _WINDOW_KEYS = ('align_tcf', 'copy_color', 'show_crop_btn', 'exp_full', 'exp_crops',
+    _WINDOW_KEYS = ('copy_color', 'show_crop_btn', 'exp_full', 'exp_crops',
                     'exp_composite', 'exp_channels', 'exp_raw', 'exp_all_t', 'exp_format',
                     'exp_fps', 'opt_per_image', 'opt_with_roi')
 
@@ -2392,6 +2411,7 @@ class MainWindow(QMainWindow):
         if not self._maybe_save():
             return
         self._clear_all()
+        self.apply_defaults()
         self.project_path = None
         self.worklog.clear()
         self.set_dirty(False)
@@ -2425,8 +2445,13 @@ class MainWindow(QMainWindow):
         choice (steps, groups) of a project: its pipeline without images."""
         from .project import restore_widgets
 
+        panels = dict(data.get('panels') or {})
+        if 'bands' not in panels:  # before v0.57 the distance bands were in the 강도 측정 tab
+            from .bands_panel import LEGACY_KEYS
+            old = panels.get('intensity') or {}
+            panels['bands'] = {k: v for k, v in old.items() if k in LEGACY_KEYS}
         for key, obj in self._panel_objects().items():
-            restore_widgets(obj, (data.get('panels') or {}).get(key, {}))
+            restore_widgets(obj, panels.get(key, {}))
         off = data.get('measure_channels_off') or {}
         for key, obj in self._panel_objects().items():
             if obj in self._measure_boxes():
@@ -2746,7 +2771,7 @@ class MainWindow(QMainWindow):
             prog.setValue(i)
             QApplication.processEvents()
             try:
-                loaded = load_items(p, self.align_tcf.isChecked())
+                loaded = load_items(p, view_settings.flag('align_tcf'))
             except Exception as exc:  # keep loading the rest
                 errors.append(f'{p.name}: {exc}')
                 traceback.print_exc()
@@ -3833,7 +3858,7 @@ class MainWindow(QMainWindow):
 
     def _measure_boxes(self):
         return [self.roi_panel.measure, self.particle_panel.measure, self.intensity_panel.measure,
-                self.intensity_panel.bands_measure]
+                self.roi_panel.bands.bands_measure]
 
     def export_everything(self):
         """Save every image's TIFFs, ROIs and measurements into its own folder."""

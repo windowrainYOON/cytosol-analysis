@@ -32,8 +32,8 @@ channel (e.g. 0–4095 for 12-bit) are taken from the file's metadata.
 
 ### TCF: HT and FL as one image
 
-**TCF: HT와 FL을 정렬해 한 이미지로** (TCF: align HT and FL into one image), on
-by default, opens a TCF as one entry with channels `RI`, `CH0`, `CH1`, …:
+**Preferences › 이미지 불러오기 › TCF: HT와 FL을 정렬해 한 이미지로** (TCF: align HT
+and FL into one image), on by default, opens a TCF as one entry with channels `RI`, `CH0`, `CH1`, …:
 fluorescence is resampled onto the HT pixel grid (pixel size around the
 shared image centre plus an automatic fine registration of at most 2 µm) and
 placed in Z from `3DFL/OffsetZ`. Turn it off to get HT and FL as two separate
@@ -123,7 +123,7 @@ measurement tabs.
   the background (up to 1.5 GB; progress in the status bar), so scrubbing
   only redraws.
 - **Right-drag on the image** moves through T (left/right) and Z (up/down)
-  at the same time. Its speed is set in **파일 › 설정…** (Settings).
+  at the same time. Its speed is set in **Preferences**.
 - **Mouse wheel** (without `Cmd`/`Ctrl`): one timepoint per notch. On images
   that are not time series it scrolls the view.
 
@@ -131,7 +131,7 @@ measurement tabs.
 
 - Hold `Cmd` (Windows `Ctrl`) and drag up to zoom in around the point you
   pressed, down to zoom out. The wheel does not zoom. The speed is
-  **확대/축소 드래그** (Zoom drag) in **파일 › 설정…** (default 0.6).
+  **확대/축소 드래그** (Zoom drag) in **Preferences** (default 0.6).
 - `]` zooms in, `[` zooms out (around the view centre, 1.25× per press).
 - **영역 확대** (Zoom to area, magnifier icon at the top right of the preview): press it and drag a rectangle; `Shift`+drag
   does the same without the button.
