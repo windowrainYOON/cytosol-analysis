@@ -227,23 +227,27 @@ def stylesheet(scheme: str | None = None, glass: bool | None = None) -> str:
     accent = c('blue')
     line = tint('label', 0.12)  # hig-glass-line
     region = lambda r: _qrgba(theme.region_color(r, s, glass))  # noqa: E731
+    edge = tint('label', 0.07 if s == 'light' else 0.10)
     if glass:  # the regions are see-through over the window's glass
         surfaces = """
-QMainWindow { background: transparent; }
+QMainWindow, QSplitter, QStatusBar { background: transparent; }
 """
     else:
         surfaces = ''
     return f"""
-/* ---- surfaces: three regions (RegionLayout) told apart by tone and the
-   sidebar's shade, no line, border or radius of their own ---- */
+/* ---- surfaces: the sidebar is the window's own layer; canvas and
+   inspector float on it as rounded boxes with a hairline edge (v0.58) ---- */
 QMainWindow, QDialog {{ background: {c('background-secondary')}; }}
+QMainWindow, QMainWindow > QSplitter {{ background: {region('sidebar')}; }}
 QWidget#hig_sidebar {{ background: {region('sidebar')}; border: none; }}
-QWidget#hig_content {{ background: {region('canvas')}; border: none; }}
-QWidget#hig_inspector {{ background: {region('inspector')}; border: none; }}
+QWidget#hig_content {{ background: {region('canvas')}; border-radius: {theme.BOX_RADIUS}px;
+    border: 1px solid {edge}; }}
+QWidget#hig_inspector {{ background: {region('inspector')}; border-radius: {theme.BOX_RADIUS}px;
+    border: 1px solid {edge}; }}
 QScrollArea, QScrollArea > QWidget > QWidget#qt_scrollarea_viewport,
 QScrollArea > QWidget#qt_scrollarea_viewport {{ background: transparent; border: none; }}
 QSplitter::handle {{ background: transparent; }}
-QStatusBar {{ background: {region('canvas')}; color: {c('label-secondary')}; }}
+QStatusBar {{ background: {region('sidebar')}; color: {c('label-secondary')}; }}
 QStatusBar QLabel {{ color: {c('label-secondary')}; }}
 QStatusBar::item {{ border: none; }}
 

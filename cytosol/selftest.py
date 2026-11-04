@@ -276,7 +276,9 @@ def run(out_dir) -> int:
                 raise AssertionError('hint labels not label-secondary')
             red = theme.color('red').name()
             danger = [b for b in win.findChildren(QPushButton) if b.property('hig_destructive')]
-            if len(danger) < 2 or any(
+            from PySide6.QtGui import QAction as _QA
+            danger_acts = [a for a in win.findChildren(_QA) if a.property('hig_destructive')]
+            if not danger_acts or any(  # (no destructive push button left since the Crop tab went)
                     b.palette().color(QPalette.ColorRole.ButtonText).name() != red for b in danger):
                 raise AssertionError(f'destructive buttons: {[b.text() for b in danger]}')
             # 세포질 ROI editing: icon buttons only, the text in the tool tip
@@ -335,20 +337,65 @@ def run(out_dir) -> int:
             # 자동 / 수동 modes: a switch, only the chosen inputs shown
             win.show_tab('particle_tab')
             pp = win.particle_panel
-            pp._method_auto.setChecked(False)
+            pp.method_combo.setCurrentIndex(1)
             app.processEvents()
             if not pp.thr_manual.isChecked() or pp.spot_k.isVisibleTo(pp) \
                     or not pp.thr_spin.isVisibleTo(pp):
                 raise AssertionError('particle 수동: only the threshold row should show')
-            pp._method_auto.setChecked(True)
+            pp.method_combo.setCurrentIndex(0)
             app.processEvents()
             if pp.thr_spin.isVisibleTo(pp) or not pp.spot_k.isVisibleTo(pp):
                 raise AssertionError('particle 자동: only the automatic rows should show')
+            # particle 검출 자동화: the diameter only behind 세부 설정
+            if pp.spot_size.isVisibleTo(pp) or not pp.details_btn.isVisibleTo(pp):
+                raise AssertionError('particle 검출 자동화: diameter shown / no 세부 설정')
+            pp.set_details_open(True)
+            if not pp.spot_size.isVisibleTo(pp) or not pp.spot_size.isEnabled():
+                raise AssertionError('particle 세부 설정: diameter not editable')
+            pp.spot_size.setValue(0.6)
+            if not pp.size_reset.isVisibleTo(pp):
+                raise AssertionError('particle diameter set by hand: no reset glyph')
+            pp.size_reset.click()
+            pp.set_details_open(False)
             rpn = win.roi_panel
-            rpn._mode_auto.setChecked(False)
+            rpn.mode_combo.setCurrentIndex(1)
             if not rpn.manual_mode():
-                raise AssertionError('ROI 검출 방식 switch does not pick the manual page')
-            rpn._mode_auto.setChecked(True)
+                raise AssertionError('ROI 검출 방식 pop-up does not pick the manual page')
+            rpn.mode_combo.setCurrentIndex(0)
+            # 검출 자동화 (v0.58): one switch; detail rows behind 세부 설정 (all
+            # editable there; an edited value is the user's own, the rest stay
+            # automatic); off shows every row, no per-value 자동 switch anywhere
+            win.show_tab('roi_tab')
+            app.processEvents()
+            shown = lambda w: w.isVisibleTo(rpn)  # noqa: E731
+            if not rpn.detect_auto.isChecked() or shown(rpn.smooth) or shown(rpn.thr_view) \
+                    or shown(rpn.fit_size) or shown(rpn.min_cell) or not shown(rpn.sat) \
+                    or not shown(rpn.edge_combo) or not shown(rpn.details_btn):
+                raise AssertionError('검출 자동화 on: wrong rows shown')
+            if not rpn.fit_size.isChecked() or rpn.edge_combo.currentData() != 'exclude':
+                raise AssertionError('검출 자동화 initial values (split/merge on, frame cells excluded)')
+            if any(b.isVisibleTo(rpn) for b in rpn._autos()):
+                raise AssertionError('a per-value 자동 switch is shown')
+            rpn.set_details_open(True)
+            if not shown(rpn.smooth) or not rpn.smooth.isEnabled() or not rpn.min_cell.isEnabled():
+                raise AssertionError('세부 설정: detail values hidden or locked')
+            rpn.smooth.setFocus()
+            rpn.smooth.setValue(1.3)
+            if rpn.val_auto[rpn.smooth].isChecked() or not rpn.val_auto[rpn.neck_max].isChecked() \
+                    or rpn.params().smooth_um != 1.3:
+                raise AssertionError('세부 설정: edited value not the user\'s own')
+            lab = rpn.mode_tabs.widget(0).layout().labelForField(rpn.smooth.parentWidget())
+            if lab is None or '수정됨' not in lab.text():
+                raise AssertionError('edited value not marked')
+            rpn.detect_auto.click()  # off: every value shown, the user's own
+            if rpn.detect_auto.isChecked() or not shown(rpn.smooth) or not shown(rpn.min_cell) \
+                    or shown(rpn.details_btn) or any(b.isChecked() for b in rpn._autos()):
+                raise AssertionError('검출 자동화 off: not every value shown / manual')
+            rpn.detect_auto.click()  # on again: every value automatic
+            if not all(b.isChecked() for b in rpn._autos()) or abs(rpn.smooth.value() - 0.8) > 1e-9 \
+                    or shown(rpn.smooth):
+                raise AssertionError('검출 자동화 on again: values not automatic / rows shown')
+            rpn.setFocus()
             win.right_tabs.setCurrentWidget(win.marker_tab)
             app.processEvents()
             lines = mp.sb.findChild(theme.RowLines)
@@ -391,19 +438,26 @@ def run(out_dir) -> int:
             if [split.widget(i) for i in range(3)] != [win.sidebar, win.canvas.parentWidget(),
                                                         win.inspector]:
                 raise AssertionError('regions are not sidebar | canvas | inspector')
+            # v0.58: the sidebar is the window's layer, canvas and inspector
+            # float on it as rounded boxes (inspector brightest, canvas a shade
+            # darker), no shade between sidebar and canvas
             for sch in ('light', 'dark'):
                 for gl in (False, True):
-                    cv = theme.region_color('canvas', sch, gl)
-                    for r in ('sidebar', 'inspector'):
-                        rc = theme.region_color(r, sch, gl)
-                        if rc.rgba() == cv.rgba() or rc.lightnessF() * rc.alphaF() \
-                                < cv.lightnessF() * cv.alphaF():
-                            raise AssertionError(f'{r} not raised over the canvas ({sch}, glass {gl})')
+                    lv = [theme.region_color(r, sch, gl) for r in ('sidebar', 'canvas', 'inspector')]
+                    lv = [c.lightnessF() * c.alphaF() for c in lv]
+                    if not lv[0] < lv[1] < lv[2]:
+                        raise AssertionError(f'region layers out of order ({sch}, glass {gl}): {lv}')
+                    if theme.region_shade(sch, gl):
+                        raise AssertionError('sidebar shade on the canvas')
             if 'separator' in sheet.split('/* ---- inset group')[0]:
                 raise AssertionError('a line between the regions')
-            if not isinstance(win.region_shade, hig_widgets.RegionShade) \
-                    or win.region_shade.width() != theme.SHADE_W:
-                raise AssertionError('no sidebar shade on the canvas')
+            for name in ('hig_content', 'hig_inspector'):
+                block = sheet.split(f'QWidget#{name} {{')[1].split('}')[0]
+                if f'border-radius: {theme.BOX_RADIUS}px' not in block:
+                    raise AssertionError(f'{name} is not a rounded box')
+            m = split.contentsMargins()
+            if (m.left(), m.top(), m.right(), m.bottom()) != (0,) + (theme.BOX_GAP,) * 3:
+                raise AssertionError('boxes do not float off the window edge')
             for lay in (win.sidebar.layout(), win.canvas.parentWidget().layout()):
                 m = lay.contentsMargins()
                 if m.left() != theme.REGION_MARGIN or m.top() != theme.REGION_MARGIN:
@@ -1046,6 +1100,40 @@ def run(out_dir) -> int:
         win.canvas.cropMoved.emit(0, 10 * w, -10 * h)
         if win.current.crops[0] != (w - 10, 0, w, 8):
             raise AssertionError(f'crop move not clamped: {win.current.crops[0]}')
+        # v0.58: no Crop tab; the Crop icon on the canvas shows / draws the
+        # regions and stays on; each region is a row under its image
+        if 'crop_tab' in win.tab_pages:
+            raise AssertionError('Crop tab still there')
+        if win.crop_btn.parentWidget() is not win.zoom_btn.parentWidget():
+            raise AssertionError('Crop icon is not on the canvas toolbar')
+        from .image_tree import CROP
+        row = win.items.index(win.current)
+        leaf = win.file_list.item(row)
+        kids = [leaf.child(i) for i in range(leaf.childCount())]
+        if len(kids) != len(win.current.crops) or any(c.data(0, CROP) != k for k, c in enumerate(kids)):
+            raise AssertionError('crop rows under the image')
+        win.crop_btn.setChecked(False)
+        win.update_preview()
+        if win.canvas._crops:
+            raise AssertionError('crop regions drawn while the Crop icon is off')
+        win.crop_btn.setChecked(True)
+        win.update_preview()
+        if win.canvas._crops != win.current.crops or not win.canvas.crop_mode:
+            raise AssertionError('Crop icon on: regions not shown / not drawing')
+        win._crop_drawn(20, 20, 30, 30)
+        if not win.crop_btn.isChecked() or leaf.childCount() != len(win.current.crops):
+            raise AssertionError('drawing a crop switched the icon off / no row')
+        win.file_list.setCurrentItem(leaf.child(0))
+        if win._selected_crop() != 0 or win.file_list.currentRow() != row:
+            raise AssertionError('crop row did not select the crop')
+        m = win.list_menu(leaf.child(0))
+        if not any('Crop 삭제' in a.text() for a in m.actions()):
+            raise AssertionError('crop row context menu')
+        win.delete_crop()
+        if leaf.childCount() != len(win.current.crops):
+            raise AssertionError('crop row not removed')
+        win.crop_btn.setChecked(False)
+        win.file_list.setCurrentRow(row)
         win.clear_crops()
         # rectangle zoom
         from PySide6.QtCore import QPoint, Qt
@@ -1120,10 +1208,10 @@ def run(out_dir) -> int:
             raise AssertionError('wheel back')
         # feature-menu tabs: open next to LUT / 이미지 정보 in menu order, close again
         win.hide_tab('profile_tab')
-        win.tool_actions['crop_tab'].setChecked(True)
+        win.tool_actions['roi_tab'].setChecked(True)
         win.tool_actions['coloc_tab'].setChecked(True)
         tabs = [win.right_tabs.tabText(i) for i in range(win.right_tabs.count())]
-        if tabs[:4] != ['LUT', '마커', '이미지 정보', 'Crop'] or 'Coloc 2' not in tabs \
+        if tabs[:4] != ['LUT', '마커', '이미지 정보', '세포질 ROI'] or 'Coloc 2' not in tabs \
                 or '라인 프로파일' in tabs or not win.tab_current('coloc_tab'):
             raise AssertionError(f'menu tabs: {tabs}')
         win.tool_actions['coloc_tab'].setChecked(False)
@@ -1166,13 +1254,13 @@ def run(out_dir) -> int:
                 win.all_luts_btn):
             raise AssertionError('batch LUT action is not at the top of the LUT tab')
         # a chip's × closes its feature tab (same as the View item)
-        win.show_tab('crop_tab', focus=False)
-        chip = next(c for c in win.right_tabs._chips() if c.text() == 'Crop')
+        win.show_tab('roi_tab', focus=False)
+        chip = next(c for c in win.right_tabs._chips() if c.text() == '세포질 ROI')
         chip.closeClicked.emit()
         app.processEvents()
-        if win.tab_open('crop_tab') or win.view_actions['crop_tab'].isChecked():
-            raise AssertionError('chip × did not close the Crop tab')
-        win.show_tab('crop_tab', focus=False)  # later checks expect it open
+        if win.tab_open('roi_tab') or win.view_actions['roi_tab'].isChecked():
+            raise AssertionError('chip × did not close the 세포질 ROI tab')
+        win.show_tab('roi_tab', focus=False)  # later checks expect it open
         # marker settings: save, change, load back (also through 불러오기)
         import json as _json
         win.markers.sb_len.setValue(7.5)
@@ -1238,7 +1326,7 @@ def run(out_dir) -> int:
                 or win.roi_panel.measure.channels_off:
             raise AssertionError('project measured channels')
         win.particle_panel.measure.set_channels_off(())
-        if not win.tab_open('crop_tab') or win.tab_open('coloc_tab'):
+        if not win.tab_open('roi_tab') or win.tab_open('coloc_tab'):
             raise AssertionError(f'project tabs {win.open_tabs()}')
         if len(win.worklog.entries) < n_log or not any(
                 e['action'] == 'selftest step' for e in win.worklog.entries):
@@ -1423,7 +1511,7 @@ def run(out_dir) -> int:
         if not info or not info[0].startswith(f'cell{l1:03d}') or 'µm²' not in info[0]:
             raise AssertionError(f'ROI hover label: {info}')
         rp.show_auto_values(own)
-        if not rp.sat_auto.isChecked() or rp.sat.value() <= 0 or rp.sat.isEnabled():
+        if not rp.sat_auto.isChecked() or rp.sat.value() <= 0 or not rp.sat.isEnabled():
             raise AssertionError('automatic saturation not shown in its field')
         auto_thr = rp._auto_thresholds(own)['cell']
         if abs(rp.thr['cell']['spin'].value() - auto_thr) > 0.01:
@@ -1454,7 +1542,7 @@ def run(out_dir) -> int:
             raise AssertionError('live preview not cleared when switched off')
         rp.size_auto.setChecked(True)
         rp.nuc_size_auto.setChecked(True)
-        if rp.min_cell.isEnabled() or not 0 < rp.min_cell.value() <= rp.max_cell.value():
+        if not 0 < rp.min_cell.value() <= rp.max_cell.value():
             raise AssertionError(f'size range estimate {rp.min_cell.value()}–{rp.max_cell.value()}')
         # 자동: each image gets its own range, shown in the fields
         from PySide6.QtWidgets import QMessageBox as _MB

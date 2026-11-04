@@ -42,10 +42,11 @@ entries. The setting applies to files added afterwards.
 ## Window layout
 
 The window has three panes: the image list (left), the preview (centre) and
-the tools (right: LUT, 마커, 이미지 정보 and the feature tabs). No line divides
-them; their tone does: the side panes are raised, lighter surfaces, the
-preview a recessed one, and the image list casts a soft shade on the
-preview's edge. Each region has its own inner padding (20 px). The capsule
+the tools (right: LUT, 마커, 이미지 정보 and the feature tabs), v0.58: the
+image list is the window's own, lowest layer; the preview and the tools float
+on it as two large rounded boxes (10 px from the window edge and from each
+other, a hairline edge, no shade). The preview box is a shade darker than the
+tools box. Each region has its own inner padding (20 px). The capsule
 buttons at the top of the tools pane switch tabs. A feature tab's **×** (or right-click › 탭 닫기)
 closes it.
 
@@ -148,20 +149,25 @@ and their colors and contrast set, in the
 ## Crop regions
 
 Crops are rectangular regions of an image that can be viewed, projected and
-exported on their own. Choose **Tool › Crop › Crop 탭 열기** (Open Crop tab) in the menu
-bar to get the **Crop** tab on the right.
+exported on their own. There is no Crop tab (v0.58): the **Crop** icon, first
+of the icons at the top right of the canvas, handles them.
 
-1. Press **Crop 추가 (드래그)** (Add crop, drag) and drag on the image.
-   `Shift`+drag draws a square. Repeat for more regions; each is numbered on
-   the image and listed in the tab.
-2. Drag inside an existing crop to move it.
-3. **선택한 Crop만 보기** (Show selected crop only) previews one region.
-4. **선택한 Crop 삭제…** / **모든 Crop 삭제…** (Delete selected / all crops,
-   red text below a separator): deleted after the confirmation alert (its
-   default button is **취소**, Cancel).
-5. **같은 크기 이미지에 복사** (Copy to images of the same size): copies this
-   image's crops to every other image with the same size; move them per
-   image afterwards by dragging.
+1. Switch the **Crop** icon on (blue): the image's crop regions show on the
+   canvas, and dragging outside them draws a new one (`Shift`+drag: a
+   square). The icon stays on after drawing, so you can keep drawing. With
+   the icon off, crop regions are not drawn on the canvas.
+2. While the icon is on, drag inside a region to move it.
+3. Each region is listed in the left sidebar under its image, e.g.
+   **Crop 1 77×77**. Picking a row selects that crop (yellow on the canvas);
+   the triangle before the image name folds the rows away.
+4. Delete: the trash glyph at the end of the row, the `Delete` key, or
+   right-click › **Crop 삭제…** (Delete crop). The context menu and **Tool ›
+   Crop** also have **이 이미지의 Crop 모두 삭제…** (Delete all crops of this
+   image, red). The confirmation alert's default button is **취소** (Cancel).
+5. **선택한 Crop만 보기** (Show selected crop only; context menu, **Tool ›
+   Crop**) previews one region. **같은 크기 이미지에 Crop 복사** (Copy crops to
+   images of the same size) copies this image's crops to every other image
+   with the same size; move them per image afterwards by dragging.
 6. Saving: image exports write every crop separately (`<name>_crop1_*`) and
    the regions themselves as ImageJ rectangles, `<name>_crops.zip`.
    **Crop › Crop 영역 ROI 저장** (Save crop ROIs) saves only the regions.

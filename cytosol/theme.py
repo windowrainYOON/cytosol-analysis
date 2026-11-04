@@ -61,6 +61,7 @@ TOKENS = {
         'red': '#ff383c', 'orange': '#ff8d28', 'green': '#34c759', 'blue': '#0088ff',
         'gray': '#8e8e93', 'gray-3': '#c7c7cc', 'gray-5': '#e5e5ea',
         'background': '#ffffff', 'background-secondary': '#f2f2f7',
+        'region-base': '#e3e3e8', 'region-canvas': '#f2f2f7', 'region-box': '#ffffff',
         'background-tertiary': '#ffffff',
         'label': '#000000', 'label-secondary': '#3c3c4399', 'label-tertiary': '#3c3c434d',
         'placeholder': '#3c3c434d', 'separator': '#3c3c434a', 'separator-opaque': '#c6c6c8',
@@ -76,6 +77,7 @@ TOKENS = {
         'red': '#ff4245', 'orange': '#ff9230', 'green': '#30d158', 'blue': '#0091ff',
         'gray': '#8e8e93', 'gray-3': '#48484a', 'gray-5': '#2c2c2e',
         'background': '#000000', 'background-secondary': '#1c1c1e',
+        'region-base': '#0e0e10', 'region-canvas': '#18181b', 'region-box': '#1f1f22',
         'background-tertiary': '#2c2c2e',
         'label': '#ffffff', 'label-secondary': '#ebebf599', 'label-tertiary': '#ebebf54d',
         'placeholder': '#ebebf54d', 'separator': '#54545899', 'separator-opaque': '#38383a',
@@ -149,27 +151,37 @@ def scheme() -> str:
     return 'light'
 
 
-# The three regions of the window (Sidebar | Canvas | Inspector), design
-# system components/RegionLayout (owner request 2026-11-04): separated by
-# TONE and DEPTH, never by a line.  Sidebar and inspector are raised
-# surfaces, the canvas is the recessed one (never the brightest); the sidebar
-# casts one soft shade onto the canvas' leading edge.  Each region pads its
-# content with the desktop margin (20).
+# The three regions of the window (Sidebar | Canvas | Inspector), owner
+# request 2026-11-04 (v0.58, after the mockups): the sidebar is the lowest
+# layer, the window's own surface (the canvas lies on it, no shade between);
+# canvas and inspector float on it as two large rounded boxes (radius
+# BOX_RADIUS, a hairline edge, BOX_GAP around them).  The canvas box is a
+# shade darker than the inspector box.  Each region pads its content with
+# the desktop margin (20).
 REGION_MARGIN = 20
 SIDEBAR_MARGINS = (REGION_MARGIN,) * 4
 INSPECTOR_MARGINS = (REGION_MARGIN,) * 4
 CONTENT_MARGINS = (REGION_MARGIN,) * 4
-SHADE_W = 96  # width of the sidebar's shade on the canvas
+SHADE_W = 96  # width of the (unused since v0.58) sidebar shade on the canvas
 REGION_GAP = 24  # gap-section: between a region's header and its content
+BOX_RADIUS = 16  # the floating canvas / inspector boxes
+BOX_GAP = 10  # space around them (window edge, between the boxes)
 # token name, or (white, alpha) for the see-through (glass) variant
 _REGIONS = {
-    ('light', False): {'sidebar': 'background', 'canvas': 'background-secondary',
-                       'inspector': 'background', 'shade': 0.07},
-    ('dark', False): {'sidebar': 'background-secondary', 'canvas': 'background',
-                      'inspector': 'background-secondary', 'shade': 0.0},
-    ('light', True): {'sidebar': 0.44, 'canvas': 0.26, 'inspector': 0.62, 'shade': 0.11},
-    ('dark', True): {'sidebar': 0.14, 'canvas': 0.05, 'inspector': 0.20, 'shade': 0.30},
+    ('light', False): {'sidebar': 'region-base', 'canvas': 'region-canvas',
+                       'inspector': 'region-box', 'shade': 0.0},
+    ('dark', False): {'sidebar': 'region-base', 'canvas': 'region-canvas',
+                      'inspector': 'region-box', 'shade': 0.0},
+    ('light', True): {'sidebar': 0.10, 'canvas': 0.55, 'inspector': 0.80, 'shade': 0.0},
+    ('dark', True): {'sidebar': 0.02, 'canvas': 0.06, 'inspector': 0.12, 'shade': 0.0},
 }
+
+
+def box_edge() -> QColor:
+    """Hairline around the floating boxes."""
+    c = QColor(0, 0, 0) if scheme() == 'light' else QColor(255, 255, 255)
+    c.setAlphaF(0.07 if scheme() == 'light' else 0.08)
+    return c
 
 
 def _glass_on() -> bool:
@@ -356,6 +368,8 @@ def chip(box: QWidget) -> QWidget:
 
 
 def is_auto_choice(box) -> bool:
+    if box.property('hig_auto_choice'):  # a switch titled by its row (검출 자동화)
+        return True
     t = box.text().strip()
     return t == '자동' or t.startswith('자동 ') or t.startswith('자동(')
 

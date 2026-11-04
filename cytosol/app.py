@@ -686,6 +686,11 @@ class Canvas(QGraphicsView):
             self.zoom_item.show()
             return
         if self.crop_mode and btn == Qt.MouseButton.LeftButton:
+            k = self._crop_at(pos)
+            if k is not None and not self.crop_size:  # inside a region: move it
+                self._crop_drag = [k, pos, False]
+                self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
+                return
             self._origin = pos
             self.rect_item.setRect(self._fixed_rect(pos) if self.crop_size
                                    else QRectF(self._origin, self._origin))
@@ -808,12 +813,13 @@ class Canvas(QGraphicsView):
             r.setPos(dx, dy)
             t.setPos(origin + QPointF(dx, dy))
             return
-        if (not event.buttons() and not self._drawing() and (self._crops or self._frap)
-                and self._pan_from is None):
+        if (not event.buttons() and (not self._drawing() or (self.crop_mode and not self.crop_size))
+                and (self._crops or self._frap) and self._pan_from is None):
             p = self.mapToScene(event.position().toPoint())
             over = (self._crops and self._crop_at(p) is not None) or (
                 self._frap and self._frap_at(p) is not None)
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor if over
+                                      else Qt.CursorShape.CrossCursor if self.crop_mode
                                       else Qt.CursorShape.OpenHandCursor)
         if self._pan_from is not None:
             d = event.position() - self._pan_from
@@ -1289,44 +1295,24 @@ class MainWindow(QMainWindow):
         left_holder = left
         self.sidebar = left
 
-        # crop regions of the current image (Crop menu > Crop 탭)
-        self.crop_list = QListWidget()
-        self.crop_list.setMinimumHeight(160)
-        self.crop_list.currentRowChanged.connect(
-            lambda _: self.update_preview(refit=self.show_crop_btn.isChecked()))
-        self.crop_btn = QPushButton('Crop 추가 (드래그)')
-        self.crop_btn.setCheckable(True)
-        self.crop_btn.setToolTip('누른 뒤 이미지 위에서 드래그해 Crop 영역을 그립니다. '
-                                 'Shift + 드래그: 정사각형.')
-        del_crop = theme.destructive(QPushButton('선택한 Crop 삭제…'))
-        del_crop.clicked.connect(lambda: self._confirm(
-            'Crop 삭제', '선택한 Crop 영역을 삭제할까요?', '삭제', self.delete_crop))
-        clear_crop = theme.destructive(QPushButton('모든 Crop 삭제…'))
-        clear_crop.clicked.connect(lambda: self._confirm(
-            'Crop 삭제', '이 이미지의 Crop 영역을 모두 삭제할까요?', '모두 삭제', self.clear_crops))
-        crop_all = QPushButton('같은 크기 이미지에 복사')
-        crop_all.setToolTip('이 이미지의 crop 영역들을 크기가 같은 다른 이미지에 복사.\n'
-                            '복사한 뒤 각 이미지에서 영역 안을 드래그하면 위치를 옮길 수 있습니다.')
-        crop_all.clicked.connect(self.crop_to_all)
+        # crop regions (owner request 2026-11-04, v0.58): no Crop tab; the
+        # Crop icon on the canvas toolbar switches drawing / moving and showing
+        # them, the regions are rows under their image in the sidebar
+        self._crop_sel = None  # index of the selected crop of the current image
+        self.crop_btn = hig_widgets.IconButton(
+            'crop', 'Crop\n켜면 Crop 영역을 보여 주고, 영역 밖을 드래그하면 새 영역을 그리고 '
+            '영역 안을 드래그하면 옮깁니다 (Shift + 드래그: 정사각형).\n'
+            '끄면 Crop 영역을 캔버스에 그리지 않습니다. 영역은 사이드바의 이미지 아래에 있습니다.',
+            checkable=True)
+        self.crop_btn.toggled.connect(self._crop_mode)
+        # '선택한 Crop만 보기': a check item of the Crop menus (state saved with the window)
         self.show_crop_btn = QCheckBox('선택한 Crop만 보기')
         self.show_crop_btn.toggled.connect(lambda _: self.update_preview(refit=True))
-        crop_page = QWidget()
-        cbl = QVBoxLayout(crop_page)
-        help_ = QLabel('Crop 영역은 내보낼 때 각각 따로 저장되고, Figure 칸의 영역으로도 고를 수 있습니다. '
-                       '영역 안을 드래그하면 옮겨집니다. 저장·불러오기: 메뉴 막대의 Crop.')
-        help_.setWordWrap(True)
-        theme.hint(help_)
-        cbl.addWidget(help_)
-        cbl.addWidget(self.crop_btn)
-        cbl.addWidget(crop_all)
-        cbl.addWidget(self.show_crop_btn)
-        cbl.addWidget(theme.separator())  # destructive actions set apart
-        row = QHBoxLayout()
-        row.addWidget(del_crop)
-        row.addWidget(clear_crop)
-        row.addStretch()
-        cbl.addLayout(row)
-        cbl.addWidget(self.crop_list, 1)  # last: no control on the bottom edge
+        self.show_crop_act = QAction('선택한 Crop만 보기', self, checkable=True)
+        self.show_crop_act.toggled.connect(self.show_crop_btn.setChecked)
+        self.show_crop_btn.toggled.connect(self.show_crop_act.setChecked)
+        self.file_list.cropPicked.connect(self._crop_row_picked)
+        self.file_list.cropRemoveClicked.connect(self._crop_row_remove)
 
         # center: canvas + view controls
         self.canvas = Canvas()
@@ -1351,7 +1337,6 @@ class MainWindow(QMainWindow):
         self._z_timer.setSingleShot(True)
         self._z_timer.setInterval(10)  # coalesce fast slider moves into one redraw
         self._z_timer.timeout.connect(self._z_changed)
-        self.crop_btn.toggled.connect(self.canvas.set_crop_mode)
         # line drawing is switched from the 라인 프로파일 tab (draw_btn mirrors this)
         self.line_btn = QPushButton('라인 프로파일 (선 그리기)')
         self.line_btn.setCheckable(True)
@@ -1397,6 +1382,7 @@ class MainWindow(QMainWindow):
         cap = QHBoxLayout(capsule)
         cap.setContentsMargins(3, 3, 3, 3)
         cap.setSpacing(2)
+        cap.addWidget(self.crop_btn)
         cap.addWidget(self.zoom_btn)
         cap.addWidget(fit_btn)
         bar1.addWidget(capsule)
@@ -1550,7 +1536,6 @@ class MainWindow(QMainWindow):
             right.addTab(page, title)
         # feature tabs, opened from each feature's menu (in this order)
         self.tab_pages = {
-            'crop_tab': (crop_page, 'Crop'),
             'roi_tab': (scrolled(self.roi_panel), '세포질 ROI'),
             'particle_tab': (scrolled(self.particle_panel), '입자 ROI'),
             'intensity_tab': (scrolled(self.intensity_panel), '강도 측정'),
@@ -1563,6 +1548,8 @@ class MainWindow(QMainWindow):
         self.line_btn.toggled.connect(self._line_mode)
         self.profile_panel.draw_btn.toggled.connect(self.line_btn.setChecked)
         self.crop_btn.toggled.connect(lambda on: on and self.line_btn.setChecked(False))
+        self.crop_btn.toggled.connect(lambda on: on and self.zoom_btn.setChecked(False))
+        self.zoom_btn.toggled.connect(lambda on: on and self.crop_btn.setChecked(False))
         right.currentChanged.connect(self._tab_changed)
         self._last_shape = None
         for page in [lut_tab, marker_tab, info_tab] + [p for p, _t in self.tab_pages.values()]:
@@ -1699,10 +1686,21 @@ class MainWindow(QMainWindow):
         load_action(sub, '마커 설정 불러오기…', 'marker')
 
         sub = tools.addMenu('Crop')
-        tab_action(sub, 'crop_tab')
+        self.crop_draw_act = QAction('Crop 그리기 · 옮기기 (캔버스의 Crop 아이콘)', self, checkable=True)
+        self.crop_draw_act.toggled.connect(self.crop_btn.setChecked)
+        self.crop_btn.toggled.connect(self.crop_draw_act.setChecked)
+        sub.addAction(self.crop_draw_act)
+        sub.addAction(self.show_crop_act)
+        act(sub, '같은 크기 이미지에 Crop 복사', self.crop_to_all,
+            tip='이 이미지의 Crop 영역들을 크기가 같은 다른 이미지에 복사합니다. '
+                '복사한 뒤 각 이미지에서 영역 안을 드래그하면 옮겨집니다.')
+        sub.addSeparator()
         act(sub, 'Crop 영역 ROI 저장 (현재 이미지)…', self.save_crops_current)
         act(sub, 'Crop 영역 ROI 저장 (모든 이미지, 폴더)…', self.save_crops_all)
         load_action(sub, 'Crop 영역 ROI 불러오기…', 'crop')
+        sub.addSeparator()
+        a = act(sub, '이 이미지의 Crop 모두 삭제…', self.confirm_clear_crops)
+        a.setProperty('hig_destructive', True)
 
         sub = tools.addMenu('세포질 ROI')
         tab_action(sub, 'roi_tab')
@@ -2033,9 +2031,7 @@ class MainWindow(QMainWindow):
         if i >= 0:
             self.right_tabs.removeTab(i)
         self._check_tab_actions(name, False)
-        if name == 'crop_tab':
-            self.crop_btn.setChecked(False)
-        elif name == 'profile_tab':
+        if name == 'profile_tab':
             self.line_btn.setChecked(False)
         elif name == 'roi_tab':
             self.roi_panel.tool_btns['select'].setChecked(True)
@@ -2170,6 +2166,7 @@ class MainWindow(QMainWindow):
             self.add_files(files, pair=True, explicit=True)
         for p in presets:
             self._load_preset_file(p)
+        self.file_list.rebuild(self.items)  # crop rows of every image
         self._refresh_crop_list(select=0)
         if self.current is not None:
             self.update_preview()
@@ -2962,8 +2959,21 @@ class MainWindow(QMainWindow):
         """Context menu of the image list: group actions only for a multiple
         selection (or a group folder), the destructive remove last, set apart."""
         m = QMenu(self)
+        from .image_tree import CROP, GROUP  # noqa: PLC0415
+
+        if item is not None and item.data(0, CROP) is not None:  # a crop row
+            m.addAction(self.show_crop_act)
+            m.addAction('같은 크기 이미지에 Crop 복사', self.crop_to_all)
+            m.addSeparator()
+            act = m.addAction('Crop 삭제…', lambda: self._confirm(
+                'Crop 삭제', f'Crop {(self._crop_sel or 0) + 1}을 삭제할까요?', '삭제', self.delete_crop))
+            act.setProperty('hig_destructive', True)
+            act.setIcon(hig_widgets.icon('trash', 16, 'red'))
+            act = m.addAction('이 이미지의 Crop 모두 삭제…', self.confirm_clear_crops)
+            act.setProperty('hig_destructive', True)
+            return m
         rows = self.file_list.selected_rows()
-        folder = item is not None and item.data(0, Qt.ItemDataRole.UserRole) is None
+        folder = item is not None and item.data(0, GROUP) is not None
         if len(rows) >= 2 or folder:
             m.addAction('그룹 지정…', self.assign_group)
             if self.groups():
@@ -2989,6 +2999,10 @@ class MainWindow(QMainWindow):
             m.exec(self.file_list.viewport().mapToGlobal(pos))
 
     def confirm_remove_selected(self):
+        cc = self.file_list.current_crop()
+        if cc is not None and not self.file_list.selected_rows():  # Delete on a crop row
+            self._crop_row_remove(*cc)
+            return
         n = len(self.file_list.selected_rows()) or (1 if self.file_list.currentRow() >= 0 else 0)
         if not n:
             return
@@ -3513,10 +3527,10 @@ class MainWindow(QMainWindow):
 
     def _selected_crop(self):
         it = self.current
-        row = self.crop_list.currentRow()
-        if it is None or row < 0 or row >= len(it.crops):
+        k = self._crop_sel
+        if it is None or k is None or not 0 <= k < len(it.crops):
             return None
-        return row
+        return k
 
     def update_preview(self, refit=False, light=False):
         """Redraw the image; ``light`` (while T changes) skips the line profile."""
@@ -3540,7 +3554,8 @@ class MainWindow(QMainWindow):
         self.canvas.set_image(to_qimage(rgb), refit=refit and only)
         if refit and not only:
             self.canvas.fit()
-        self.canvas.show_crops([] if only else it.crops, sel)
+        # crop regions only while the Crop icon is on (owner request 2026-11-04)
+        self.canvas.show_crops(it.crops if self.crop_btn.isChecked() and not only else [], sel)
         self.roi_panel.draw_overlay(hidden=only)
         self._draw_profile_line()
         self.draw_frap()
@@ -3595,24 +3610,30 @@ class MainWindow(QMainWindow):
 
     # ---- crop -----------------------------------------------------------
 
-    def _refresh_crop_list(self, select=None):
+    def _refresh_crop_list(self, select=None, current=False):
+        """The current image's crop rows in the sidebar; `select` = the crop
+        selected now (None: the last one), `current` makes its row current."""
         it = self.current
-        self.crop_list.blockSignals(True)
-        self.crop_list.clear()
-        if it is not None:
-            for k, (x0, y0, x1, y1) in enumerate(it.crops, 1):
-                self.crop_list.addItem(f'{k}: x {x0}–{x1}, y {y0}–{y1}  ({x1 - x0}×{y1 - y0})')
-            if it.crops:
-                row = len(it.crops) - 1 if select is None else select
-                self.crop_list.setCurrentRow(max(0, min(row, len(it.crops) - 1)))
-        self.crop_list.blockSignals(False)
+        if it is None:
+            self._crop_sel = None
+            return
+        if it.crops:
+            k = len(it.crops) - 1 if select is None else select
+            self._crop_sel = max(0, min(k, len(it.crops) - 1))
+        else:
+            self._crop_sel = None
+        row = self.items.index(it) if it in self.items else -1
+        self.file_list.set_crops(row, it.crops, self._crop_sel if current else None)
+
+    def _crop_mode(self, on):
+        self.canvas.set_crop_mode(on)
+        self.update_preview()
 
     def _crop_drawn(self, x0, y0, x1, y1):
         if self.current is None:
             return
         region = self.current.add_crop(x0, y0, x1, y1)
-        self.crop_btn.setChecked(False)
-        self._refresh_crop_list()
+        self._refresh_crop_list(current=True)  # the Crop icon stays on
         if region:
             self.statusBar().showMessage(f'Crop {len(self.current.crops)} 추가')
         self.update_preview()
@@ -3622,20 +3643,40 @@ class MainWindow(QMainWindow):
         if it is None or k >= len(it.crops):
             return
         x0, y0, x1, y1 = it.move_crop(k, dx, dy)
-        self._refresh_crop_list(select=k)
+        self._refresh_crop_list(select=k, current=True)
         self.statusBar().showMessage(f'Crop {k + 1} 이동: x {x0}–{x1}, y {y0}–{y1}')
         self.update_preview()
 
     def _crop_picked(self, k):
-        if k != self.crop_list.currentRow():
-            self.crop_list.setCurrentRow(k)
+        """A click on a crop region on the canvas selects its row."""
+        if k != self._crop_sel:
+            self._refresh_crop_list(select=k, current=True)
+            self.update_preview(refit=self.show_crop_btn.isChecked())
+
+    def _crop_row_picked(self, row, k):
+        """A crop row in the sidebar: its image (already current) and the crop."""
+        if self.current is not self.items[row]:
+            return
+        self._crop_sel = k
+        self.update_preview(refit=self.show_crop_btn.isChecked())
+
+    def _crop_row_remove(self, row, k):
+        self.file_list.setCurrentRow(row)
+        self._crop_sel = k
+        self._confirm('Crop 삭제', f'Crop {k + 1}을 삭제할까요?', '삭제', self.delete_crop)
+
+    def confirm_clear_crops(self):
+        if self.current is None or not self.current.crops:
+            return
+        self._confirm('Crop 삭제', '이 이미지의 Crop 영역을 모두 삭제할까요?', '모두 삭제',
+                      self.clear_crops)
 
     def delete_crop(self):
         sel = self._selected_crop()
         if sel is None:
             return
         self.current.crops.pop(sel)
-        self._refresh_crop_list(select=sel)
+        self._refresh_crop_list(select=min(sel, len(self.current.crops) - 1))
         self.update_preview(refit=True)
 
     def clear_crops(self):
@@ -3654,6 +3695,7 @@ class MainWindow(QMainWindow):
             if other is not it and other.image.shape[-2:] == shape:
                 other.crops = list(it.crops)
                 n += 1
+        self.file_list.rebuild(self.items)
         self.statusBar().showMessage(f'Crop 영역 {len(it.crops)}개를 이미지 {n}개에 복사했습니다.')
 
     # ---- batch LUT ------------------------------------------------------

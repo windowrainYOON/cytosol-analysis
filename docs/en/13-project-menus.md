@@ -11,7 +11,7 @@ holds the saves and loads that belong to it (for example
 everything at once are in the **파일** menu.
 
 The right panel starts with only the **LUT** tab (with the marker settings
-fixed at its bottom) and the **이미지 정보** (Image info) tab. Ticking a feature in the **View** menu (**Crop**, **세포질 ROI**, **입자 ROI**,
+fixed at its bottom) and the **이미지 정보** (Image info) tab. Ticking a feature in the **View** menu (**세포질 ROI**, **입자 ROI**,
 **강도 측정**, **Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**) or **… 탭 열기**
 (Open … tab) in a feature menu adds that tab next to them; unticking it or
 pressing the tab's × hides it. **View › 모든 기능 탭 열기 / 닫기** (open / close
@@ -50,7 +50,7 @@ All of them are under the **Tool** menu.
 |---|---|
 | **LUT** | **이미지 내보내기 (TIFF / MP4)…** (Image export, `Ctrl+E`): an options window (current image only / all images, extent, composite / per-channel RGB, raw stack, time-series format), then the folder ([details](02-lut-export.md#image-export-tiff--mp4)). **LUT 프리셋 저장…** / **LUT 프리셋 불러오기…** (Save / load LUT preset, JSON; loading applies it to every image) |
 | **마커** | **마커 설정 저장…** / **마커 설정 불러오기…** (Save / load marker settings: scale bar, time stamp, bleach ROI display; JSON) |
-| **Crop** | **Crop 탭 열기**, **Crop 영역 ROI 저장** (current image / all images, `<name>_crops.zip`), **Crop 영역 ROI 불러오기…** |
+| **Crop** | **Crop 그리기 · 옮기기** (Draw / move crops, same as the canvas Crop icon), **선택한 Crop만 보기**, **같은 크기 이미지에 Crop 복사**, **Crop 영역 ROI 저장** (current image / all images, `<name>_crops.zip`), **Crop 영역 ROI 불러오기…**, **이 이미지의 Crop 모두 삭제…** |
 | **세포질 ROI** | **세포질 ROI 탭 열기**, which ROIs to save (cell, nucleus, cytosol), **ROI 저장** (current image / all images), **ROI 불러오기…**, measurement CSVs (current image / measure all and save) |
 | **입자 ROI** | **입자 ROI 탭 열기**, **입자 ROI 저장 (현재 이미지)…**, **입자 ROI 불러오기…**, measurement CSVs |
 | **강도 측정** | **강도 측정 탭 열기**, measurement CSVs (current / all images) |

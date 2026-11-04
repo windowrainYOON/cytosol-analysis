@@ -41,6 +41,9 @@ ICONS = {
     'zoom.region': ('<path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v3M4 15v4a1 1 0 0 0 1 1h3"/>'
                     '<circle cx="14.5" cy="14.5" r="3.6"/><path d="M17.2 17.2 20.5 20.5"/>'),
     'fit': '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><rect x="8" y="8" width="8" height="8" rx="1.5"/>',
+    'arrow.counterclockwise': '<path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 4v4.5h4.5"/>',
+    'crop': ('<path d="M7 3v12.5A1.5 1.5 0 0 0 8.5 17H21"/>'
+             '<path d="M3 7h12.5A1.5 1.5 0 0 1 17 8.5V21"/>'),
     'tray.and.arrow.down': ('<path d="M12 3.5V14M8.3 10.3 12 14l3.7-3.7"/><path d="M4.5 13.5v4A2.5 '
                             '2.5 0 0 0 7 20h10a2.5 2.5 0 0 0 2.5-2.5v-4"/>'),
     # HIG standard symbols (icons.json) used by the ROI editing tools
@@ -286,29 +289,27 @@ class ChipTabs(QTabWidget):
 
 
 class _PaneHandle(QSplitterHandle):
-    """Splitter handle between two regions.  No line (RegionLayout: the tone
-    difference is the border): it is painted as the canvas surface, and the
-    handle after the sidebar starts the sidebar's shade on the canvas."""
+    """Splitter handle between two regions: the gap between the floating
+    boxes, painted as the window's own layer (the sidebar's surface)."""
 
     def paintEvent(self, _ev):
         qp = QPainter(self)
-        qp.fillRect(self.rect(), theme.region_color('canvas'))
-        sp = self.splitter()
-        a = theme.region_shade()
-        if a > 0 and sp.indexOf(self) == 1:
-            qp.fillRect(self.rect(), theme.shade_gradient(0, a))
+        qp.fillRect(self.rect(), theme.region_color('sidebar'))
         qp.end()
 
 
 class PaneSplitter(QSplitter):
-    """The main window's Sidebar | Canvas | Inspector splitter (9 px grab
-    area per the SplitView component, nothing drawn but the surfaces)."""
+    """The main window's Sidebar | Canvas | Inspector splitter: the canvas
+    and inspector boxes float BOX_GAP from each other and the window edge."""
 
-    HANDLE_W = 6
+    HANDLE_W = theme.BOX_GAP
 
     def __init__(self, parent=None):
         super().__init__(Qt.Orientation.Horizontal, parent)
         self.setHandleWidth(self.HANDLE_W)
+        g = theme.BOX_GAP
+        self.setContentsMargins(0, g, g, g)
+        self.setAutoFillBackground(False)
 
     def createHandle(self):
         return _PaneHandle(self.orientation(), self)

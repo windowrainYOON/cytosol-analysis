@@ -21,16 +21,17 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.57.0)
+## Window structure (v0.58.0)
 
-- **Regions** (owner request 2026-11-04, v0.52; design system
-  `components/RegionLayout`): Sidebar | Canvas | Inspector are told apart by
-  tone and depth, **never a line**: raised side panes, recessed canvas
-  (`theme.region_color(role)`, opaque or the glass variant; the canvas is
-  never the brightest), one shade the sidebar casts on the canvas edge
-  (`hig_widgets.RegionShade` + the first `PaneSplitter` handle,
-  `theme.shade_gradient`), padding `theme.REGION_MARGIN` 20 in each region,
-  24 between the inspector chips and the page. Pages in a QScrollArea must
+- **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
+  v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
+  (`region-base`); canvas and inspector float on it as two large rounded
+  boxes (`theme.BOX_RADIUS` 16, hairline edge, `theme.BOX_GAP` 10 from the
+  window edge and between them = `PaneSplitter` margins / handle width, no
+  shade: `region_shade` 0). Inspector box `region-box` brightest, canvas box
+  `region-canvas` a shade darker (`theme.region_color(role)`, opaque or the
+  glass variant). Padding `theme.REGION_MARGIN` 20 in each region, 24
+  between the inspector chips and the page. Pages in a QScrollArea must
   not fill their background (`theme.unify` turns it off), or they paint a
   box over the region.
 - **Panes** (`MainWindow.main_split`): left and right keep their width
@@ -41,7 +42,9 @@ owner writes in Korean, so reply in Korean.
   rows wrap; use `FlowLayout` (or word-wrapping labels, `wrapped_check` for a
   long check box) in new panels instead of wide fixed rows.
 - **Left**: image list with group folders (`image_tree.py`, `groups.py`;
-  long names wrap, `WrapDelegate`) in the sidebar region (`MainWindow.sidebar`,
+  long names wrap, `WrapDelegate`) and each image's crop regions as child
+  rows (`image_tree.CROP`, `ImageTree.set_crops`, `cropPicked`,
+  `cropRemoveClicked`; v0.58) in the sidebar region (`MainWindow.sidebar`,
   `#hig_sidebar`). Only one button, 자동 그룹 (owner request 2026-11-03);
   the TCF HT + FL alignment option lives in Preferences since v0.57;
   files come in by 파일 › 불러오기 or drag and drop (the empty list paints a
@@ -50,8 +53,14 @@ owner writes in Korean, so reply in Korean.
   그룹 지정… / 그룹 이름 변경… / 그룹 해제 only for 2+ selected or a folder,
   the destructive remove last).
 - **Centre**: `Canvas` (QGraphicsView in `app.py`) with the Z slider (left),
-  T slider (below), toolbar icon buttons on one capsule (`zoom_btn` 영역 확대,
-  `fit_btn` 화면 맞춤; `hig_widgets.IconButton`).
+  T slider (below), toolbar icon buttons on one capsule (`crop_btn` Crop,
+  `zoom_btn` 영역 확대, `fit_btn` 화면 맞춤; `hig_widgets.IconButton`).
+  - Crop (owner request 2026-11-04, v0.58: no Crop tab): `crop_btn` on =
+    crops drawn on the canvas, drag outside a region draws one, inside moves
+    it (`Canvas.crop_mode`), stays on after drawing; off = crops not drawn.
+    The selected crop is `MainWindow._crop_sel` (sidebar row or canvas
+    click); '선택한 Crop만 보기' etc. are in Tool › Crop and the crop row's
+    context menu.
   - Zoom: `Cmd`/`Ctrl` + left-drag up/down (`ZOOM_DRAG_RATE` × sensitivity),
     `]` in / `[` out (`ZOOM_KEY_STEP`), `Shift`+drag rectangle zoom.
   - Mouse wheel (no modifier): moves T on time series (`MainWindow._wheel_t`),
@@ -62,10 +71,10 @@ owner writes in Korean, so reply in Korean.
   feature tab; pane = `MainWindow.inspector`): `LUT` (one scrolling page:
   일괄 적용 on top, 채널 표시, the channel LUTs; no inner scroll), `마커`
   (`marker_tab`) and `이미지 정보` are always present. The other tabs
-  live in `MainWindow.tab_pages` (crop_tab, roi_tab, particle_tab,
+  live in `MainWindow.tab_pages` (roi_tab, particle_tab,
   intensity_tab, coloc_tab, profile_tab, frap_tab, stack_tab) and are shown / hidden
   by the "… 탭 열기" check action in each feature's menu (`tool_actions`,
-  `show_tab`, `hide_tab`, `tab_open`, `tab_current`). Panels ask
+  `show_tab`, `hide_tab`, `tab_open`, `tab_current`; no Crop tab since v0.58). Panels ask
   `win.tab_current('<name>')` to know whether they are the visible tab
   (don't compare `right_tabs.currentIndex()` to fixed numbers).
 - **Menus** (`MainWindow._build_menus`): 파일, then Tool with the feature menus,
@@ -130,9 +139,22 @@ owner writes in Korean, so reply in Korean.
     dialog (`_options_dialog`). The Figure window keeps its own save buttons.
 - **세포질 ROI tab** (`roi_panel.py`): the **ROI 검출** box has sub-tabs
   **자동** (`segment_cells`) and **수동 (threshold)** (`threshold_cells`),
-  since v0.55 two pages of `mode_tabs` (QStackedWidget) chosen by the
-  검출 방식 자동 switch;
-  `manual_mode()` says which one detection uses. Shared below them: cell /
+  two pages of `mode_tabs` (`_ModePages`: QStackedWidget API, as tall as the
+  page shown) chosen by the **검출 방식** pop-up (`mode_combo`;
+  `_mode_auto` kept as hidden state); `manual_mode()` says which one
+  detection uses.
+  - **검출 자동화** (owner request 2026-11-04, v0.58; `detect_auto`, also in
+    the 입자 ROI tab): on = only the basic sensitivity (배경 포화값 + 합성
+    보기; particle k / threshold) and 프레임에 걸친 세포 (default 제외) are
+    shown, the details (thresholds, threshold preview, smoothing,
+    나누기·합치기 (on), 목 자르기 + 목 폭, size ranges, 경계 여백) are
+    behind **세부 설정…** (`set_details_open`, `_details`), editable there:
+    an edited value clears its hidden per-value auto box (`sat_auto`,
+    `thr[k]['auto']`, `size_auto`, `nuc_size_auto`, `val_auto`; user edit =
+    widget has focus, `_edited`) and shows '· 수정됨' + a reset glyph
+    (`_auto_field`, `_auto_ui`); the rest stay automatic. Off (clicked) =
+    every value manual and shown, from the automatic values; on again (clicked)
+    = all automatic. The per-value 자동 switches are gone (hidden state only). Shared below them: cell /
   nucleus size ranges (min–max with log sliders; `size_auto` (cells) and
   `nuc_size_auto` (nuclei), both on by default, estimate them per image:
   `_image_sizes`, cached in `_size_cache`, `_auto_sizes` keeps only the
@@ -154,8 +176,9 @@ owner writes in Korean, so reply in Korean.
     (at or above the threshold = ROI, below = discarded, nothing else) must
     always stay, whatever detection algorithms are added later; automatic
     modes must also accept user-set thresholds into their algorithm.
-  - Rule from the owner (2026-10-27): every automatic setting is switched
-    with its own **자동** checkbox, and its value field always shows the
+  - Rule from the owner (2026-10-27; for the ROI / particle detection
+    replaced 2026-11-04 by one **검출 자동화** switch, see above): every
+    automatic setting is switched with its own **자동** checkbox, and its value field always shows the
     value actually used (filled in even while automatic). Sizes and
     thresholds get sliders under their fields; live previews that cost
     detection time sit behind a checkbox.
@@ -234,6 +257,12 @@ per-widget style sheets.
 - Excluded (`measurement-plots.md`): matplotlib graphs, `graph.py`,
   `figure.py`, `render.py`, the image canvas: data colours, fonts and white
   backgrounds stay as they are.
+- Owner rule (2026-11-04): show an in-app mockup image first for every change
+  (patch a live window offscreen, `QT_SCALE_FACTOR=2`, save to
+  `/mnt/project-files/mockups/`), develop and build only after approval.
+- Switch knob (v0.58): a slightly wide capsule (`hig_style.switch`, 40 × 22,
+  knob 24 × 18). Rows that belong together (`theme.group_rows`) get no
+  hairline between them (`RowLines` across every settings form of a card).
 - Known gaps, kept on purpose: up to 10 right tabs when every feature tab is
   open (HIG: ≤ 6; only 2 open by default), the T slider and status bar
   under the preview, Fusion-drawn controls instead of native AppKit ones
@@ -406,4 +435,5 @@ not affected.
 | dev branch | 0.54.0 | Owner request: settings rows: titles left, controls at the row end (`theme.settings_rows`: field items aligned right, a trailing stretch of a [value][자동] row moved to the front), steppers' text left, hairlines between rows (`theme.RowLines` overlay per group, row gap 12 = 40 px rows); dialogs' forms the same |
 | dev branch | 0.55.0 | Owner request + design system (SettingsPane › 자동 / 수동, slider rows): slider values on one row (title – slider – plain number field), one row height per card, single fields 140 wide, every 자동 / 수동 choice a switch (ROI 검출 방식, particle 검출 방식, stack Z 간격, marker / figure / graph special-value autos), only the chosen mode's inputs shown; hairlines full card width |
 | dev branch | 0.56.0 | Owner request: FRAP 측정 tab in settings cards like the others: 측정 ROI card is a form (`_roi_form`: ■ ROI 위치 + 자동 switch, hint under it without a hairline (`theme.hint` sets `hig_hint`), Bleach / Control 지름, Control 자리, threshold slider row), rows that don't apply are hidden (Bleach 지름 for the file's region, 파일 영역 with one region, 추적 방식 / 추적 창 by the drift settings, empty hints); short Control 자리 names |
+| dev branch | 0.58.0 | Owner request, after mockups: canvas and inspector float as rounded boxes on the sidebar layer (no shade); wide-capsule switch knobs; no hairlines between grouped rows; **검출 자동화** in 세포질 ROI / 입자 ROI (one switch, detail values behind 세부 설정…, edited values marked · 수정됨 with reset, per-value 자동 switches gone, 검출 방식 a pop-up, split/merge on and frame cells 제외 by default); Crop tab removed: Crop icon on the canvas toolbar (draw / move / show while on), crops as rows under their image in the sidebar |
 | dev branch | 0.57.0 | Owner request: Preferences window (`PreferencesDialog`, app menu `⌘,`): TCF HT + FL alignment moved there from the sidebar, mouse sensitivities, 탭 설정 초기값 (save the window's tab settings as initial values / clear) and 마커 초기값 (marker cards incl. 자동 values), stored in QSettings and applied at start-up and 새 프로젝트; 핵 → 세포막 등거리 띠 moved from 강도 측정 to the bottom of the 세포질 ROI tab (`bands_panel.py`, menu items under Tool › 세포질 ROI, batch step tab, old projects' band settings migrated) |

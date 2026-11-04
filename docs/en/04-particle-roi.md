@@ -19,8 +19,14 @@ whenever the ROIs or settings change.
    - **세포 전체** (whole cell),
    - **이미지 전체 (세포 ROI 없이)** (whole image, no cell ROIs needed;
      preselected for images without cell ROIs).
-4. **검출 방식 … 자동** (detection method) switch: on = automatic spot
-   detection, off = manual threshold; only the chosen method's settings show.
+4. **검출 자동화** (automatic detection) switch and **검출 방식** (detection
+   method) pop-up (v0.58): **점 검출 (자동)** (spot detection) or **threshold**;
+   only the chosen method's settings show. With 검출 자동화 on (default) the
+   detail value **입자 지름** (particle diameter) uses its automatic value
+   (0.4 µm) and is hidden; **세부 설정…** (Details…) shows it, editable, and an
+   edited value gets **· 수정됨** and a reset glyph ↺. Off shows every
+   setting. **자동 민감도 (k)** and the threshold are the basic sensitivity
+   and always shown.
    - **자동 (점 검출)** (Automatic, spot detection): spot centres are found
      where the scale-normalised Hessian (high for round spots, not for cell
      or nucleus edges) and the background-subtracted intensity both exceed
@@ -28,10 +34,10 @@ whenever the ROIs or settings change.
      background-subtracted image down to 30 % of its own peak, so touching
      spots stay apart and dim spots next to bright ones are kept.
      - **자동 민감도 (k)** (Sensitivity, default 3): smaller finds dimmer spots.
-     - **자동 입자 지름** (Particle diameter, default 0.4 µm): typical size of
+     - **입자 지름** (Particle diameter, default 0.4 µm, under 세부 설정): typical size of
        the particles; sets the filter scale. Images without a pixel size are
        taken as 0.1 µm/px.
-   - **수동 threshold** (Manual threshold): pixels at or above **수동 threshold**
+   - **threshold**: pixels at or above the **수동 threshold** value
      (slider or the number field beside it) in every cell, split into 8-connected particles (like
      ImageJ Analyze Particles).
 5. **최소 입자 크기** (Minimum particle size, px): smaller particles are dropped.
@@ -127,7 +133,7 @@ described in [the measurement table](09-intensity.md#the-measurement-table).
 ## Tips
 
 - Raise **자동 민감도 (k)** if background noise is picked up; lower it if dim
-  particles are missed. Set **자동 입자 지름** close to the real particle size.
+  particles are missed. Set **입자 지름** (under 세부 설정) close to the real particle size.
 - Use **수동 threshold** when you need exactly the same intensity cut-off
   across images.
 - For condensate morphology, keep iso-contour shape on and report the level

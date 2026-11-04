@@ -24,13 +24,14 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QSizePolicy,
     QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from . import theme
+from . import hig_widgets, theme
 from .flow import FlowLayout
 from .intensity import (
     SHAPES,
@@ -51,6 +52,7 @@ from .lut import item_stem
 from .measure_box import MeasureBox, cells_key
 
 THR_STEPS = 1000
+SPOT_SIZE_AUTO = 0.4  # µm: the automatic particle diameter (검출 자동화)
 WITHIN = [('cyto', '세포질 (핵 제외)'), ('cell', '세포 전체'), ('image', '이미지 전체 (세포 ROI 없이)')]
 
 
@@ -117,7 +119,24 @@ class ParticlePanel(QWidget):
         self._method_auto.toggled.connect(
             lambda on: (self.thr_auto if on else self.thr_manual).setChecked(True))
         self.thr_auto.toggled.connect(self._method_sync)
-        pl.addRow('검출 방식', self._method_auto)
+        self._method_auto.hide()  # state only: the choice is the 검출 방식 pop-up
+        # 검출 자동화 (owner request 2026-11-04, like the 세포질 ROI tab): the
+        # detail values (particle diameter) behind 세부 설정 while it is on
+        self.detect_auto = theme.switch(QCheckBox(''))
+        self.detect_auto.setProperty('hig_auto_choice', True)
+        self.detect_auto.setChecked(True)
+        self.detect_auto.setToolTip('켜면 세부 값(입자 지름)을 자동 값으로 쓰고 숨깁니다. 세부 설정…에서 '
+                                    '고친 값만 직접 씁니다. 끄면 모든 값을 보여 줍니다.')
+        self.detect_auto.toggled.connect(lambda _: self._detail_rows())
+        self.detect_auto.clicked.connect(self._detect_auto_clicked)
+        self._details_open = False
+        self.method_combo = QComboBox()
+        self.method_combo.addItems(['점 검출 (자동)', 'threshold'])
+        self.method_combo.setToolTip(self.thr_auto.toolTip() + '\nthreshold: 이 값 이상인 영역이 입자입니다.')
+        self.method_combo.currentIndexChanged.connect(
+            lambda i: (self.thr_auto if i == 0 else self.thr_manual).setChecked(True))
+        pl.addRow('검출 자동화', self.detect_auto)
+        pl.addRow('검출 방식', self.method_combo)
         self._method_form = pl
         self.spot_k = QDoubleSpinBox()
         self.spot_k.setRange(1.0, 20.0)
@@ -131,11 +150,22 @@ class ParticlePanel(QWidget):
         self.spot_size.setRange(0.05, 20.0)
         self.spot_size.setSingleStep(0.05)
         self.spot_size.setDecimals(2)
-        self.spot_size.setValue(0.4)
+        self.spot_size.setValue(SPOT_SIZE_AUTO)
         self.spot_size.setSuffix(' µm')
         self.spot_size.setToolTip('찾을 입자의 대표 지름. 픽셀 크기 정보가 없는 이미지는 '
                                   '0.1 µm/px로 봅니다.')
-        pl.addRow('자동 입자 지름', self.spot_size)
+        self.size_reset = hig_widgets.IconButton('arrow.counterclockwise', '자동 값으로 되돌리기 (0.40 µm)')
+        self.size_reset.clicked.connect(lambda: self.spot_size.setValue(SPOT_SIZE_AUTO))
+        self._size_row = QWidget()
+        self._size_row.setProperty('hig_no_reflow', True)
+        srl = QHBoxLayout(self._size_row)
+        srl.setContentsMargins(0, 0, 0, 0)
+        srl.setSpacing(8)
+        srl.addWidget(self.size_reset)
+        srl.addStretch(1)
+        srl.addWidget(self.spot_size)
+        self.spot_size.valueChanged.connect(lambda _: self._detail_rows())
+        pl.addRow('입자 지름', self._size_row)
         self.thr_spin = QDoubleSpinBox()
         self.thr_spin.setRange(-1e9, 1e9)
         self.thr_spin.setDecimals(2)
@@ -145,12 +175,26 @@ class ParticlePanel(QWidget):
         self._thr_row = theme.slider_field(self.thr_slider, self.thr_spin)
         pl.addRow('수동 threshold', self._thr_row)
         # the method and the inputs it uses: one group, no lines inside (owner rule 2026-11-04)
-        theme.group_rows(self._method_auto, self.spot_k, self.spot_size, self.thr_spin)
+        theme.group_rows(self.method_combo, self.spot_k, self.spot_size, self.thr_spin)
         self.min_px = QSpinBox()
         self.min_px.setRange(1, 1000000)
         self.min_px.setSuffix(' px')
         self.min_px.setToolTip('이보다 작은 입자는 버립니다 (ImageJ Analyze Particles의 최소 크기).')
         pl.addRow('최소 입자 크기', self.min_px)
+        self.details_btn = QPushButton('세부 설정…')
+        self.details_btn.setToolTip('자동 값으로 쓰는 세부 값(입자 지름)을 보여 줍니다. 고친 값만 직접 씁니다.')
+        self.details_btn.clicked.connect(lambda: self.set_details_open(not self._details_open))
+        self.details_note = QLabel('고치지 않은 값은 자동 값을 씁니다')
+        theme.hint(self.details_note)
+        self._details_row = QWidget()
+        self._details_row.setProperty('hig_no_reflow', True)
+        drl = QHBoxLayout(self._details_row)
+        drl.setContentsMargins(0, 0, 0, 0)
+        drl.addWidget(self.details_note)
+        drl.addStretch(1)
+        drl.addWidget(self.details_btn)
+        self.details_btn.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        pl.addRow(self._details_row)
         self.show_particles = QCheckBox('이미지에 입자 경계 표시')
         self.show_particles.setToolTip('픽셀 ROI는 자홍색, 등강도선은 주황색으로 그립니다.')
         self.show_particles.setChecked(True)
@@ -458,13 +502,45 @@ class ParticlePanel(QWidget):
         self._method_auto.blockSignals(True)
         self._method_auto.setChecked(auto_on)
         self._method_auto.blockSignals(False)
+        self.method_combo.blockSignals(True)
+        self.method_combo.setCurrentIndex(0 if auto_on else 1)
+        self.method_combo.blockSignals(False)
         self._method_rows()
 
     def _method_rows(self):
         """Only the chosen method's inputs are shown (owner rule 2026-11-04)."""
+        self._detail_rows()
+
+    def _detect_auto_clicked(self, on):
+        if on:
+            self.spot_size.setValue(SPOT_SIZE_AUTO)
+        self._details_open = False
+        self._detail_rows()
+
+    def set_details_open(self, open_):
+        self._details_open = bool(open_)
+        self._detail_rows()
+
+    def _detail_rows(self):
+        """The chosen method's inputs; with 검출 자동화 on the particle
+        diameter only while 세부 설정 is open (a value set by hand shows the
+        reset glyph and '· 수정됨')."""
+        if not hasattr(self, '_details_row'):
+            return
         manual = self.thr_manual.isChecked()
-        theme.show_rows(self._method_form, (self._thr_row,), manual)
-        theme.show_rows(self._method_form, (self.spot_k, self.spot_size), not manual)
+        on = self.detect_auto.isChecked()
+        f = self._method_form
+        theme.show_rows(f, (self._thr_row,), manual)
+        theme.show_rows(f, (self.spot_k,), not manual)
+        theme.show_rows(f, (self._size_row,), not manual and (not on or self._details_open))
+        theme.show_rows(f, (self._details_row,), on and not manual)
+        self.details_btn.setText('세부 설정 숨기기' if self._details_open else '세부 설정…')
+        self.details_note.setVisible(on and self._details_open)
+        mine = on and abs(self.spot_size.value() - SPOT_SIZE_AUTO) > 1e-9
+        self.size_reset.setVisible(mine)
+        lab = f.labelForField(self._size_row)
+        if lab is not None:
+            lab.setText('입자 지름  · 수정됨' if mine else '입자 지름')
 
     def _manual_toggled(self, on):
         for w in (self.thr_spin, self.thr_slider):

@@ -20,20 +20,32 @@ Detection works on the current Z plane (or MIP) and timepoint.
 
 ## 2. ROI 검출 (Detect ROIs: automatic / manual)
 
-The **검출 방식 … 자동** (detection method, auto) switch at the top of the
-**ROI 검출** box picks **자동** (Automatic, on) or **수동 (threshold)**
-(Manual, off). Only the chosen method's settings are shown; the other's are
-hidden (their values are kept). The size ranges, frame handling and live
-preview are shared. A value with a slider (thresholds) is one row: name –
-slider – number field; the cell and nucleus sizes have **최소** (min) and
-**최대** (max) slider rows.
+The top of the **ROI 검출** box has the **검출 자동화** (automatic detection)
+switch and the **검출 방식** (detection method) pop-up (v0.58).
 
-Every automatic setting has its own **자동** switch. Even when it is on,
-the value field shows the value actually used; untick it to edit from there.
-At first every value is automatic, and picking an image (with the 세포질 ROI
-tab open) fills the fields with the values for that image (the size ranges
-are estimated in the background and filled in when done). Untick only the
-values you want to set yourself.
+- **검출 방식**: **자동 검출 (파이프라인)** (the automatic pipeline) or
+  **threshold만** (threshold only: at or above = ROI, below = discarded). Only
+  the chosen method's settings are shown; the other's are hidden (their
+  values are kept). The size ranges, frame handling and live preview are shared.
+- **검출 자동화** on (default): only the basic sensitivity, **배경 포화값**
+  (with the detector-input view), and **프레임에 걸친 세포** are shown; the
+  detail values (nucleus / cell threshold, threshold preview, smoothing,
+  fitting touching cells, neck cut and neck width, cell / nucleus size
+  ranges, inner border margin) are set per image automatically and hidden.
+  Fitting and the neck cut are on. **세부 설정…** (Details…) shows the detail
+  values in use, editable right there: a value you change becomes yours
+  (its title gets **· 수정됨** (edited) and a reset glyph ↺ that brings the
+  automatic value back); values you leave alone stay automatic.
+- **검출 자동화** off (manual): every setting is shown and set by you,
+  starting from the automatic values at the moment you switch it off.
+  Switching it on again makes every value automatic.
+
+There are no per-value **자동** switches any more. A value with a slider
+(thresholds) is one row: name – slider – number field; the cell and nucleus
+sizes have **최소** (min) and **최대** (max) rows. Picking an image (with the
+세포질 ROI tab open) fills the fields with the automatic values for that
+image (the size ranges are estimated in the background and filled in when
+done).
 
 ### 자동 (Automatic)
 
@@ -45,17 +57,17 @@ between them. Thresholds you set by hand go into this pipeline as they are.
 
 | Setting | Meaning |
 |---|---|
-| **배경 포화값** ☑ 자동 (Background saturation) | The background channel is shown as white from this value up. Auto = median of the smoothed channel (shown in the field). Untick and lower it until each cell is one solid blob. |
+| **배경 포화값** (Background saturation) | The background channel is shown as white from this value up. Auto = median of the smoothed channel (shown in the field). Lower it until each cell is one solid blob. |
 | **검출용 합성 이미지 보기 (배경 밝게 + 핵)** | Show exactly what the detector sees (bright background + nuclei). |
-| **핵 threshold** ☑ 자동 (Nucleus threshold) | Brighter than this in the lightly smoothed nucleus channel = nucleus. Auto = Otsu (shown); untick to set it with the box or slider. |
-| **세포 threshold** ☑ 자동 (Cell threshold) | Brighter than this in the background channel = cell; the gaps between cells must be darker. Keep it below the saturation value. |
+| **핵 threshold** (Nucleus threshold) | Brighter than this in the lightly smoothed nucleus channel = nucleus. Auto = Otsu (shown); change it with the box or slider under 세부 설정. |
+| **세포 threshold** (Cell threshold) | Brighter than this in the background channel = cell; the gaps between cells must be darker. Keep it below the saturation value. |
 | **threshold 영역 미리보기 (노랑: 세포, 파랑: 핵)** | Paint what passes each threshold (yellow: cell, blue: nucleus) on the image; follows the sliders live. |
-| **스무딩** ☑ 자동 (Smoothing) | Gaussian smoothing of the merged image. Auto = 0.8 µm. |
-| **붙은 세포를 크기 범위에 맞게 나누기 · 합치기** (Fit touching cells to the size range) | Regions larger than the **세포 크기** maximum are cut along the dark valleys between cells into the fewest pieces that fit the range (seeds: distance-map maxima, k-means centres where there are too few; a cell's nucleus stays whole in one piece). Pieces smaller than the minimum are merged with the neighbour across the weakest border, when the merged size fits better (their nuclei are joined). The nucleus size range is fitted the same way. Off by default. |
+| **스무딩** (Smoothing) | Gaussian smoothing of the merged image. Auto = 0.8 µm. |
+| **붙은 세포를 크기 범위에 맞게 나누기 · 합치기** (Fit touching cells to the size range) | Regions larger than the **세포 크기** maximum are cut along the dark valleys between cells into the fewest pieces that fit the range (seeds: distance-map maxima, k-means centres where there are too few; a cell's nucleus stays whole in one piece). Pieces smaller than the minimum are merged with the neighbour across the weakest border, when the merged size fits better (their nuclei are joined). The nucleus size range is fitted the same way. On by default (v0.58). |
 | (Nucleus outline, always) | Each nucleus seed gets its own LUT (local background → 0, that nucleus' bright end → 1) and its own threshold, the Otsu value of that window, so dim nuclei come out round and clean. Dim nuclei the image-wide threshold misses are used only when compact, dropping off sharply at their edge and at least half the size of the other nuclei (cytoplasmic stain is left out). A nucleus that grows too large (over 2.5 × the typical one) keeps the image-wide threshold's area. A manual **핵 threshold** sets the seeds. |
 | (Joining nucleus patches, always) | A dim or mottled nucleus crosses the threshold in patches. Patches less than 2 µm apart are first joined into one nucleus and its holes filled; otherwise each patch seeded a cell of its own, giving wedge-shaped cells around the nucleus (v0.31). |
 | (Splitting nuclei, always) | Touching nuclei are split at distance-map peaks, and the cut is kept only when the shape says two nuclei: an inward notch of the outline at both ends of the cut, each piece convex while the pair is not, a cut shorter than the pieces are wide, and centres far enough apart for their size. Otherwise the pieces are joined again, so kidney- or bean-shaped nuclei stay whole. |
-| **가는 목으로 붙은 세포 자르기**, **목 폭 ≤** ☑ 자동 (Cut cells joined by a thin neck, neck width) | For cells joined only at their tips into one ROI (usually because one cell's nucleus was missed). Rings of equal distance inside the cell are grown out from the nucleus; where the ring squeezes through a gap of at most the **neck width** into a part at least 2 × wider and at least the minimum cell size, the gap is a neck and the part is cut off along the darkest path of the signal across it. Without such a neck, the shortest line between two deep concave points of the outline is cut under the same conditions. Cut-off parts become new cells without a nucleus. On by default, neck width auto = 6 µm (detection takes about twice as long). |
+| **가는 목으로 붙은 세포 자르기**, **목 폭 ≤** (Cut cells joined by a thin neck, neck width) | For cells joined only at their tips into one ROI (usually because one cell's nucleus was missed). Rings of equal distance inside the cell are grown out from the nucleus; where the ring squeezes through a gap of at most the **neck width** into a part at least 2 × wider and at least the minimum cell size, the gap is a neck and the part is cut off along the darkest path of the signal across it. Without such a neck, the shortest line between two deep concave points of the outline is cut under the same conditions. Cut-off parts become new cells without a nucleus. On by default, neck width auto = 6 µm (detection takes about twice as long). |
 
 ### 수동 (threshold) (Manual)
 
@@ -77,11 +89,11 @@ The simplest method; it stays available whatever other algorithms are added.
 
 | Setting | Meaning |
 |---|---|
-| **세포 크기** min – max ☑ 자동 (Cell size) | Cells outside this range are dropped (with 자동 off it starts at 80 µm² – no limit). The sliders under the fields (log scale, 1 – 100 000 µm²) set them too; the maximum slider at its right end = **제한 없음** (no limit). |
-| **핵 크기** min – max ☑ 자동 (Nucleus size) | Nuclei outside this range are not used as nuclei (with 자동 off it starts at 15 µm² – no limit). |
-| The sizes' **☑ 자동** (Auto; cell and nucleus each) | On by default: each image gets its own size range. One detection without size limits runs on that image (cells on the frame left out); the range is the median cell area ÷ 4 to × 3 (nuclei ÷ 20 to × 3), widened (with 10 % slack) to the smallest – largest area left after setting outliers aside (debris, clumps; Tukey fences on log area, quartiles ± 1.5 IQR). One image holds only a few whole cells, so their smallest – largest alone is far too narrow; and a small nucleus (on the edge, dim) that is dropped hands its cell to a neighbour, so the nucleus minimum stays low. While on, the fields are locked and show the range used on the current image; the status bar lists the range of each image. |
-| **프레임에 걸친 세포** (Cells touching the frame) | **안쪽 경계로 자르기** (cut along an inner border, default), **제외** (drop) or **그대로 두기** (keep as is). |
-| **안쪽 경계 여백** ☑ 자동 (Inner border margin) | Distance of that inner border from the frame (auto = 1 µm). |
+| **세포 크기** min – max (Cell size) | Cells outside this range are dropped . The sliders under the fields (log scale, 1 – 100 000 µm²) set them too; the maximum slider at its right end = **제한 없음** (no limit). |
+| **핵 크기** min – max (Nucleus size) | Nuclei outside this range are not used as nuclei . |
+| The sizes' automatic values (cell and nucleus each) | Unless you change them, each image gets its own size range. One detection without size limits runs on that image (cells on the frame left out); the range is the median cell area ÷ 4 to × 3 (nuclei ÷ 20 to × 3), widened (with 10 % slack) to the smallest – largest area left after setting outliers aside (debris, clumps; Tukey fences on log area, quartiles ± 1.5 IQR). One image holds only a few whole cells, so their smallest – largest alone is far too narrow; and a small nucleus (on the edge, dim) that is dropped hands its cell to a neighbour, so the nucleus minimum stays low. The fields show the range used on the current image; the status bar lists the range of each image. |
+| **프레임에 걸친 세포** (Cells touching the frame) | **안쪽 경계로 자르기** (cut along an inner border), **제외** (drop; default since v0.58) or **그대로 두기** (keep as is). Shown even while 검출 자동화 is on. |
+| **안쪽 경계 여백** (Inner border margin) | Distance of that inner border from the frame (auto = 1 µm). |
 | **실시간 미리보기** (Live preview) | When on, every change of a threshold, size range, smoothing etc. reruns the detection on the current image in the background (about 1 s per image) and shows the result as dashed ROIs in place of the existing ones. **ROI 검출** then keeps exactly that result. Turn it off when it is too slow. Off by default. |
 
 Run it with **ROI 검출 (현재 이미지)** (Detect ROIs, current image) or

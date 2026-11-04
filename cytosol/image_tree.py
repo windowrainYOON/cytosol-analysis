@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 ROW = Qt.ItemDataRole.UserRole       # image row, on image items
 GROUP = Qt.ItemDataRole.UserRole + 1  # group name, on folder items
+CROP = Qt.ItemDataRole.UserRole + 2  # crop index, on crop items (under their image)
 
 
 PAD = 3  # px above / below the text of a row
@@ -103,7 +104,8 @@ class WrapDelegate(QStyledItemDelegate):
             painter.drawText(QRectF(r.left() + 2, y, r.width(), fm.lineSpacing()),
                              Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, line)
             y += fm.lineSpacing()
-        if index.data(ROW) is not None and (selected or option.state & QStyle.StateFlag.State_MouseOver):
+        removable = index.data(ROW) is not None or index.data(CROP) is not None
+        if removable and (selected or option.state & QStyle.StateFlag.State_MouseOver):
             from . import hig_widgets  # noqa: PLC0415
 
             token = 'on-accent' if active else 'label-secondary'
@@ -112,12 +114,16 @@ class WrapDelegate(QStyledItemDelegate):
 
 
 class ImageTree(QTreeWidget):
-    """Rows: images (by row), group folders.  A remove glyph sits at the end of
-    the hovered / selected image row (`removeClicked`); with no image the
-    viewport shows the drop target (empty state)."""
+    """Rows: images (by row), group folders, and each image's crop regions
+    under it (owner request 2026-11-04).  A remove glyph sits at the end of
+    the hovered / selected image or crop row (`removeClicked`,
+    `cropRemoveClicked`); with no image the viewport shows the drop target
+    (empty state)."""
 
     currentRowChanged = Signal(int)
     removeClicked = Signal(int)
+    cropPicked = Signal(int, int)  # image row, crop index
+    cropRemoveClicked = Signal(int, int)
     EMPTY_TITLE = '이미지를 여기로 끌어다 놓으세요'
     EMPTY_HINT = 'TCF · CZI · OIR · TIF 파일이나 폴더 · 파일 → 불러오기'
 
@@ -135,11 +141,21 @@ class ImageTree(QTreeWidget):
         self.header().setStretchLastSection(True)
         self._leaves: list[QTreeWidgetItem] = []
         self._collapsed: set[str] = set()
-        self.itemCollapsed.connect(lambda n: self._collapsed.add(n.data(0, GROUP)))
-        self.itemExpanded.connect(lambda n: self._collapsed.discard(n.data(0, GROUP)))
+        self._crops_collapsed: set[int] = set()  # id() of images whose crops are folded
+        self._ids: list[int] = []
+        self.itemCollapsed.connect(lambda n: self._folded(n, True))
+        self.itemExpanded.connect(lambda n: self._folded(n, False))
         self.currentItemChanged.connect(self._current_changed)
         self.setMouseTracking(True)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
+    def _folded(self, node, folded):
+        r = node.data(0, ROW)
+        if r is not None:
+            if 0 <= r < len(self._ids):
+                (self._crops_collapsed.add if folded else self._crops_collapsed.discard)(self._ids[r])
+            return
+        (self._collapsed.add if folded else self._collapsed.discard)(node.data(0, GROUP))
 
     def trash_rect(self, row_rect: QRect) -> QRect:
         x = self.viewport().width() - TRASH - 6
@@ -147,18 +163,21 @@ class ImageTree(QTreeWidget):
 
     def mousePressEvent(self, ev):
         it = self.itemAt(ev.position().toPoint())
-        if it is not None and it.data(0, ROW) is not None \
-                and ev.button() == Qt.MouseButton.LeftButton:
+        if it is not None and ev.button() == Qt.MouseButton.LeftButton \
+                and (it.data(0, ROW) is not None or it.data(0, CROP) is not None):
             r = self.trash_rect(self.visualItemRect(it)).adjusted(-3, -3, 3, 3)
             if r.contains(ev.position().toPoint()):
-                self.removeClicked.emit(it.data(0, ROW))
+                if it.data(0, CROP) is not None:
+                    self.cropRemoveClicked.emit(it.parent().data(0, ROW), it.data(0, CROP))
+                else:
+                    self.removeClicked.emit(it.data(0, ROW))
                 return
         super().mousePressEvent(ev)
 
     def drawBranches(self, painter, rect, index):
         # image rows have no disclosure triangle: draw nothing in their indent,
         # so the selection is one pill on the name (tahoe sidebar)
-        if index.data(ROW) is None:
+        if index.data(ROW) is None or self.model().hasChildren(index):
             super().drawBranches(painter, rect, index)
 
     def mouseMoveEvent(self, ev):
@@ -202,9 +221,60 @@ class ImageTree(QTreeWidget):
         if event.size().width() != event.oldSize().width():
             self.scheduleDelayedItemsLayout()  # row heights follow the new width
 
-    def _current_changed(self, item, _prev):
-        if item is not None and item.data(0, ROW) is not None:
-            self.currentRowChanged.emit(item.data(0, ROW))
+    def _current_changed(self, item, prev):
+        if item is None:
+            return
+        if item.data(0, CROP) is not None:  # a crop: its image, then the crop
+            row = item.parent().data(0, ROW)
+            was = self._row_of(prev)
+            if row != was:
+                self.currentRowChanged.emit(row)
+            self.cropPicked.emit(row, item.data(0, CROP))
+        elif item.data(0, ROW) is not None:
+            if item.data(0, ROW) != self._row_of(prev):
+                self.currentRowChanged.emit(item.data(0, ROW))
+
+    @staticmethod
+    def _row_of(item):
+        if item is None:
+            return None
+        if item.data(0, CROP) is not None:
+            return item.parent().data(0, ROW)
+        return item.data(0, ROW)
+
+    @staticmethod
+    def crop_text(k, region) -> str:
+        x0, y0, x1, y1 = region
+        return f'Crop {k + 1}   {x1 - x0}×{y1 - y0}'
+
+    def set_crops(self, row, crops, select=None):
+        """The crop rows under image `row`; `select` makes one the current row."""
+        if not 0 <= row < len(self._leaves):
+            return
+        leaf = self._leaves[row]
+        blocked = self.blockSignals(True)
+        cur_crop = self.current_crop()
+        leaf.takeChildren()
+        for k, region in enumerate(crops):
+            c = QTreeWidgetItem([self.crop_text(k, region)])
+            c.setData(0, CROP, k)
+            c.setToolTip(0, f'x {region[0]}–{region[2]}, y {region[1]}–{region[3]}')
+            leaf.addChild(c)
+        leaf.setExpanded(row < len(self._ids) and self._ids[row] not in self._crops_collapsed)
+        if select is not None and 0 <= select < leaf.childCount():
+            leaf.setExpanded(True)
+            self.setCurrentItem(leaf.child(select))
+        elif cur_crop is not None and cur_crop[0] == row:
+            k = min(cur_crop[1], leaf.childCount() - 1)
+            self.setCurrentItem(leaf.child(k) if k >= 0 else leaf)
+        self.blockSignals(blocked)
+
+    def current_crop(self):
+        """(image row, crop index) of the current crop row, else None."""
+        it = self.currentItem()
+        if it is not None and it.data(0, CROP) is not None:
+            return it.parent().data(0, ROW), it.data(0, CROP)
+        return None
 
     def rebuild(self, items):
         """Group folders in order of first appearance, then ungrouped images;
@@ -224,6 +294,7 @@ class ImageTree(QTreeWidget):
                 node.setFont(0, f)
                 self.addTopLevelItem(node)
                 folders[it.group] = node
+        self._ids = [id(it) for it in items]
         for row, it in enumerate(items):
             leaf = QTreeWidgetItem([it.label])
             leaf.setData(0, ROW, row)
@@ -232,6 +303,11 @@ class ImageTree(QTreeWidget):
             else:
                 self.addTopLevelItem(leaf)
             self._leaves.append(leaf)
+            for k, region in enumerate(getattr(it, 'crops', None) or []):
+                c = QTreeWidgetItem([self.crop_text(k, region)])
+                c.setData(0, CROP, k)
+                leaf.addChild(c)
+            leaf.setExpanded(id(it) not in self._crops_collapsed)
         for name, node in folders.items():
             node.setText(0, f'{name}  ({node.childCount()})')
             node.setExpanded(name not in self._collapsed)
@@ -251,8 +327,7 @@ class ImageTree(QTreeWidget):
         return self._leaves[row]
 
     def currentRow(self) -> int:
-        it = self.currentItem()
-        r = it.data(0, ROW) if it is not None else None
+        r = self._row_of(self.currentItem())
         return -1 if r is None else r
 
     def setCurrentRow(self, row):
@@ -267,6 +342,8 @@ class ImageTree(QTreeWidget):
         of its images."""
         rows = set()
         for it in self.selectedItems():
+            if it.data(0, CROP) is not None:
+                continue  # a crop row is not its image
             r = it.data(0, ROW)
             if r is not None:
                 rows.add(r)
@@ -277,6 +354,6 @@ class ImageTree(QTreeWidget):
     def selected_group(self) -> str:
         """Name of the selected (or current) group folder, else ''."""
         for it in self.selectedItems() or [self.currentItem()]:
-            if it is not None and it.data(0, ROW) is None:
+            if it is not None and it.data(0, GROUP) is not None:
                 return it.data(0, GROUP)
         return ''

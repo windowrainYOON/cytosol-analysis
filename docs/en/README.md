@@ -46,7 +46,7 @@ appears on screen, followed by its meaning in parentheses, e.g.
 | [Graph editor window](16-graph.md) | A tab's graph in its own window: chart type, x / y columns, colors, widths, fonts, axes, legend, text boxes; export of the graph and its data |
 | [Output files](12-output-files.md) | Every file the program writes, and folder loading |
 
-The Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, FRAP 측정 and 스택 tabs
+The 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, FRAP 측정 and 스택 tabs
 are opened from the menu of the same name under **Tool**, which also saves and loads that
 tab's results.
 
@@ -81,9 +81,11 @@ The screens follow the desktop rules of the Apple Human Interface Guidelines.
   (accent blue, secondary label, separator, fills).
 - macOS (tahoe) style: buttons, tab buttons and chips are capsules, fields
   are borderless fills (radius 8), and radii shrink inwards (card 12 → selected
-  row 10 → value 6). The window is three regions (image list, preview, tools)
-  set apart by tone, not lines, with the image list's soft shade on the
-  preview edge, each with its own inner padding (20 px). Only each tab's main action (e.g. **ROI 검출 (현재
+  row 10 → value 6). The window is three regions (image list, preview, tools):
+  the image list is the window's lowest layer, the preview and tools float on
+  it as rounded boxes (v0.58), each with its own inner padding (20 px). Switch
+  knobs are slightly wide capsules, and rows that belong together have no
+  hairline between them. Only each tab's main action (e.g. **ROI 검출 (현재
   이미지)**, **지금 측정**) is a filled blue button.
 - Selection controls follow their use: a **switch** only for a value's
   **자동 / 수동** (auto / manual) choice, a **check box** for one on / off

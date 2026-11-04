@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressDialog,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QStackedWidget,
     QTabWidget,
@@ -98,6 +99,56 @@ def guess_roles(item: ImageItem) -> dict:
                 break
     others = [i for i in range(len(item.channels)) if i != nuc]
     return {'nuc': nuc, 'bg': others[0] if others else 0}
+
+
+class _ModePages(QWidget):
+    """The 자동 / threshold만 pages, one shown at a time (QStackedWidget API).
+    Unlike a QStackedWidget it is as tall as the page shown, whose rows come
+    and go with 검출 자동화 and 세부 설정."""
+
+    currentChanged = Signal(int)
+
+    def __init__(self):
+        super().__init__()
+        self._pages = []
+        self._cur = -1
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+    def addWidget(self, page):
+        self._pages.append(page)
+        self.layout().addWidget(page)
+        if self._cur < 0:
+            self._cur = 0
+        page.setVisible(len(self._pages) - 1 == self._cur)
+        return len(self._pages) - 1
+
+    def count(self):
+        return len(self._pages)
+
+    def widget(self, i):
+        return self._pages[i] if 0 <= i < len(self._pages) else None
+
+    def currentIndex(self):
+        return self._cur
+
+    def currentWidget(self):
+        return self.widget(self._cur)
+
+    def indexOf(self, page):
+        return self._pages.index(page) if page in self._pages else -1
+
+    def setCurrentIndex(self, i):
+        if not 0 <= i < len(self._pages) or i == self._cur:
+            return
+        self._cur = i
+        for k, p in enumerate(self._pages):
+            p.setVisible(k == i)
+        self.currentChanged.emit(i)
+
+    def setCurrentWidget(self, page):
+        self.setCurrentIndex(self.indexOf(page))
 
 
 class RoiPanel(QWidget):
@@ -201,6 +252,7 @@ class RoiPanel(QWidget):
         self._size_jobs = set()  # keys being estimated in the background
         self.sizesDone.connect(self._sizes_finished)
         self.fit_size = QCheckBox('붙은 세포를 크기 범위에 맞게 나누기 · 합치기')
+        self.fit_size.setChecked(True)  # 검출 자동화: on (owner 2026-11-04)
         self.fit_size.setToolTip(
             '최대보다 큰 덩어리는 세포 사이 어두운 골을 따라 범위에 맞는 개수로 나누고, '
             '최소보다 작은 조각은 경계가 가장 약한 이웃과 합칩니다 (합친 크기가 범위에 더 맞을 때만). '
@@ -226,6 +278,7 @@ class RoiPanel(QWidget):
         self.edge_combo = QComboBox()
         for key, text in EDGE_LABELS:
             self.edge_combo.addItem(text, key)
+        self.edge_combo.setCurrentIndex(max(0, self.edge_combo.findData('exclude')))  # owner 2026-11-04
         self.edge_margin = QDoubleSpinBox()
         self.edge_margin.setRange(0.1, 100)
         self.edge_margin.setValue(RoiParams.edge_margin_um)
@@ -245,18 +298,27 @@ class RoiPanel(QWidget):
         # 자동 sub-tab: the full pipeline (manual thresholds feed into it)
         auto = QWidget()
         dl = QFormLayout(auto)
-        row = QHBoxLayout()
-        row.addWidget(self.sat, 1)  # [value][자동] like every other value row
-        row.addWidget(self.sat_auto)
-        dl.addRow('배경 포화값', row)
+        # 검출 자동화 (owner request 2026-11-04): one switch for the whole
+        # detection; the per-value 자동 check boxes stay as hidden state
+        # (projects, batch): on = the value is the automatic one.  Each value
+        # row has a reset glyph shown while the value is the user's own.
+        self._auto_rows = []  # (자동 state box, form, row holder, reset button, editors)
+        self._details = []  # (form, row widget): hidden while 검출 자동화 is on, closed
+        dl.addRow('배경 포화값', self._auto_field(dl, self.sat_auto, self.sat))
         dl.addRow(self.input_view)
-        for key, t in self.thr.items():  # title – slider – value – 자동
-            dl.addRow(t['label'], theme.slider_field(t['slider'], t['spin'], t['auto']))
+        for key, t in self.thr.items():  # title – slider – value
+            h = self._auto_field(dl, t['auto'], t['spin'], slider=t['slider'])
+            dl.addRow(t['label'], h)
+            self._details.append((dl, h))
         dl.addRow(self.thr_view)
-        dl.addRow('스무딩', self._with_auto(self.smooth))
+        h_smooth = self._auto_field(dl, self.val_auto[self.smooth], self.smooth)
+        dl.addRow('스무딩', h_smooth)
         dl.addRow(self.fit_size)
         dl.addRow(self.neck_cut)  # its width on a row of its own: the pane stays narrow
-        dl.addRow('목 폭 ≤', self._with_auto(self.neck_max))
+        h_neck = self._auto_field(dl, self.val_auto[self.neck_max], self.neck_max)
+        dl.addRow('목 폭 ≤', h_neck)
+        self._details += [(dl, self.thr_view), (dl, h_smooth), (dl, self.fit_size),
+                          (dl, self.neck_cut), (dl, h_neck)]
         # rows that belong together: no hairline between them (owner rule 2026-11-04)
         theme.group_rows(self.sat, self.input_view)
         theme.group_rows(*(t['spin'] for t in self.thr.values()), self.thr_view)
@@ -293,7 +355,7 @@ class RoiPanel(QWidget):
         # 자동 / 수동 (threshold) stay two separate pages (owner rule
         # 2026-10-27); the choice between them is a 자동 switch (2026-11-04)
         # and only the chosen page is shown
-        self.mode_tabs = QStackedWidget()  # page 0 자동, 1 수동 (threshold)
+        self.mode_tabs = _ModePages()  # page 0 자동, 1 수동 (threshold)
         self.mode_tabs.addWidget(auto)
         self.mode_tabs.addWidget(manual)
         self.mode_tabs.currentChanged.connect(self._mode_changed)
@@ -302,13 +364,31 @@ class RoiPanel(QWidget):
         self._mode_auto.setToolTip('켜면 자동 검출(전체 파이프라인), 끄면 수동 threshold '
                                    '(threshold 이상 = ROI, 아래 = 버림)입니다.')
         self._mode_auto.toggled.connect(lambda on: self.mode_tabs.setCurrentIndex(0 if on else 1))
+        self._mode_auto.hide()  # state only: the choice is the 검출 방식 pop-up
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(['자동 검출 (파이프라인)', 'threshold만'])
+        self.mode_combo.setToolTip('자동 검출: 전체 파이프라인 (threshold, 분할, 스무딩, 크기 범위).\n'
+                                   'threshold만: threshold 이상 = ROI, 아래 = 버림 (그 밖에는 아무것도 하지 않음).')
+        self.mode_combo.currentIndexChanged.connect(self.mode_tabs.setCurrentIndex)
         self.mode_tabs.currentChanged.connect(self._mode_page)
+        self.detect_auto = theme.switch(QCheckBox(''))
+        self.detect_auto.setProperty('hig_auto_choice', True)
+        self.detect_auto.setChecked(True)
+        self.detect_auto.setToolTip(
+            '켜면 검출의 세부 값(threshold, 스무딩, 목 폭, 크기 범위, 경계 여백)을 이미지마다 자동으로 '
+            '정하고 숨깁니다. 세부 설정…에서 값을 고치면 그 값만 직접 쓰고 나머지는 자동 값을 씁니다.\n'
+            '끄면 모든 값을 보여 주고 직접 정합니다 (처음 값 = 지금의 자동 값).')
+        self.detect_auto.toggled.connect(lambda _: self._detail_rows())
+        self.detect_auto.clicked.connect(self._detect_auto_clicked)
+        self._details_open = False
+        self._bulk = False  # set while values change together (no 'edited' marks)
         self._mode_page(0)
 
         det = QGroupBox('ROI 검출')
         top = QVBoxLayout(det)
         mf = QFormLayout()
-        mf.addRow('검출 방식', self._mode_auto)
+        mf.addRow('검출 자동화', self.detect_auto)
+        mf.addRow('검출 방식', self.mode_combo)
         top.addLayout(mf)
         top.addWidget(self.mode_tabs)
         dl = QFormLayout()
@@ -326,15 +406,33 @@ class RoiPanel(QWidget):
             self._size_sync(spin)
         for box, label, lo, hi in ((self.size_auto, '세포 크기', self.min_cell, self.max_cell),
                                    (self.nuc_size_auto, '핵 크기', self.min_nuc, self.max_nuc)):
-            dl.addRow(label, box)  # the range's 자동 switch, then min / max sliders
-            dl.addRow('  최소', theme.slider_field(self._size_sliders[lo], lo))
-            dl.addRow('  최대', theme.slider_field(self._size_sliders[hi], hi))
-            for w in (lo, hi):  # automatic: the fields only show the range in use
-                w.setEnabled(not box.isChecked())
-                self._size_sliders[w].setEnabled(not box.isChecked())
+            box.hide()  # state only (검출 자동화)
+            for w, end in ((lo, '최소'), (hi, '최대')):
+                h = self._auto_field(dl, box, w, slider=self._size_sliders[w], editors=(lo, hi))
+                dl.addRow(f'{label} {end}', h)
+                self._details.append((dl, h))
         dl.addRow('프레임에 걸친 세포', self.edge_combo)
-        dl.addRow('안쪽 경계 여백', self._with_auto(self.edge_margin))
+        h_edge = self._auto_field(dl, self.val_auto[self.edge_margin], self.edge_margin)
+        dl.addRow('안쪽 경계 여백', h_edge)
+        self._details.append((dl, h_edge))
         theme.group_rows(self.edge_combo, self.edge_margin)
+        # 세부 설정… : shows the automatic values (editable) while 검출 자동화 is on
+        self.details_btn = QPushButton('세부 설정…')
+        self.details_btn.setToolTip('자동으로 정한 세부 값(threshold, 스무딩, 목 폭, 크기 범위, 경계 여백)을 '
+                                    '보여 줍니다. 고친 값만 직접 쓰고, 고치지 않은 값은 자동 값을 씁니다.')
+        self.details_btn.clicked.connect(lambda: self.set_details_open(not self._details_open))
+        self.details_note = QLabel('고치지 않은 값은 자동 값을 씁니다')
+        theme.hint(self.details_note)
+        self._details_row = QWidget()
+        self._details_row.setProperty('hig_no_reflow', True)
+        drl = QHBoxLayout(self._details_row)
+        drl.setContentsMargins(0, 0, 0, 0)
+        drl.addWidget(self.details_note)
+        drl.addStretch(1)
+        drl.addWidget(self.details_btn)
+        self.details_btn.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        dl.addRow(self._details_row)
+        self._details_form = dl
         run_one = theme.prominent(QPushButton('ROI 검출 (현재 이미지)'))
         run_one.clicked.connect(self.detect_current)
         run_all = QPushButton('모든 이미지')
@@ -482,14 +580,118 @@ class RoiPanel(QWidget):
         win.canvas.cellShiftClicked.connect(self._canvas_shift_click)
         win.canvas.roi_edit_active = lambda: self.win.tab_current('roi_tab') and self.cells is not None
         win.canvas.lassoDrawn.connect(self._lasso)
+        self._detail_rows()  # 검출 자동화 on: detail rows behind 세부 설정
 
     # ---- helpers --------------------------------------------------------
 
-    def _with_auto(self, spin):
-        row = QHBoxLayout()
-        row.addWidget(spin, 1)
-        row.addWidget(self.val_auto[spin])
-        return row
+    def _auto_field(self, form, auto, field, slider=None, editors=None):
+        """A value row of 검출 자동화: [reset glyph][slider][field].  `auto`
+        (hidden) says the value is the automatic one; the user's own edit
+        clears it (the reset glyph brings the automatic value back)."""
+        auto.hide()
+        holder = QWidget()
+        holder.setProperty('hig_no_reflow', True)
+        lay = QHBoxLayout(holder)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+        reset = hig_widgets.IconButton('arrow.counterclockwise', '자동 값으로 되돌리기')
+        reset.setVisible(False)
+        reset.clicked.connect(lambda: auto.setChecked(True))
+        lay.addWidget(reset)
+        if slider is not None:
+            lay.addWidget(theme.slider_field(slider, field), 1)
+        else:
+            lay.addStretch(1)
+            lay.addWidget(field)
+        editors = tuple(editors or (field,))
+        watched = [field] + ([slider] if slider is not None else [])
+        for w in watched:
+            w.valueChanged.connect(lambda _, a=auto, w=w, e=editors: self._edited(a, w, e))
+        if not any(a is auto for a, *_ in self._auto_rows):
+            auto.toggled.connect(lambda _: self._auto_ui())
+        self._auto_rows.append((auto, form, holder, reset, watched))
+        return holder
+
+    def _edited(self, auto, w, editors):
+        """The user changed a value that was automatic: from now on it is
+        theirs (the other automatic values stay automatic)."""
+        if self._bulk or not auto.isChecked():
+            return
+        if not (w.hasFocus() or (isinstance(w, QSlider) and w.isSliderDown())):
+            return
+        keep = [(e, e.value()) for e in editors]
+        self._bulk = True
+        try:
+            auto.setChecked(False)
+            for e, v in keep:
+                e.setValue(v)
+        finally:
+            self._bulk = False
+        self._auto_ui()
+
+    def _autos(self):
+        seen = []
+        for a, *_ in self._auto_rows:
+            if a not in seen:
+                seen.append(a)
+        return seen
+
+    def _auto_ui(self):
+        """Every value stays editable; a value set by hand while 검출 자동화
+        is on shows its reset glyph and '· 수정됨' after its title."""
+        on = self.detect_auto.isChecked()
+        for auto, form, holder, reset, watched in self._auto_rows:
+            for w in watched:  # (no nucleus channel: no nucleus threshold)
+                w.setEnabled(auto.isEnabled())
+            mine = on and not auto.isChecked()
+            reset.setVisible(mine)
+            lab = form.labelForField(holder)
+            if lab is not None:
+                base = lab.property('hig_base_text') or lab.text()
+                lab.setProperty('hig_base_text', base)
+                lab.setText(f'{base}  · 수정됨' if mine else base)
+
+    def _detect_auto_clicked(self, on):
+        """The user switched 검출 자동화: on = every value automatic again
+        (split / merge and neck cut on, threshold preview off); off = every
+        value the user's own, starting from the automatic ones in use."""
+        self._bulk = True
+        try:
+            for a in self._autos():
+                a.setChecked(on)
+            if on:
+                self.fit_size.setChecked(True)
+                self.neck_cut.setChecked(RoiParams.neck_cut)
+                self.thr_view.setChecked(False)
+        finally:
+            self._bulk = False
+        self._details_open = False
+        self._auto_ui()
+        self._detail_rows()
+        self.live_changed()
+
+    def set_details_open(self, open_):
+        self._details_open = bool(open_)
+        self._detail_rows()
+
+    def _detail_rows(self):
+        """검출 자동화 on: the detail rows only while 세부 설정 is open; off:
+        every row, no 세부 설정 button."""
+        on = self.detect_auto.isChecked()
+        show = (not on) or self._details_open
+        for form, w in self._details:
+            form.setRowVisible(w, show)
+        self._details_form.setRowVisible(self._details_row, on)
+        self.details_btn.setText('세부 설정 숨기기' if self._details_open else '세부 설정…')
+        self.details_note.setVisible(on and self._details_open)
+        self._auto_ui()
+        page = self.mode_tabs.currentWidget()
+        if page is not None and page.layout() is not None:
+            page.layout().invalidate()
+        self.mode_tabs.updateGeometry()
+
+    def details_shown(self) -> bool:
+        return self._details_form.isRowVisible(self._details[0][1]) if self._details else True
 
     def _val_auto(self, spin, default, on):
         spin.setEnabled(not on)
@@ -544,15 +746,13 @@ class RoiPanel(QWidget):
     def _mode_page(self, index):
         """Only the chosen mode's page takes room; the switch follows the
         page (projects restore the page)."""
-        from PySide6.QtWidgets import QSizePolicy  # noqa: PLC0415
-
-        for i in range(self.mode_tabs.count()):
-            pol = QSizePolicy.Policy.Preferred if i == index else QSizePolicy.Policy.Ignored
-            self.mode_tabs.widget(i).setSizePolicy(pol, pol)
-        self.mode_tabs.updateGeometry()
         self._mode_auto.blockSignals(True)
         self._mode_auto.setChecked(index == 0)
         self._mode_auto.blockSignals(False)
+        if hasattr(self, 'mode_combo'):
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.setCurrentIndex(index)
+            self.mode_combo.blockSignals(False)
 
     def _mode_changed(self, _):
         if self.item is not None:
@@ -629,6 +829,8 @@ class RoiPanel(QWidget):
         self.thr['nuc']['auto'].setEnabled(has_nuc)
         if not has_nuc:
             self.thr['nuc']['auto'].setChecked(True)
+        if hasattr(self, '_auto_rows'):
+            self._auto_ui()
 
     def _thr_sync_slider(self, key):
         t = self.thr[key]
@@ -654,14 +856,14 @@ class RoiPanel(QWidget):
             self._thr_show(key, self._auto_thresholds(self.item).get(key))
         t['spin'].setEnabled(on)
         t['slider'].setEnabled(on)
-        if on and not self.thr_view.isChecked():
+        if on and not self.thr_view.isChecked() and not self._bulk:
             self.thr_view.setChecked(True)  # updates the preview
         elif self.show_input():
             self.win.update_preview()
 
     def _thr_spin(self, key):
         self._thr_sync_slider(key)
-        if not self.thr_view.isChecked():
+        if not self.thr_view.isChecked() and not self._bulk:
             self.thr_view.setChecked(True)  # show what the threshold covers
         else:
             self._preview_timer.start()
@@ -1099,6 +1301,13 @@ class RoiPanel(QWidget):
 
     def _show_sizes(self, sizes):
         """Show the range in use (automatic) in the fields."""
+        bulk, self._bulk = self._bulk, True
+        try:
+            self._show_sizes_now(sizes)
+        finally:
+            self._bulk = bulk
+
+    def _show_sizes_now(self, sizes):
         for (lo_w, hi_w), rng in zip(((self.min_cell, self.max_cell), (self.min_nuc, self.max_nuc)),
                                      sizes):
             if rng is not None:

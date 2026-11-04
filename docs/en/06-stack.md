@@ -17,7 +17,7 @@ when the tab opens (status: **Z 스택 불러오는 중…**) and released after
 
 - **Z 슬라이스** (Z slices): first–last slice; **전체** (All) selects every slice.
 - **선택한 Crop 영역만 (빠름)** (Selected crop only, faster): project only the
-  crop selected in the list of the **Crop** tab (**Crop › Crop 탭 열기**).
+  crop selected in the sidebar (the crop rows under the image).
 
 ## 2D projection
 

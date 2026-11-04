@@ -114,7 +114,7 @@ A GUI for working on a whole set of images at once:
   **모든 분석 결과 통합 저장** (save all results), the
   work log (every lasting status message with time and image) and the
   settings (mouse sensitivity). Next to it, the **Tool** menu holds one
-  submenu per feature (LUT, 마커, Crop, 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, 스택,
+  submenu per feature (LUT, 마커, Crop (no tab: canvas icon), 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, 스택,
   이미지 정보, Figure) that opens its tab on the right and holds its own saves
   and loads. The **LUT** and **이미지 정보** tabs are always there; the marker
   settings are fixed at the bottom of the LUT tab.
@@ -368,9 +368,11 @@ A GUI for working on a whole set of images at once:
   - Saving: the current projection (RGB with markers + float32 ImageJ stack,
     optionally every timepoint) or a 3D rotation series as a TIFF stack; choose
     **MP4** in the save dialog to get a movie instead (frame rate in the tab).
-- **Crop** regions per image: press `Crop 추가 (드래그)` and drag on the image;
-  repeat for more regions. Each region is listed, numbered on the image, can be
-  previewed alone, deleted, or copied to every image with the same pixel size.
+- **Crop** regions per image: switch on the Crop icon of the canvas toolbar and
+  drag on the image (inside a region: move it); the icon stays on, and with it
+  off the regions are not drawn. Each region is a row under its image in the
+  sidebar (trash glyph, context menu), numbered on the image, can be previewed
+  alone, deleted, or copied to every image with the same pixel size.
 - **Batch LUT**: `전체 이미지에 적용` on a channel copies its LUT to the same
   channel of every loaded image (matched by channel name; by index only between
   files of the same type and channel count). LUTs can be saved and loaded as JSON presets.
