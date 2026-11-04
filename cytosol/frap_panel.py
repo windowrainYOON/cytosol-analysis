@@ -93,6 +93,7 @@ class FrapPanel(QWidget):
         # ---- data (same for every image) ----
         data = QGroupBox('데이터')
         fl = QFormLayout(data)
+        self._data_form = fl
         self.channel = QComboBox()
         self.channel.setToolTip('측정할 채널 (모든 이미지에 같은 이름의 채널을 씁니다).')
         self.channel.currentIndexChanged.connect(self._channel_changed)
@@ -134,21 +135,23 @@ class FrapPanel(QWidget):
         self.drift_mode.currentIndexChanged.connect(self._drift_changed)
         self.drift_win.valueChanged.connect(self._drift_changed)
         fl.addRow(self.drift)
-        fl.addRow(_row(self.drift_mode))
-        fl.addRow('추적 창', _row(self.drift_win, self.drift_win_auto))
+        fl.addRow('추적 방식', self.drift_mode)
+        self._drift_win_row = _row(self.drift_win, self.drift_win_auto)
+        fl.addRow('추적 창', self._drift_win_row)
         self._drift_info = QLabel()
         self._drift_info.setWordWrap(True)
         theme.hint(self._drift_info)
         fl.addRow(self._drift_info)
         lay.addWidget(data)
 
-        # ---- ROIs of the current image ----
+        # ---- ROIs of the current image: one settings row per value ----
         rbox = QGroupBox('측정 ROI (현재 이미지, 이미지 위에서 끌어 옮기기)')
-        rl = QVBoxLayout(rbox)
+        rf = QFormLayout(rbox)
+        self._roi_form = rf
         self.show_rois = QCheckBox('ROI 표시')
         self.show_rois.setChecked(True)
         self.show_rois.toggled.connect(lambda _: self.win.draw_frap())
-        rl.addWidget(self.show_rois)
+        rf.addRow(self.show_rois)
         self._auto_roi = {}
         self._roi_info = {}
         tips = {'bleach': '파일의 bleach 영역, 없으면 두 프레임 사이에 가장 크게 어두워진 곳',
@@ -157,20 +160,22 @@ class FrapPanel(QWidget):
                 'background': 'Bleach ROI와 같은 모양·크기로, 응집체 신호가 없는 가장 가까운 곳'}
         colors = {n: '#%02x%02x%02x' % frap.ROI_COLORS[n] for n in ROI_NAMES}
         for n in ROI_NAMES:
-            title = QLabel(f'<b style="color:{colors[n]}">■ {frap.ROI_TITLES[n]}</b>')
-            b = _auto(f'자동 위치: {tips[n]}. 끌어 옮기면 꺼집니다.')
+            title = QLabel(f'<b style="color:{colors[n]}">■</b> {frap.ROI_TITLES[n]} 위치')
+            b = QCheckBox('자동')
+            b.setToolTip(f'자동 위치: {tips[n]}. 끌어 옮기면 꺼집니다.')
             b.toggled.connect(lambda on, n=n: self._roi_auto_toggled(n, on))
             self._auto_roi[n] = b
-            rl.addLayout(_row(title, b))
+            rf.addRow(title, b)
             info = QLabel()
             info.setWordWrap(True)
             theme.hint(info)
             self._roi_info[n] = info
-            rl.addWidget(info)
+            rf.addRow(info)
             if n == 'bleach':
                 self._file_roi = QComboBox()
                 self._file_roi.setToolTip('파일에 bleach 영역이 여러 개일 때 측정할 영역')
                 self._file_roi.currentIndexChanged.connect(self._file_roi_changed)
+                rf.addRow('파일 영역', self._file_roi)
                 self._bleach_d = QSpinBox()
                 self._bleach_d.setRange(2, 2000)
                 self._bleach_d.setSuffix(' px')
@@ -178,22 +183,20 @@ class FrapPanel(QWidget):
                 self._bleach_d_auto = _auto('어두워진 영역의 넓이와 같은 원의 지름')
                 self._bleach_d.valueChanged.connect(lambda _: self._size_changed('bleach'))
                 self._bleach_d_auto.toggled.connect(lambda _: self._size_changed('bleach'))
-                rl.addLayout(_row(self._file_roi))
-                self._bleach_d_row = QWidget()  # hidden for the file's own bleach region
-                drow = _row(QLabel('지름'), self._bleach_d, self._bleach_d_auto)
-                drow.setContentsMargins(0, 0, 0, 0)
-                self._bleach_d_row.setLayout(drow)
-                rl.addWidget(self._bleach_d_row)
+                # hidden for the file's own bleach region
+                self._bleach_d_row = _row(self._bleach_d, self._bleach_d_auto)
+                rf.addRow('Bleach 지름', self._bleach_d_row)
             elif n == 'control':
                 self.control_src = QComboBox()
+                short = {'other': '다른 응집체', 'same': '같은 응집체 안'}
                 for key, text in frap.CONTROL_SOURCES.items():
-                    self.control_src.addItem(text, key)
+                    self.control_src.addItem(short.get(key, text), key)
                 self.control_src.setToolTip(
                     '자동 Control 위치 (모든 이미지):\n주변의 다른 응집체: bleach한 응집체 둘레의 가까운 '
                     '응집체들 중 시간에 따라 강도가 가장 적게 변하는 곳 (변동계수가 가장 작은 곳)\n'
                     '같은 응집체 안: bleach한 응집체에서 bleach 영역 밖의 가장 안쪽')
                 self.control_src.currentIndexChanged.connect(self._control_src_changed)
-                rl.addLayout(_row(QLabel('위치'), self.control_src))
+                rf.addRow('Control 자리', self.control_src)
                 self._control_d = QSpinBox()
                 self._control_d.setRange(2, 2000)
                 self._control_d.setSuffix(' px')
@@ -201,7 +204,7 @@ class FrapPanel(QWidget):
                 self._control_d_auto = _auto('Bleach ROI 크기까지, 응집체 안에 들어가는 가장 큰 원')
                 self._control_d.valueChanged.connect(lambda _: self._size_changed('control'))
                 self._control_d_auto.toggled.connect(lambda _: self._size_changed('control'))
-                rl.addLayout(_row(QLabel('지름'), self._control_d, self._control_d_auto))
+                rf.addRow('Control 지름', _row(self._control_d, self._control_d_auto))
         self._thr = QDoubleSpinBox()
         self._thr.setDecimals(1)
         self._thr.setRange(-1e9, 1e9)
@@ -214,17 +217,16 @@ class FrapPanel(QWidget):
         self._thr_slider.setRange(0, SLIDER_STEPS)
         self._thr_slider.valueChanged.connect(self._thr_slid)
         self._thr_range = (0.0, 1.0)
-        rl.addLayout(_row(QLabel('응집체 threshold'),
-                          theme.slider_field(self._thr_slider, self._thr, self._thr_auto),
-                          stretch=False))
+        rf.addRow('응집체 threshold', theme.slider_field(self._thr_slider, self._thr, self._thr_auto))
         reset = QPushButton('모두 자동 배치')
         reset.setToolTip('이 이미지의 ROI·프레임·threshold를 모두 자동으로 되돌립니다.')
         reset.clicked.connect(self.reset_auto)
         self.notes = theme.StatusLabel(kind='warning')
         self.notes.setWordWrap(True)
-        rl.addLayout(_row(reset))
-        rl.addWidget(self.notes)
+        rf.addRow(_row(reset))
+        rf.addRow(self.notes)
         lay.addWidget(rbox)
+        self._hide_empty()
 
         # ---- plot ----
         pbox = QGroupBox('그래프')
@@ -527,6 +529,7 @@ class FrapPanel(QWidget):
                 for lab in self._roi_info.values():
                     lab.setText('')
                 self.notes.setText('')
+                self._hide_empty()
                 return
             self._bf.setRange(1, max(1, it.nt))
             self._bf.setValue(st.bleach_frame + 1)
@@ -539,9 +542,9 @@ class FrapPanel(QWidget):
             for k, b in enumerate(files, 1):
                 self._file_roi.addItem(f'파일 bleach 영역 {k}: {b.name}')
             self._file_roi.setCurrentIndex(min(st.file_roi, max(len(files) - 1, 0)))
-            self._file_roi.setVisible(len(files) > 1)
+            theme.show_rows(self._roi_form, (self._file_roi,), len(files) > 1)
             from_file = st.source == 'file'
-            self._bleach_d_row.setVisible(not from_file)
+            theme.show_rows(self._roi_form, (self._bleach_d_row,), not from_file)
             self._bleach_d.setValue(int(st.bleach_d or 10))
             self._bleach_d_auto.setChecked(st.bleach_d_auto)
             self._bleach_d.setEnabled(not from_file and not st.bleach_d_auto)
@@ -571,6 +574,7 @@ class FrapPanel(QWidget):
                     text += ' (Bleach ROI와 같은 크기)'
                 self._roi_info[n].setText(text)
             self.notes.setText('\n'.join(st.notes))
+            self._hide_empty()
         finally:
             self._binding = False
 
@@ -882,7 +886,7 @@ class FrapPanel(QWidget):
             return
         self._curves.clear()  # every image with an automatic Control is placed again
         self.win.set_dirty()
-        self.win.statusBar().showMessage(f'FRAP Control 위치: {self.control_src.currentText()}')
+        self.win.statusBar().showMessage(f'FRAP Control 위치: {frap.CONTROL_SOURCES.get(self.control_src.currentData(), self.control_src.currentText())}')
         self.refresh()
 
     def _settings_changed(self, *_):
@@ -895,10 +899,20 @@ class FrapPanel(QWidget):
         roi = on and self.drift_mode.currentData() == 'roi'
         self.drift_win_auto.setEnabled(roi)
         self.drift_win.setEnabled(roi and not self.drift_win_auto.isChecked())
+        # only the inputs that apply are shown (no tracking choices while it is off)
+        theme.show_rows(self._data_form, (self.drift_mode,), on)
+        theme.show_rows(self._data_form, (self._drift_win_row,), roi)
         if self._binding:
             return
         self.win.set_dirty()
         self.refresh()
+
+    def _hide_empty(self):
+        """Hint and warning rows only take a row while they have text."""
+        for lab in (*self._roi_info.values(), self.notes):
+            theme.show_rows(self._roi_form, (lab,), bool(lab.text()))
+        if hasattr(self, '_drift_info'):
+            theme.show_rows(self._data_form, (self._drift_info,), bool(self._drift_info.text()))
 
     def _show_drift(self, curve):
         """The window in use (filled in while automatic) and how far the ROIs moved."""
@@ -913,6 +927,7 @@ class FrapPanel(QWidget):
                 self._binding = False
         if curve is None or not curve.drift:
             self._drift_info.setText('드리프트 보정 꺼짐' if not self.drift.isChecked() else '')
+            self._hide_empty()
             return
         px = it.pixel_um if it is not None else None
         parts = []
@@ -924,6 +939,7 @@ class FrapPanel(QWidget):
         last = curve.drift['bleach'][-1]
         self._drift_info.setText('최대 이동: ' + ', '.join(parts)
                                  + f' · 마지막 프레임 ({last[0]:+.1f}, {last[1]:+.1f}) px')
+        self._hide_empty()
 
     def reset_auto(self):
         it = self.item

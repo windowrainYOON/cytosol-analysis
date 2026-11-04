@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.55.0)
+## Window structure (v0.56.0)
 
 - **Regions** (owner request 2026-11-04, v0.52; design system
   `components/RegionLayout`): Sidebar | Canvas | Inspector are told apart by
@@ -392,4 +392,5 @@ not affected.
 | dev branch | 0.53.0 | Owner request + design system Toggle / Select: switches after their label at the row end (`theme.switch` RightToLeft, settings-look knob), pop-ups without a box (value + round `fill` cap with chevron.up.chevron.down, as wide as the content: `AdjustToContents` + `Maximum`; editable combos keep the field), inset groups as settings cards (`label` 5 %, no border, heading in `label`); 세포질 ROI editing buttons are icon buttons in capsule groups (`hig_widgets.icon_group`, `hig_no_reflow`; name + shortcut in the tool tip, red trash last) |
 | dev branch | 0.54.0 | Owner request: settings rows: titles left, controls at the row end (`theme.settings_rows`: field items aligned right, a trailing stretch of a [value][자동] row moved to the front), steppers' text left, hairlines between rows (`theme.RowLines` overlay per group, row gap 12 = 40 px rows); dialogs' forms the same |
 | dev branch | 0.55.0 | Owner request + design system (SettingsPane › 자동 / 수동, slider rows): slider values on one row (title – slider – plain number field), one row height per card, single fields 140 wide, every 자동 / 수동 choice a switch (ROI 검출 방식, particle 검출 방식, stack Z 간격, marker / figure / graph special-value autos), only the chosen mode's inputs shown; hairlines full card width |
-| dev branch | 0.56.0 | Owner request: Figure window drag and drop (cells dragged onto other cells to move, Option/Alt = copy; images dragged from the main image list (`ImageTree` drag, `image_tree.ROWS_MIME`) or files from Finder / Explorer fill cells from the drop target on, rows added as needed; PNG / JPEG / RGB TIFF as pictures, microscopy files opened in the main list first); 행/열 전체 옮기기 check box (off: ▲▼◀▶ and drags move only the selected cell, not every channel of the row) |
+| dev branch | 0.56.0 | Owner request: FRAP 측정 tab in settings cards like the others: 측정 ROI card is a form (`_roi_form`: ■ ROI 위치 + 자동 switch, hint under it without a hairline (`theme.hint` sets `hig_hint`), Bleach / Control 지름, Control 자리, threshold slider row), rows that don't apply are hidden (Bleach 지름 for the file's region, 파일 영역 with one region, 추적 방식 / 추적 창 by the drift settings, empty hints); short Control 자리 names |
+| dev branch | 0.57.0 | Owner request: Figure window drag and drop (cells dragged onto other cells to move, Option/Alt = copy; images dragged from the main image list (`ImageTree` drag, `image_tree.ROWS_MIME`) or files from Finder / Explorer fill cells from the drop target on, rows added as needed; PNG / JPEG / RGB TIFF as pictures, microscopy files opened in the main list first); 행/열 전체 옮기기 check box (off: ▲▼◀▶ and drags move only the selected cell, not every channel of the row) |

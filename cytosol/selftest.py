@@ -1784,6 +1784,13 @@ def run(out_dir) -> int:
             raise AssertionError(f'FRAP fit: {s1}')
         if len(win.canvas._frap) != 3:
             raise AssertionError('FRAP ROIs not drawn on the image')
+        # ROI card = settings rows; the file's own bleach region has no 지름 row
+        rf = fp._roi_form
+        if not rf.property('hig_settings') or rf.isRowVisible(fp._bleach_d_row) \
+                or rf.isRowVisible(fp._file_roi) or fp._control_d.isHidden():
+            raise AssertionError('FRAP ROI card rows')
+        if fp._data_form.isRowVisible(fp.drift_mode) != fp.drift.isChecked():
+            raise AssertionError('FRAP drift rows not following the switch')
         # pre-bleach = 1, first post-bleach frame = 0 (the default normalization)
         if c.normalize != 'full' or abs(c.values[5]) > 1e-9 or abs(np.mean(c.values[:5]) - 1) > 1e-9:
             raise AssertionError(f'FRAP 0-1 normalization: {c.normalize}, {c.values[:7]}')
