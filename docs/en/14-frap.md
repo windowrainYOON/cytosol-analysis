@@ -22,13 +22,22 @@ Measure's Mean).
 | ROI | Colour | Automatic position |
 |---|---|---|
 | **Bleach** (B) | red | The bleach region recorded in the file (Zeiss CZI bleach regions, Olympus/Evident OIR stimulation regions). Without a record: the place that became darkest and stayed dark compared with the frames before (the outer 4 % of the image is left out) |
-| **Control** (C) | green | Chosen with **위치** (position) under Control, for all images: **주변의 다른 응집체 (강도가 가장 안정된 곳)** (default): of the 12 condensates nearest the bleached one, the one whose mean changes least over the series (smallest coefficient of variation, measured where it is on each frame when drift correction is on). **같은 응집체 안 (bleach 영역 밖)**: the innermost point of the bleached condensate outside the bleach region; if the whole condensate was bleached, the most stable neighbouring one. Its size may differ from Bleach |
+| **Control** (C) | green | Chosen with **Control 자리** (Control place), for all images: **다른 응집체** (another condensate, default, the most stable one): of the 12 condensates nearest the bleached one, the one whose mean changes least over the series (smallest coefficient of variation, measured where it is on each frame when drift correction is on). **같은 응집체 안** (inside the same condensate): the innermost point of the bleached condensate outside the bleach region; if the whole condensate was bleached, the most stable neighbouring one. Its size may differ from Bleach |
 | **Background** (BG) | blue | The Bleach ROI's shape and size, at the nearest place without condensate signal |
 
 Control skips places whose signal falls by more than 30 % at the bleach frame
 (they were bleached too). A Control dragged by hand stays where it is.
- Hints about the automatic positions appear in orange
+Hints about the automatic positions appear in orange
 under the ROI box.
+
+The **측정 ROI** card has the same rows as the other settings cards: name on
+the left, value and **자동** switch at the row end, a hairline between rows.
+The grey text right under **Bleach 위치**, **Control 위치** and **Background
+위치** gives the ROI's shape, size and centre. With the file's own bleach
+region the **Bleach 지름** row is hidden; the **파일 영역** row only appears
+when the file has several bleach regions. With drift correction off the
+**추적 방식** / **추적 창** rows are hidden, and **전체 이미지** tracking hides
+**추적 창**.
 
 ## Moving ROIs
 
@@ -75,9 +84,9 @@ does not matter.
 | **채널** (Channel) | Channel measured (the channel with the same name on every image) |
 | **정규화: 이미지마다 bleach 전 = 1, 직후 = 0** (normalize each image, on by default) | Each image on its own: (value − value on the first post-bleach frame) / (mean of the pre-bleach frames − that value), shown as Recovery (%) (full-scale normalization, on top of the double normalization of Phair et al. (2004)). Group means ± error bars and every graph use these normalized values. Off: the ratio R as is |
 | **bleach 후 첫 프레임** (first frame after bleaching) + **자동** | 1-based. Auto: the file's bleach record (CZI bleach events, OIR pre-bleach frame count), else the frame where the Bleach ROI drops most |
-| Bleach **지름** (diameter) + **자동** | Diameter of the detected circle when the file has no record (auto: the circle with the darkened area's size). A bleach region from the file keeps its own shape |
-| Control **지름** + **자동** | Control circle diameter (auto: the largest circle up to the Bleach ROI's size that fits in the condensate) |
-| **응집체 threshold** (condensate threshold) + **자동**, slider | Condensate signal = at or above this value in the pre-bleach image (σ 1 px Gaussian); used to place Control and Background. Auto: Otsu in a window around the Bleach ROI |
+| **Bleach 지름** (diameter) + **자동** | Diameter of the detected circle when the file has no record (auto: the circle with the darkened area's size). A bleach region from the file keeps its own shape |
+| **Control 지름** + **자동** | Control circle diameter (auto: the largest circle up to the Bleach ROI's size that fits in the condensate) |
+| **응집체 threshold** (condensate threshold) + **자동** (title – slider – number field) | Condensate signal = at or above this value in the pre-bleach image (σ 1 px Gaussian); used to place Control and Background. Auto: Otsu in a window around the Bleach ROI |
 
 ## Graph
 

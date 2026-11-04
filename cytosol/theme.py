@@ -287,7 +287,9 @@ def text_style(widget: QWidget, role: str = 'body', secondary: bool = False) -> 
 
 
 def hint(label: QWidget) -> QWidget:
-    """Help / hint text under a control: Callout in label-secondary (FormRow hint)."""
+    """Help / hint text under a control: Callout in label-secondary (FormRow hint).
+    In a settings card it belongs to the row above (no hairline between)."""
+    label.setProperty('hig_hint', True)
     return text_style(label, 'callout', secondary=True)
 
 
@@ -535,7 +537,8 @@ def settings_rows(form: QFormLayout):
         for role in (QFormLayout.ItemRole.LabelRole, QFormLayout.ItemRole.SpanningRole):
             it = form.itemAt(r, role)
             w = it.widget() if it is not None else None
-            if w is not None and w.minimumHeight() < SETTINGS_ROW_H and w.sizeHint().height() < SETTINGS_ROW_H:
+            if w is not None and not w.property('hig_hint') \
+                    and w.minimumHeight() < SETTINGS_ROW_H and w.sizeHint().height() < SETTINGS_ROW_H:
                 w.setMinimumHeight(SETTINGS_ROW_H)  # one row height in the card
     for r in range(form.rowCount()):
         item = form.itemAt(r, QFormLayout.ItemRole.FieldRole)
@@ -642,8 +645,9 @@ class RowLines(QWidget):
                     if isinstance(w, QLabel) and not w.text().strip() and w.pixmap().isNull():
                         cont = cont or role == QFormLayout.ItemRole.LabelRole
                         continue  # an empty title / an empty status line
-                    if role == QFormLayout.ItemRole.SpanningRole and _slider_only(it):
-                        cont = True  # a slider under the field above
+                    if role == QFormLayout.ItemRole.SpanningRole and (
+                            _slider_only(it) or (w is not None and w.property('hig_hint'))):
+                        cont = True  # a slider / the hint under the field above
                     g = it.geometry()
                     if g.height() <= 0:
                         continue
