@@ -19,6 +19,24 @@ main window appear when you come back to the figure window.
   line) and its text color (**색상…**, **기본 색상** = default). Right-click a
   header for **이름/색상 수정…**, **위에/아래에 행 삽입**, **왼쪽에/오른쪽에 열 삽입**.
 - Click a cell to select it; the panels below act on the selected cell.
+- **행/열 전체 옮기기** (move whole row / column; on by default): when on,
+  ▲▼◀▶ and dragging a cell move the whole row (every channel of that image)
+  or the whole column. When off, only the selected cell trades places with
+  its neighbour (or the cell it is dropped on); the other channel cells stay.
+
+### Drag and drop
+
+- **Drag a cell** onto another cell to move it (whole row / column or just
+  the cell, as the check box above says). Hold **Option (⌥) / Alt** while
+  dropping to copy the cell instead (without its zoom insets).
+- **Drag from the main window's image list**: drop images (several, or a
+  group folder) on a cell; they fill that cell and the cells to its right,
+  then the next rows. Rows are added when the table runs out.
+- **Drag files** from Finder / Explorer onto a cell. PNG / JPEG and RGB TIFFs
+  (exported LUT / crop images) go in as pictures, like the **파일…** button;
+  TCF / CZI / OIR and raw TIFFs are first opened in the main window's image
+  list, then placed (a file already open there is reused). Dropped outside the
+  table (preview, right panel), they start at the selected cell.
 
 ## 선택한 칸 (Selected cell)
 
