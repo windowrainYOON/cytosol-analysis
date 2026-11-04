@@ -60,7 +60,12 @@ closes it.
   control at the right end, with a thin line between rows; numbers in a field
   start at the left.
 - A **자동** (auto) switch sits after its label, at the end of the row (on =
-  blue).
+  blue). Every auto / manual choice is this switch. For a single value the
+  field keeps showing the value in use, greyed; an automatic size worked out
+  when drawing (marker sizes) hides its field until the switch is off. Where
+  auto and manual take different inputs, only the chosen side's show.
+- Every settings row of a card has the same height; a value with a slider is
+  one row: name – slider – number field (no arrows).
 - Pop-up menus have no box: the chosen value and a round arrow cap, as wide as
   the longest choice. Click the value or the cap to open the list.
 - Hover an icon-only button to see its name (and shortcut).

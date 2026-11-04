@@ -120,7 +120,7 @@ class SettingsDialog(QDialog):
             rl = QHBoxLayout(row)
             rl.setContentsMargins(0, 0, 0, 0)
             rl.addWidget(slider, 1)
-            rl.addWidget(spin)
+            rl.addWidget(theme.plain_number(spin))
             rl.addWidget(reset)
             form.addRow(label, row)
             self.spins[key] = spin

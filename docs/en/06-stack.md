@@ -32,7 +32,7 @@ Z Project).
 | **방법** (Method) | Brightest point (max) or Mean value along the line of view |
 | **회전축** (Axis) | **Y축 (좌우로 돌리기)** turn left–right, or **X축 (위아래로 기울이기)** tilt up–down |
 | **각도** (Angle) | −180° to 180°, slider or number |
-| **Z 간격** (Z spacing) | **자동** (from the metadata: voxel Z / pixel size; the note shows the numbers) or **수동** (manual, µm). If the file has no Z step, auto uses 1 pixel; enter the real step by hand. |
+| **Z 간격** (Z spacing) | **자동** switch: on = from the metadata (voxel Z / pixel size; the field and the note show the numbers), off = type it in the field (µm). If the file has no Z step, auto uses 1 pixel; enter the real step by hand. |
 | **미리보기** (Preview) | Preview resolution: **빠름 (~256 px)**, **보통 (~400 px)**, **선명 (~600 px)**, **원본 해상도** |
 | **새로고침 (LUT 반영)** (Refresh, apply LUT) | After changing min/max/gamma, press it to rebuild the 3D view (it is highlighted when the LUT changed). Color and show/hide apply at once. |
 

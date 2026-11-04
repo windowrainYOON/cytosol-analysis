@@ -244,6 +244,44 @@ def run(out_dir) -> int:
             fld = form.itemAt(0, QFormLayout.ItemRole.FieldRole).geometry()
             if form.contentsRect().right() - fld.right() > 2:
                 raise AssertionError('settings control not at the row end')
+            # one row height per card; slider rows: slider + plain number field
+            hs = {form.itemAt(r, QFormLayout.ItemRole.LabelRole).geometry().height()
+                  for r in range(form.rowCount())
+                  if form.itemAt(r, QFormLayout.ItemRole.LabelRole) is not None
+                  and form.itemAt(r, QFormLayout.ItemRole.LabelRole).widget().isVisible()}
+            if len(hs) != 1 or min(hs) < theme.SETTINGS_ROW_H:
+                raise AssertionError(f'marker rows of different heights: {hs}')
+            rp_t = win.roi_panel.thr['nuc']
+            if not rp_t['spin'].property('hig_plain') \
+                    or rp_t['spin'].parentWidget() is not rp_t['slider'].parentWidget():
+                raise AssertionError('threshold: slider and plain number field on one row')
+            # 자동 = special value: the switch hides the field, off brings a value back
+            box = mp.sb_font.auto_box
+            box.setChecked(False)
+            if mp.sb_font.value() <= mp.sb_font.minimum() or mp.sb_font.isHidden():
+                raise AssertionError('auto value switch off: no manual value')
+            box.setChecked(True)
+            if mp.sb_font.value() != mp.sb_font.minimum() or not mp.sb_font.isHidden():
+                raise AssertionError('auto value switch on: field not hidden')
+            # 자동 / 수동 modes: a switch, only the chosen inputs shown
+            win.show_tab('particle_tab')
+            pp = win.particle_panel
+            pp._method_auto.setChecked(False)
+            app.processEvents()
+            if not pp.thr_manual.isChecked() or pp.spot_k.isVisibleTo(pp) \
+                    or not pp.thr_spin.isVisibleTo(pp):
+                raise AssertionError('particle 수동: only the threshold row should show')
+            pp._method_auto.setChecked(True)
+            app.processEvents()
+            if pp.thr_spin.isVisibleTo(pp) or not pp.spot_k.isVisibleTo(pp):
+                raise AssertionError('particle 자동: only the automatic rows should show')
+            rpn = win.roi_panel
+            rpn._mode_auto.setChecked(False)
+            if not rpn.manual_mode():
+                raise AssertionError('ROI 검출 방식 switch does not pick the manual page')
+            rpn._mode_auto.setChecked(True)
+            win.right_tabs.setCurrentWidget(win.marker_tab)
+            app.processEvents()
             lines = mp.sb.findChild(theme.RowLines)
             if lines is None or len(lines.lines()) < 5:
                 raise AssertionError('no hairlines between settings rows')

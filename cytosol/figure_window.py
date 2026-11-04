@@ -623,13 +623,13 @@ class FigureWindow(QMainWindow):
         form = QFormLayout(box)
         form.addRow('배경', hrow(self.bg_black, self.bg_white, self.border))
         form.addRow('칸 너비', self.cell_in)
-        form.addRow('세로/가로 비', self.aspect)
+        form.addRow('세로/가로 비', theme.auto_value(self.aspect, 1.0))
         form.addRow('칸 간격', self.gap)
         form.addRow('글꼴', self.font)
         form.addRow('글자 크기', hrow(self.font_pt, self.bold))
-        form.addRow(hrow(self.sb, self.sb_um, self.sb_pos))
+        form.addRow(hrow(self.sb, theme.auto_value(self.sb_um, 10), self.sb_pos))
         form.addRow(hrow(self.sb_label, self.caption))
-        form.addRow(hrow(self.inset_sb, self.inset_um, QLabel('상자 색'), self.inset_color))
+        form.addRow(hrow(self.inset_sb, theme.auto_value(self.inset_um, 5), QLabel('상자 색'), self.inset_color))
         self._layout_changed()
         return box
 

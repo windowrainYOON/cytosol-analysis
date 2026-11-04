@@ -19,7 +19,8 @@ whenever the ROIs or settings change.
    - **세포 전체** (whole cell),
    - **이미지 전체 (세포 ROI 없이)** (whole image, no cell ROIs needed;
      preselected for images without cell ROIs).
-4. **방법** (Method):
+4. **검출 방식 … 자동** (detection method) switch: on = automatic spot
+   detection, off = manual threshold; only the chosen method's settings show.
    - **자동 (점 검출)** (Automatic, spot detection): spot centres are found
      where the scale-normalised Hessian (high for round spots, not for cell
      or nucleus edges) and the background-subtracted intensity both exceed
@@ -30,8 +31,8 @@ whenever the ROIs or settings change.
      - **자동 입자 지름** (Particle diameter, default 0.4 µm): typical size of
        the particles; sets the filter scale. Images without a pixel size are
        taken as 0.1 µm/px.
-   - **수동 threshold** (Manual threshold): pixels at or above **수동 값**
-     (box or slider) in every cell, split into 8-connected particles (like
+   - **수동 threshold** (Manual threshold): pixels at or above **수동 threshold**
+     (slider or the number field beside it) in every cell, split into 8-connected particles (like
      ImageJ Analyze Particles).
 5. **최소 입자 크기** (Minimum particle size, px): smaller particles are dropped.
 6. **이미지에 입자 경계 표시** (Show particle outlines): pixel ROIs in magenta,

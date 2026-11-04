@@ -214,8 +214,9 @@ class FrapPanel(QWidget):
         self._thr_slider.setRange(0, SLIDER_STEPS)
         self._thr_slider.valueChanged.connect(self._thr_slid)
         self._thr_range = (0.0, 1.0)
-        rl.addLayout(_row(QLabel('응집체 threshold'), self._thr, self._thr_auto))
-        rl.addWidget(self._thr_slider)
+        rl.addLayout(_row(QLabel('응집체 threshold'),
+                          theme.slider_field(self._thr_slider, self._thr, self._thr_auto),
+                          stretch=False))
         reset = QPushButton('모두 자동 배치')
         reset.setToolTip('이 이미지의 ROI·프레임·threshold를 모두 자동으로 되돌립니다.')
         reset.clicked.connect(self.reset_auto)

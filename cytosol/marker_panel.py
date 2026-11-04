@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import theme
 from .render import TIME_UNITS, OutlineStyle, ScaleBarStyle, TimeStampStyle
 
 POSITIONS = ['lower right', 'lower left', 'upper right', 'upper left']
@@ -85,13 +86,13 @@ class MarkerPanel(QWidget):
         self.sb_margin = _auto_spin(2000)
         self.sb_gap = _auto_spin(400)
         self.sb_color = ColorButton()
-        f.addRow('마커 길이', self.sb_len)
+        f.addRow('마커 길이', theme.auto_value(self.sb_len, 10))
         f.addRow('위치', self.sb_pos)
         f.addRow(self.sb_label)
-        f.addRow('글자 크기', self.sb_font)
-        f.addRow('마커 두께', self.sb_thick)
-        f.addRow('글자-마커 간격', self.sb_gap)
-        f.addRow('가장자리 여백', self.sb_margin)
+        f.addRow('글자 크기', theme.auto_value(self.sb_font, 24))
+        f.addRow('마커 두께', theme.auto_value(self.sb_thick, 4))
+        f.addRow('글자-마커 간격', theme.auto_value(self.sb_gap, 4))
+        f.addRow('가장자리 여백', theme.auto_value(self.sb_margin, 20))
         f.addRow('색', self.sb_color)
         lay.addWidget(self.sb)
 
@@ -131,12 +132,12 @@ class MarkerPanel(QWidget):
         f.addRow('소수점 자리', self.ts_dec)
         f.addRow('앞 글자', self.ts_prefix)
         f.addRow('시간 보정', self.ts_offset)
-        f.addRow('글자 크기', self.ts_font)
+        f.addRow('글자 크기', theme.auto_value(self.ts_font, 24))
         f.addRow(self.ts_bar)
         f.addRow('막대 길이', self.ts_bar_len)
-        f.addRow('막대 두께', self.ts_bar_thick)
-        f.addRow('글자-막대 간격', self.ts_gap)
-        f.addRow('가장자리 여백', self.ts_margin)
+        f.addRow('막대 두께', theme.auto_value(self.ts_bar_thick, 4))
+        f.addRow('글자-막대 간격', theme.auto_value(self.ts_gap, 4))
+        f.addRow('가장자리 여백', theme.auto_value(self.ts_margin, 20))
         f.addRow('색', self.ts_color)
         lay.addWidget(self.ts)
         # bleach regions (FRAP etc.) read from the file
@@ -158,7 +159,7 @@ class MarkerPanel(QWidget):
         f.addRow(self.bl_show)
         f.addRow(self.bl_export)
         f.addRow(self.bl_label)
-        f.addRow('선 두께', self.bl_thick)
+        f.addRow('선 두께', theme.auto_value(self.bl_thick, 2))
         f.addRow('색', self.bl_color)
         lay.addWidget(self.bl)
         note = QLabel('Time-series marker는 시점이 2개 이상인 이미지에만 그려집니다. '

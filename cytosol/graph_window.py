@@ -538,7 +538,7 @@ class GraphWindow(QMainWindow):
         bins = QSpinBox()
         bins.setRange(0, 1000)
         bins.setSpecialValueText('자동')
-        hf.addRow('구간 수', self.b.bind(bins, sp, 'hist_bins'))
+        hf.addRow('구간 수', theme.auto_value(self.b.bind(bins, sp, 'hist_bins'), 20))
         hf.addRow(self.b.bind(QCheckBox('밀도 (넓이 = 1)'), sp, 'hist_density'))
         hf.addRow(self.b.bind(QCheckBox('채우기'), sp, 'hist_fill'))
         f.addRow(self.hist_box)

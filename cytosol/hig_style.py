@@ -361,6 +361,14 @@ QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{
     background: {c('fill-tertiary')}; }}
 QAbstractSpinBox::up-button:pressed, QAbstractSpinBox::down-button:pressed {{
     background: {c('fill')}; }}
+/* number field next to a slider: a plain input (no stepper arrows) */
+/* (stepper buttons hidden by the sheet: NoButtons collapses the edit field
+   under a style sheet) */
+QAbstractSpinBox[hig_plain="true"] {{ padding: 0 {FIELD_PAD}px; }}
+QAbstractSpinBox[hig_plain="true"]::up-button, QAbstractSpinBox[hig_plain="true"]::down-button {{
+    width: 0px; border: none; }}
+QAbstractSpinBox[hig_plain="true"]::up-arrow, QAbstractSpinBox[hig_plain="true"]::down-arrow {{
+    image: none; width: 0px; height: 0px; }}
 QAbstractSpinBox::up-arrow {{ image: {url('up')}; width: 10px; height: 7px; }}
 QAbstractSpinBox::down-arrow {{ image: {url('down')}; width: 10px; height: 7px; }}
 

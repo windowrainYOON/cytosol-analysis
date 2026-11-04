@@ -104,9 +104,7 @@ class StackPanel(QWidget):
         self.angle_spin = QSpinBox()
         self.angle_spin.setRange(-180, 180)
         self.angle_spin.setSuffix('°')
-        arow = QHBoxLayout()
-        arow.addWidget(self.angle, 1)
-        arow.addWidget(self.angle_spin)
+        arow = theme.slider_field(self.angle, self.angle_spin)
         self.auto_sp = QRadioButton('자동')
         self.manual_sp = QRadioButton('수동')
         self.auto_sp.setChecked(True)
@@ -119,10 +117,19 @@ class StackPanel(QWidget):
         self.spacing.setSingleStep(0.05)
         self.spacing.setSuffix(' µm')
         self.spacing.setKeyboardTracking(False)
+        # 자동 / 수동 = one switch (owner rule 2026-11-04); the radio pair stays
+        # as the state but is not shown; the field shows the spacing in use
+        self.auto_sp.hide()
+        self.manual_sp.hide()
+        self._sp_auto = QCheckBox('자동')
+        self._sp_auto.setChecked(True)
+        self._sp_auto.setToolTip('켜면 파일의 Z 간격을 씁니다. 끄면 직접 입력합니다.')
+        self._sp_auto.toggled.connect(
+            lambda on: (self.auto_sp if on else self.manual_sp).setChecked(True))
+        self.auto_sp.toggled.connect(self._sp_sync)
         srow = QHBoxLayout()
-        srow.addWidget(self.auto_sp)
-        srow.addWidget(self.manual_sp)
-        srow.addWidget(self.spacing, 1)
+        srow.addWidget(self.spacing)
+        srow.addWidget(self._sp_auto)
         self.spacing_note = QLabel()
         theme.hint(self.spacing_note)
         self.spacing_note.setWordWrap(True)
@@ -286,6 +293,11 @@ class StackPanel(QWidget):
         self.refresh_btn.setText('새로고침 (LUT 바뀜 · 눌러서 반영)' if stale else '새로고침 (LUT 반영)')
         # StatusIndicator on the button: warning dot + the state in words (not colour alone)
         self.refresh_btn.setIcon(theme.status_icon('warning') if stale else QIcon())
+
+    def _sp_sync(self, on):
+        self._sp_auto.blockSignals(True)
+        self._sp_auto.setChecked(on)
+        self._sp_auto.blockSignals(False)
 
     def _show_mode(self):
         three = self.mode_3d.isChecked()

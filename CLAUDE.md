@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.54.0)
+## Window structure (v0.55.0)
 
 - **Regions** (owner request 2026-11-04, v0.52; design system
   `components/RegionLayout`): Sidebar | Canvas | Inspector are told apart by
@@ -121,7 +121,9 @@ owner writes in Korean, so reply in Korean.
     save (image export options `exp_box`, stack `save_box`) are shown in a
     dialog (`_options_dialog`). The Figure window keeps its own save buttons.
 - **세포질 ROI tab** (`roi_panel.py`): the **ROI 검출** box has sub-tabs
-  **자동** (`segment_cells`) and **수동 (threshold)** (`threshold_cells`);
+  **자동** (`segment_cells`) and **수동 (threshold)** (`threshold_cells`),
+  since v0.55 two pages of `mode_tabs` (QStackedWidget) chosen by the
+  검출 방식 자동 switch;
   `manual_mode()` says which one detection uses. Shared below them: cell /
   nucleus size ranges (min–max with log sliders; `size_auto` (cells) and
   `nuc_size_auto` (nuclei), both on by default, estimate them per image:
@@ -171,7 +173,14 @@ pop-ups = Select (v0.53: no box, value + round `fill` cap, content width),
 switches after their label at the row end (v0.53), settings rows (v0.54,
 `theme.settings_rows` + `theme.RowLines` from `unify` / `align_forms`: title
 leading, control at the row end, hairline between rows, none before a
-title-less slider row; stepper text leading), inset groups = settings
+title-less slider row; stepper text leading; v0.55: one row height
+`SETTINGS_ROW_H`, single fields `SETTINGS_FIELD_W` 140, slider rows
+`theme.slider_field` = title – slider – plain number field
+(`plain_number`, stepper hidden by the sheet), every 자동 / 수동 choice a
+switch: per value [value][자동] keeps the value greyed (owner choice
+2026-11-04), special-value autos `theme.auto_value` hide the field, mode
+choices show only the chosen mode's rows `theme.show_rows`; the ROI
+자동 / 수동 pages are a `QStackedWidget` picked by `_mode_auto`), inset groups = settings
 cards (`QGroupBox`: `label` 5 %, no border, title in `label` 600 above at
 x 12), icon-only toolbars as `hig_widgets.icon_group` capsules (tool tip =
 name + shortcut), choice chips for sub-tabs, accent pill + white text for
@@ -382,3 +391,4 @@ not affected.
 | #71 | 0.52.0 | Owner request + updated design system (`components/RegionLayout`): regions separated by tone and the sidebar's shade instead of lines (raised sidebar / inspector, recessed canvas, glass variant on macOS), padding 20 per region; fixes the box an info / LUT page painted over the inspector (scroll-area autofill) and the tab chip tool tip with square corners covering the page |
 | dev branch | 0.53.0 | Owner request + design system Toggle / Select: switches after their label at the row end (`theme.switch` RightToLeft, settings-look knob), pop-ups without a box (value + round `fill` cap with chevron.up.chevron.down, as wide as the content: `AdjustToContents` + `Maximum`; editable combos keep the field), inset groups as settings cards (`label` 5 %, no border, heading in `label`); 세포질 ROI editing buttons are icon buttons in capsule groups (`hig_widgets.icon_group`, `hig_no_reflow`; name + shortcut in the tool tip, red trash last) |
 | dev branch | 0.54.0 | Owner request: settings rows: titles left, controls at the row end (`theme.settings_rows`: field items aligned right, a trailing stretch of a [value][자동] row moved to the front), steppers' text left, hairlines between rows (`theme.RowLines` overlay per group, row gap 12 = 40 px rows); dialogs' forms the same |
+| dev branch | 0.55.0 | Owner request + design system (SettingsPane › 자동 / 수동, slider rows): slider values on one row (title – slider – plain number field), one row height per card, single fields 140 wide, every 자동 / 수동 choice a switch (ROI 검출 방식, particle 검출 방식, stack Z 간격, marker / figure / graph special-value autos), only the chosen mode's inputs shown; hairlines full card width |

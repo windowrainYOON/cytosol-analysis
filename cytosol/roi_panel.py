@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QSlider,
+    QStackedWidget,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -249,12 +250,8 @@ class RoiPanel(QWidget):
         row.addWidget(self.sat_auto)
         dl.addRow('배경 포화값', row)
         dl.addRow(self.input_view)
-        for key, t in self.thr.items():
-            row = QHBoxLayout()
-            row.addWidget(t['spin'], 1)
-            row.addWidget(t['auto'])
-            dl.addRow(t['label'], row)
-            dl.addRow('', t['slider'])
+        for key, t in self.thr.items():  # title – slider – value – 자동
+            dl.addRow(t['label'], theme.slider_field(t['slider'], t['spin'], t['auto']))
         dl.addRow(self.thr_view)
         dl.addRow('스무딩', self._with_auto(self.smooth))
         dl.addRow(self.fit_size)
@@ -280,8 +277,7 @@ class RoiPanel(QWidget):
             spin.valueChanged.connect(lambda _, k=key: self._man_spin(k))
             slider.valueChanged.connect(lambda v, k=key: self._man_slider(k, v))
             self.man[key] = {'spin': spin, 'slider': slider, 'range': (0.0, 1.0)}
-            ml.addRow(label, spin)
-            ml.addRow('', slider)
+            ml.addRow(label, theme.slider_field(slider, spin))
         self.last_seconds = 0.0  # time the last detection took
         self.last_sizes = None  # size ranges the last detection used, when set per image
         self.man_view = QCheckBox('threshold 영역 미리보기 (노랑: 세포, 파랑: 핵)')
@@ -289,23 +285,29 @@ class RoiPanel(QWidget):
         self.man_view.toggled.connect(lambda _: self.win.update_preview())
         ml.addRow(self.man_view)
 
-        self.mode_tabs = QTabWidget()
-        self.mode_tabs.addTab(auto, '자동')
-        self.mode_tabs.addTab(manual, '수동 (threshold)')
+        # 자동 / 수동 (threshold) stay two separate pages (owner rule
+        # 2026-10-27); the choice between them is a 자동 switch (2026-11-04)
+        # and only the chosen page is shown
+        self.mode_tabs = QStackedWidget()  # page 0 자동, 1 수동 (threshold)
+        self.mode_tabs.addWidget(auto)
+        self.mode_tabs.addWidget(manual)
         self.mode_tabs.currentChanged.connect(self._mode_changed)
+        self._mode_auto = QCheckBox('자동')
+        self._mode_auto.setChecked(True)
+        self._mode_auto.setToolTip('켜면 자동 검출(전체 파이프라인), 끄면 수동 threshold '
+                                   '(threshold 이상 = ROI, 아래 = 버림)입니다.')
+        self._mode_auto.toggled.connect(lambda on: self.mode_tabs.setCurrentIndex(0 if on else 1))
+        self.mode_tabs.currentChanged.connect(self._mode_page)
+        self._mode_page(0)
 
         det = QGroupBox('ROI 검출')
         top = QVBoxLayout(det)
+        mf = QFormLayout()
+        mf.addRow('검출 방식', self._mode_auto)
+        top.addLayout(mf)
         top.addWidget(self.mode_tabs)
         dl = QFormLayout()
         top.addLayout(dl)
-
-        def span(a, b):
-            row = QHBoxLayout()
-            row.addWidget(a, 1)
-            row.addWidget(QLabel('–'))
-            row.addWidget(b, 1)
-            return row
 
         # a log-scale slider under every size field (1 µm² … 100 000 µm²; the
         # right end of a maximum slider = no limit)
@@ -319,12 +321,9 @@ class RoiPanel(QWidget):
             self._size_sync(spin)
         for box, label, lo, hi in ((self.size_auto, '세포 크기', self.min_cell, self.max_cell),
                                    (self.nuc_size_auto, '핵 크기', self.min_nuc, self.max_nuc)):
-            row = span(lo, hi)
-            row.addWidget(box)
-            dl.addRow(label, row)
-            row = span(self._size_sliders[lo], self._size_sliders[hi])
-            row.addSpacing(box.sizeHint().width())
-            dl.addRow('', row)
+            dl.addRow(label, box)  # the range's 자동 switch, then min / max sliders
+            dl.addRow('  최소', theme.slider_field(self._size_sliders[lo], lo))
+            dl.addRow('  최대', theme.slider_field(self._size_sliders[hi], hi))
             for w in (lo, hi):  # automatic: the fields only show the range in use
                 w.setEnabled(not box.isChecked())
                 self._size_sliders[w].setEnabled(not box.isChecked())
@@ -531,6 +530,19 @@ class RoiPanel(QWidget):
 
     def manual_mode(self) -> bool:
         return self.mode_tabs.currentIndex() == 1
+
+    def _mode_page(self, index):
+        """Only the chosen mode's page takes room; the switch follows the
+        page (projects restore the page)."""
+        from PySide6.QtWidgets import QSizePolicy  # noqa: PLC0415
+
+        for i in range(self.mode_tabs.count()):
+            pol = QSizePolicy.Policy.Preferred if i == index else QSizePolicy.Policy.Ignored
+            self.mode_tabs.widget(i).setSizePolicy(pol, pol)
+        self.mode_tabs.updateGeometry()
+        self._mode_auto.blockSignals(True)
+        self._mode_auto.setChecked(index == 0)
+        self._mode_auto.blockSignals(False)
 
     def _mode_changed(self, _):
         if self.item is not None:

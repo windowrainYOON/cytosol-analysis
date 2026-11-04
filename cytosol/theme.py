@@ -414,6 +414,112 @@ def unify(page: QWidget):
     forms(root)
 
 
+SETTINGS_ROW_H = 30  # every settings row of a card the same height (owner rule 2026-11-04)
+PLAIN_NUM_W = 76  # number field beside a slider
+PLAIN_NUM_MAX_W = 104
+
+
+def plain_number(spin: QAbstractSpinBox) -> QAbstractSpinBox:
+    """A number input without stepper arrows (beside a slider)."""
+    spin.setProperty('hig_plain', True)  # the sheet hides the stepper buttons
+    spin.setProperty('hig_num', True)  # the polisher leaves its width alone
+    spin.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    spin.setMinimumWidth(PLAIN_NUM_W)
+    spin.setMaximumWidth(PLAIN_NUM_MAX_W)
+    _restyle(spin)
+    return spin
+
+
+def slider_field(slider: QWidget, spin: QAbstractSpinBox, *extra: QWidget) -> QWidget:
+    """Slider input (owner rule 2026-11-04): title – slider – plain number
+    field on one row; `extra` (a 자동 switch …) follows at the row end."""
+    from PySide6.QtWidgets import QHBoxLayout, QSizePolicy  # noqa: PLC0415
+
+    holder = QWidget()
+    holder.setProperty('hig_no_reflow', True)
+    holder.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    lay = QHBoxLayout(holder)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(8)
+    lay.addWidget(slider, 1)
+    lay.addWidget(plain_number(spin))
+    for w in extra:
+        lay.addWidget(w)
+    return holder
+
+
+def auto_value(spin: QAbstractSpinBox, manual: float | None = None,
+               tip: str = '') -> QWidget:
+    """A value whose minimum means 자동 (special value text): the choice is a
+    자동 switch (owner rule 2026-11-04); while it is on the field is hidden
+    (there is no value of its own to show), off brings the last manual
+    value back (or `manual`)."""
+    from PySide6.QtWidgets import QHBoxLayout  # noqa: PLC0415
+
+    holder = QWidget()
+    holder.setProperty('hig_no_reflow', True)
+    lay = QHBoxLayout(holder)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(8)
+    box = QCheckBox('자동')
+    if tip:
+        box.setToolTip(tip)
+    lay.addWidget(spin)
+    lay.addWidget(box)
+    holder.auto_box = box
+    spin.auto_box = box
+    state = {'last': manual}
+
+    def from_spin(v):
+        on = v <= spin.minimum()
+        if not on:
+            state['last'] = v
+        box.blockSignals(True)
+        box.setChecked(on)
+        box.blockSignals(False)
+        spin.setVisible(not on)
+
+    def from_box(on):
+        if on:
+            spin.setValue(spin.minimum())
+        else:
+            v = state['last']
+            if v is None or v <= spin.minimum():
+                v = spin.minimum() + spin.singleStep()
+            spin.setValue(v)
+            spin.setFocus()
+
+    spin.valueChanged.connect(from_spin)
+    box.toggled.connect(from_box)
+    from_spin(spin.value())
+    return holder
+
+
+def show_rows(form: QFormLayout, widgets, visible: bool):
+    """Show only the inputs of the chosen 자동 / 수동 mode (owner rule
+    2026-11-04): hide the form rows of the other one."""
+    for w in widgets:
+        try:
+            form.setRowVisible(w, visible)
+        except (RuntimeError, TypeError):
+            w.setVisible(visible)
+
+
+SETTINGS_FIELD_W = 140  # hig-settings__control--field: every input / stepper of a card
+
+
+def _field_width(w):
+    """Inputs and steppers of a settings card share one width (left and
+    right edges line up); plain fields beside a slider keep theirs."""
+    from PySide6.QtWidgets import QLineEdit  # noqa: PLC0415
+
+    if isinstance(w, (QAbstractSpinBox, QLineEdit)) and not w.property('hig_plain'):
+        from PySide6.QtWidgets import QSizePolicy  # noqa: PLC0415
+
+        w.setFixedWidth(SETTINGS_FIELD_W)
+        w.setSizePolicy(QSizePolicy.Policy.Fixed, w.sizePolicy().verticalPolicy())
+
+
 def settings_rows(form: QFormLayout):
     """Settings card rows (owner rule 2026-11-04): the title at the leading
     edge, the control (field, pop-up, [value][자동], swatch …) at the end of
@@ -421,9 +527,16 @@ def settings_rows(form: QFormLayout):
     from PySide6.QtWidgets import QBoxLayout  # noqa: PLC0415
 
     lead = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-    end = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+    # absolute: a switch is laid out right-to-left, which would mirror a plain AlignRight
+    end = Qt.AlignmentFlag.AlignAbsolute | Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
     form.setLabelAlignment(lead)
     form.setProperty('hig_settings', True)
+    for r in range(form.rowCount()):
+        for role in (QFormLayout.ItemRole.LabelRole, QFormLayout.ItemRole.SpanningRole):
+            it = form.itemAt(r, role)
+            w = it.widget() if it is not None else None
+            if w is not None and w.minimumHeight() < SETTINGS_ROW_H and w.sizeHint().height() < SETTINGS_ROW_H:
+                w.setMinimumHeight(SETTINGS_ROW_H)  # one row height in the card
     for r in range(form.rowCount()):
         item = form.itemAt(r, QFormLayout.ItemRole.FieldRole)
         if item is None or form.itemAt(r, QFormLayout.ItemRole.SpanningRole) is not None:
@@ -438,16 +551,22 @@ def settings_rows(form: QFormLayout):
             nxt = form.itemAt(r + 1, QFormLayout.ItemRole.FieldRole) if r + 1 < form.rowCount() else None
             if nxt is not None and nxt.layout() is not None and nxt.layout().count() > 1:
                 continue  # [min – max] above a pair of sliders: keep them lined up
-            for i in range(n):  # a value field keeps its own width (80–140)
+            fields = [sub.itemAt(i).widget() for i in range(n)
+                      if isinstance(sub.itemAt(i).widget(), QAbstractSpinBox)]
+            for i in range(n):  # a value field keeps its own width
                 if isinstance(sub.itemAt(i).widget(), (QAbstractSpinBox, QComboBox)):
                     sub.setStretch(i, 0)
+            if len(fields) == 1:  # [value][자동]: the card's field width
+                _field_width(fields[0])
             if n and sub.itemAt(n - 1).spacerItem() is not None:
                 sub.insertItem(0, sub.takeAt(n - 1))  # a trailing stretch moves to the front
             elif not sub.expandingDirections() & Qt.Orientation.Horizontal:
                 for i in range(n):
                     sub.setStretch(i, 0)
                 sub.insertStretch(0, 1)
-        elif item.widget() is not None and not (
+        if item.widget() is not None:
+            _field_width(item.widget())
+        if sub is None and item.widget() is not None and not (
                 item.widget().sizePolicy().expandingDirections() & Qt.Orientation.Horizontal):
             item.setAlignment(end)
 
@@ -500,9 +619,8 @@ class RowLines(QWidget):
 
         group = self.parentWidget()
         out = []
-        m = group.layout().contentsMargins() if group.layout() else None
-        x0 = m.left() if m else 12
-        x1 = group.width() - (m.right() if m else 12)
+        # SettingsPane: one 1 px line between settings, the card's full width
+        x0, x1 = 0, group.width()
         for form in group.findChildren(QFormLayout):
             if not form.property('hig_settings'):
                 continue
@@ -540,7 +658,7 @@ class RowLines(QWidget):
                 if cont or b.top() <= a.bottom():
                     continue
                 y = off.y() + (a.bottom() + 1 + b.top()) // 2
-                out.append((y, max(x0, off.x() + min(a.left(), b.left())), x1))
+                out.append((y, x0, x1))
         return out
 
     def paintEvent(self, _ev):

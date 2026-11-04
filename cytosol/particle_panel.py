@@ -106,11 +106,19 @@ class ParticlePanel(QWidget):
         grp = QButtonGroup(self)
         grp.addButton(self.thr_auto)
         grp.addButton(self.thr_manual)
-        row = QHBoxLayout()
-        row.addWidget(self.thr_auto)
-        row.addWidget(self.thr_manual)
-        row.addStretch()
-        pl.addRow('방법', row)
+        # the choice is a 자동 switch (owner rule 2026-11-04); the radio pair
+        # stays as the state (projects, batch) but is not shown
+        self.thr_auto.hide()
+        self.thr_manual.hide()
+        self._method_auto = QCheckBox('자동')
+        self._method_auto.setChecked(True)
+        self._method_auto.setToolTip(self.thr_auto.toolTip() + '\n끄면 수동 threshold: '
+                                     '이 값 이상인 영역이 입자입니다.')
+        self._method_auto.toggled.connect(
+            lambda on: (self.thr_auto if on else self.thr_manual).setChecked(True))
+        self.thr_auto.toggled.connect(self._method_sync)
+        pl.addRow('검출 방식', self._method_auto)
+        self._method_form = pl
         self.spot_k = QDoubleSpinBox()
         self.spot_k.setRange(1.0, 20.0)
         self.spot_k.setSingleStep(0.5)
@@ -134,8 +142,8 @@ class ParticlePanel(QWidget):
         self.thr_slider = QSlider(Qt.Orientation.Horizontal)
         self.thr_slider.setRange(0, THR_STEPS)
         self._thr_range = (0.0, 1.0)
-        pl.addRow('수동 값', self.thr_spin)
-        pl.addRow('', self.thr_slider)
+        self._thr_row = theme.slider_field(self.thr_slider, self.thr_spin)
+        pl.addRow('수동 threshold', self._thr_row)
         self.min_px = QSpinBox()
         self.min_px.setRange(1, 1000000)
         self.min_px.setSuffix(' px')
@@ -207,6 +215,7 @@ class ParticlePanel(QWidget):
         self.thr_spin.valueChanged.connect(self._thr_spin_changed)
         self.thr_slider.valueChanged.connect(self._thr_slider_changed)
         self.thr_manual.toggled.connect(self._manual_toggled)
+        self._method_rows()
         lay.addWidget(part)
 
         reg = QGroupBox('측정')
@@ -443,11 +452,24 @@ class ParticlePanel(QWidget):
         self.schedule()
         self.win.particles_changed()
 
+    def _method_sync(self, auto_on):
+        self._method_auto.blockSignals(True)
+        self._method_auto.setChecked(auto_on)
+        self._method_auto.blockSignals(False)
+        self._method_rows()
+
+    def _method_rows(self):
+        """Only the chosen method's inputs are shown (owner rule 2026-11-04)."""
+        manual = self.thr_manual.isChecked()
+        theme.show_rows(self._method_form, (self._thr_row,), manual)
+        theme.show_rows(self._method_form, (self.spot_k, self.spot_size), not manual)
+
     def _manual_toggled(self, on):
         for w in (self.thr_spin, self.thr_slider):
             w.setEnabled(on)
         for w in (self.spot_k, self.spot_size):
             w.setEnabled(not on)
+        self._method_rows()
         p = self.item.particles if self.item is not None else None
         if on and p is not None and p.thresholds and not self._busy:
             # start from the automatic values

@@ -20,11 +20,15 @@ Detection works on the current Z plane (or MIP) and timepoint.
 
 ## 2. ROI 검출 (Detect ROIs: automatic / manual)
 
-The **ROI 검출** box has two sub-tabs, **자동** (Automatic) and
-**수동 (threshold)** (Manual); detection uses the method of the selected
-one. The size ranges, frame handling and live preview are shared.
+The **검출 방식 … 자동** (detection method, auto) switch at the top of the
+**ROI 검출** box picks **자동** (Automatic, on) or **수동 (threshold)**
+(Manual, off). Only the chosen method's settings are shown; the other's are
+hidden (their values are kept). The size ranges, frame handling and live
+preview are shared. A value with a slider (thresholds) is one row: name –
+slider – number field; the cell and nucleus sizes have **최소** (min) and
+**최대** (max) slider rows.
 
-Every automatic setting has its own **자동** checkbox. Even when it is on,
+Every automatic setting has its own **자동** switch. Even when it is on,
 the value field shows the value actually used; untick it to edit from there.
 At first every value is automatic, and picking an image (with the 세포질 ROI
 tab open) fills the fields with the values for that image (the size ranges

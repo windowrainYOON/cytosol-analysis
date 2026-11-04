@@ -1050,14 +1050,8 @@ class ChannelPanel(QGroupBox):
         top.addWidget(self.reset_btn)
 
         form = QFormLayout()
-        row = QHBoxLayout()
-        row.addWidget(self.min_slider)
-        row.addWidget(self.min_spin)
-        form.addRow('Min', row)
-        row = QHBoxLayout()
-        row.addWidget(self.max_slider)
-        row.addWidget(self.max_spin)
-        form.addRow('Max', row)
+        form.addRow('Min', theme.slider_field(self.min_slider, self.min_spin))
+        form.addRow('Max', theme.slider_field(self.max_slider, self.max_spin))
         form.addRow('Gamma', self.gamma)
 
         lay = QVBoxLayout(self)
