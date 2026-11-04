@@ -142,6 +142,7 @@ class FrapPanel(QWidget):
         self._drift_info.setWordWrap(True)
         theme.hint(self._drift_info)
         fl.addRow(self._drift_info)
+        theme.group_rows(self.drift, self.drift_mode, self.drift_win, self._drift_info)
         lay.addWidget(data)
 
         # ---- ROIs of the current image: one settings row per value ----
@@ -223,6 +224,10 @@ class FrapPanel(QWidget):
         reset.clicked.connect(self.reset_auto)
         self.notes = theme.StatusLabel(kind='warning')
         self.notes.setWordWrap(True)
+        theme.group_rows(self._auto_roi['bleach'], self._roi_info['bleach'], self._file_roi, self._bleach_d)
+        theme.group_rows(self._auto_roi['control'], self._roi_info['control'], self.control_src,
+                         self._control_d)
+        theme.group_rows(self._auto_roi['background'], self._roi_info['background'])
         rf.addRow(_row(reset))
         rf.addRow(self.notes)
         lay.addWidget(rbox)

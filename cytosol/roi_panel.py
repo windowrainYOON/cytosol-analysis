@@ -257,6 +257,10 @@ class RoiPanel(QWidget):
         dl.addRow(self.fit_size)
         dl.addRow(self.neck_cut)  # its width on a row of its own: the pane stays narrow
         dl.addRow('목 폭 ≤', self._with_auto(self.neck_max))
+        # rows that belong together: no hairline between them (owner rule 2026-11-04)
+        theme.group_rows(self.sat, self.input_view)
+        theme.group_rows(*(t['spin'] for t in self.thr.values()), self.thr_view)
+        theme.group_rows(self.neck_cut, self.neck_max)
 
         # 수동 sub-tab: threshold only (at or above = ROI, below = discarded)
         manual = QWidget()
@@ -284,6 +288,7 @@ class RoiPanel(QWidget):
         self.man_view.setChecked(True)
         self.man_view.toggled.connect(lambda _: self.win.update_preview())
         ml.addRow(self.man_view)
+        theme.group_rows(*(m['spin'] for m in self.man.values()), self.man_view)
 
         # 자동 / 수동 (threshold) stay two separate pages (owner rule
         # 2026-10-27); the choice between them is a 자동 switch (2026-11-04)
@@ -329,6 +334,7 @@ class RoiPanel(QWidget):
                 self._size_sliders[w].setEnabled(not box.isChecked())
         dl.addRow('프레임에 걸친 세포', self.edge_combo)
         dl.addRow('안쪽 경계 여백', self._with_auto(self.edge_margin))
+        theme.group_rows(self.edge_combo, self.edge_margin)
         run_one = theme.prominent(QPushButton('ROI 검출 (현재 이미지)'))
         run_one.clicked.connect(self.detect_current)
         run_all = QPushButton('모든 이미지')

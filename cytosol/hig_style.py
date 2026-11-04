@@ -52,7 +52,7 @@ R_CTL = 6
 R_GROUP = 10
 R_WINDOW = 12
 ROW = 28
-SW_W, SW_H = 38, 22
+SW_W, SW_H = 40, 22
 SELECT_CAP = 18  # desktop-select-cap
 CHECK = 16
 STEPPER_W = 20
@@ -96,20 +96,22 @@ def _icons(scheme: str) -> dict[str, str]:
     chev_op = f'{sec.alphaF():.2f}'
     # macOS switch (Toggle component, settings look): knob with a soft
     # hairline and a small shadow, off track `fill` with an inner hairline
-    knob_shadow = ('<circle cx="{cx}" cy="12" r="9.2" fill="#000" fill-opacity="0.10"/>'
-                   '<circle cx="{cx}" cy="11.6" r="9.4" fill="#000" fill-opacity="0.05"/>')
+    knob_shadow = ('<rect x="{x}" y="2.6" width="24" height="18" rx="9" fill="#000" fill-opacity="0.10"/>'
+                   '<rect x="{x}" y="2.2" width="24" height="18.4" rx="9.2" fill="#000" fill-opacity="0.05"/>')
     base = t['background-tertiary'][:7]
 
     def switch(on: bool, disabled: bool = False):
+        # macOS 26 settings switch: a track a little wider than before and a
+        # pill-shaped knob stretched sideways (not a circle)
         op = '0.4' if disabled else '1'
-        cx = 27 if on else 11
-        bg = (f'<rect x="0" y="0" width="38" height="22" rx="11" fill="{accent}"/>' if on else
-              f'<rect x="0" y="0" width="38" height="22" rx="11" fill="{track}" '
+        x = 14 if on else 2
+        bg = (f'<rect x="0" y="0" width="40" height="22" rx="11" fill="{accent}"/>' if on else
+              f'<rect x="0" y="0" width="40" height="22" rx="11" fill="{track}" '
               f'fill-opacity="{track_op}"/>'
-              '<rect x="0.25" y="0.25" width="37.5" height="21.5" rx="10.75" fill="none" '
+              '<rect x="0.25" y="0.25" width="39.5" height="21.5" rx="10.75" fill="none" '
               'stroke="#000" stroke-opacity="0.10" stroke-width="0.5"/>')
-        knob = (knob_shadow.format(cx=cx)
-                + f'<circle cx="{cx}" cy="11" r="9" fill="{white}" stroke="#000" '
+        knob = (knob_shadow.format(x=x)
+                + f'<rect x="{x}" y="2" width="24" height="18" rx="9" fill="{white}" stroke="#000" '
                   'stroke-opacity="0.12" stroke-width="0.5"/>')
         return _svg(f'<g opacity="{op}">{bg}{knob}</g>', SW_W, SW_H)
 

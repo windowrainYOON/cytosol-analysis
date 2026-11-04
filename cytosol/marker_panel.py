@@ -94,6 +94,7 @@ class MarkerPanel(QWidget):
         f.addRow('글자-마커 간격', theme.auto_value(self.sb_gap, 4))
         f.addRow('가장자리 여백', theme.auto_value(self.sb_margin, 20))
         f.addRow('색', self.sb_color)
+        theme.group_rows(self.sb_label, self.sb_font)  # the label and its size
         lay.addWidget(self.sb)
 
         # time-series marker
@@ -139,6 +140,9 @@ class MarkerPanel(QWidget):
         f.addRow('글자-막대 간격', theme.auto_value(self.ts_gap, 4))
         f.addRow('가장자리 여백', theme.auto_value(self.ts_margin, 20))
         f.addRow('색', self.ts_color)
+        theme.group_rows(self.ts_label, self.ts_unit, self.ts_dec, self.ts_prefix, self.ts_offset,
+                         self.ts_font)  # the time text
+        theme.group_rows(self.ts_bar, self.ts_bar_len, self.ts_bar_thick, self.ts_gap)  # the bar
         lay.addWidget(self.ts)
         # bleach regions (FRAP etc.) read from the file
         self.bl = QGroupBox('Bleach ROI (파일에 기록된 bleach 영역)')
@@ -161,6 +165,7 @@ class MarkerPanel(QWidget):
         f.addRow(self.bl_label)
         f.addRow('선 두께', theme.auto_value(self.bl_thick, 2))
         f.addRow('색', self.bl_color)
+        theme.group_rows(self.bl_show, self.bl_export, self.bl_label)
         lay.addWidget(self.bl)
         note = QLabel('Time-series marker는 시점이 2개 이상인 이미지에만 그려집니다. '
                       '숫자 칸의 "자동"은 이미지 크기에 맞춘 값입니다.')

@@ -144,6 +144,8 @@ class ParticlePanel(QWidget):
         self._thr_range = (0.0, 1.0)
         self._thr_row = theme.slider_field(self.thr_slider, self.thr_spin)
         pl.addRow('수동 threshold', self._thr_row)
+        # the method and the inputs it uses: one group, no lines inside (owner rule 2026-11-04)
+        theme.group_rows(self._method_auto, self.spot_k, self.spot_size, self.thr_spin)
         self.min_px = QSpinBox()
         self.min_px.setRange(1, 1000000)
         self.min_px.setSuffix(' px')

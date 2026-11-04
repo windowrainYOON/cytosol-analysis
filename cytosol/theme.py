@@ -588,6 +588,53 @@ def _slider_only(item) -> bool:
         k.spacerItem() is not None or isinstance(k.widget(), (QAbstractSlider, QLabel)) for k in kids)
 
 
+_GROUP_SEQ = [0]
+
+
+def group_rows(*widgets, name: str | None = None) -> str:
+    """Rows that belong together (owner rule 2026-11-04): no hairline between
+    them, only around the group.  Pass any widget of each row (its title
+    label, field, holder or a widget inside the field's layout)."""
+    if name is None:
+        _GROUP_SEQ[0] += 1
+        name = f'g{_GROUP_SEQ[0]}'
+    for w in widgets:
+        if w is not None:
+            w.setProperty('hig_group', name)
+    return name
+
+
+def _item_group(item):
+    if item is None:
+        return None
+    w = item.widget()
+    if w is not None:
+        g = w.property('hig_group')
+        if g:
+            return g
+        for c in w.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            g = c.property('hig_group')
+            if g:
+                return g
+        return None
+    lay = item.layout()
+    if lay is not None:
+        for i in range(lay.count()):
+            g = _item_group(lay.itemAt(i))
+            if g:
+                return g
+    return None
+
+
+def _row_group(form, r):
+    for role in (QFormLayout.ItemRole.LabelRole, QFormLayout.ItemRole.FieldRole,
+                 QFormLayout.ItemRole.SpanningRole):
+        g = _item_group(form.itemAt(r, role))
+        if g:
+            return g
+    return None
+
+
 class RowLines(QWidget):
     """Hairlines between the rows of a settings card (Settings component):
     drawn over the group box in the gaps between consecutive form rows, from
@@ -624,6 +671,9 @@ class RowLines(QWidget):
         out = []
         # SettingsPane: one 1 px line between settings, the card's full width
         x0, x1 = 0, group.width()
+        # rows of every settings form in the card (pages such as 자동 / 수동 sit
+        # in forms of their own), in the card's coordinates, top to bottom
+        rows = []
         for form in group.findChildren(QFormLayout):
             if not form.property('hig_settings'):
                 continue
@@ -631,9 +681,8 @@ class RowLines(QWidget):
             if host is None or not host.isVisibleTo(group) or not host.isVisible():
                 continue
             off = host.mapTo(group, QPoint(0, 0))
-            rows = []
             for r in range(form.rowCount()):
-                rect, cont, shown = None, False, False
+                rect, cont, shown, nested = None, False, False, False
                 for role in (QFormLayout.ItemRole.LabelRole, QFormLayout.ItemRole.FieldRole,
                              QFormLayout.ItemRole.SpanningRole):
                     it = form.itemAt(r, role)
@@ -642,6 +691,9 @@ class RowLines(QWidget):
                     w = it.widget()
                     if w is not None and not w.isVisible():
                         continue
+                    if w is not None and any(f.property('hig_settings') for f in w.findChildren(QFormLayout)):
+                        nested = True  # a page holding its own rows: those count instead
+                        break
                     if isinstance(w, QLabel) and not w.text().strip() and w.pixmap().isNull():
                         cont = cont or role == QFormLayout.ItemRole.LabelRole
                         continue  # an empty title / an empty status line
@@ -653,16 +705,21 @@ class RowLines(QWidget):
                         continue
                     shown = True
                     rect = g if rect is None else rect.united(g)
+                if nested or not shown:
+                    continue
+                lab = form.itemAt(r, QFormLayout.ItemRole.LabelRole)
+                lw = lab.widget() if lab is not None else None
+                if isinstance(lw, QLabel) and lw.text().startswith(' '):
+                    cont = True  # an indented title ('  최소') belongs to the row above
                 if form.itemAt(r, QFormLayout.ItemRole.LabelRole) is None \
                         and form.itemAt(r, QFormLayout.ItemRole.SpanningRole) is None:
                     cont = True  # addRow('', slider): a field without a title follows the row above
-                if shown:
-                    rows.append((rect, cont))
-            for (a, _c), (b, cont) in zip(rows, rows[1:]):
-                if cont or b.top() <= a.bottom():
-                    continue
-                y = off.y() + (a.bottom() + 1 + b.top()) // 2
-                out.append((y, x0, x1))
+                rows.append((rect.translated(off), cont, _row_group(form, r)))
+        rows.sort(key=lambda t: t[0].top())
+        for (a, _c, ga), (b, cont, gb) in zip(rows, rows[1:]):
+            if cont or (ga and ga == gb) or b.top() <= a.bottom():
+                continue  # rows grouped by meaning: no line inside the group
+            out.append(((a.bottom() + 1 + b.top()) // 2, x0, x1))
         return out
 
     def paintEvent(self, _ev):
