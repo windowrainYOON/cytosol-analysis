@@ -27,8 +27,9 @@ Inset group         QGroupBox
 List / Table        item views radius 12; sidebar rows = accent pill
 Menu / Tooltip      QMenu radius 12, items accent pill on hover
 Progress / Slider   6 px capsule, accent fill; slider knob 18
-Surfaces            window background-secondary; floating sidebar panel
-                    (#hig_sidebar), transparent centre / inspector
+Surfaces            three regions, each its own surface: sidebar and
+                    inspector = theme.PANE_TOKEN, canvas = CONTENT_TOKEN,
+                    1 px separator dividers (hig_widgets.PaneSplitter)
 ==================  ==========================================================
 
 Not styled here (design system exclusion ``measurement-plots.md``): the image
@@ -173,8 +174,7 @@ GLASS_ALPHA = 0.45
 R_CAPSULE = CTL // 2  # buttons, chips, segmented controls
 R_FIELD = 8
 R_VALUE = 6
-R_PANEL = 18  # floating sidebar panel
-R_ROW = 10  # selected row inside the panel (18 - inset 8)
+R_ROW = 10  # selected row in the sidebar list
 R_INSET_GROUP = 12
 R_MENU = 12
 INSET = 8
@@ -202,28 +202,28 @@ def stylesheet(scheme: str | None = None, glass: bool | None = None) -> str:
     accent = c('blue')
     line = tint('label', 0.12)  # hig-glass-line
     group_bg = tint('background', 0.62)
-    if glass:  # functional layer (window, sidebar panel) see-through, content opaque
+    pane = c(theme.PANE_TOKEN[s])  # sidebar, inspector
+    content = c(theme.CONTENT_TOKEN[s])  # canvas
+    if glass:  # functional layer (side panes) see-through, content opaque
         surfaces = f"""
 QMainWindow {{ background: transparent; }}
-QWidget#hig_sidebar {{ background: {tint('background-secondary', 0.34)}; }}
-QWidget#hig_inspector, QStatusBar {{ background: transparent; }}
+QWidget#hig_sidebar, QWidget#hig_inspector {{ background: {tint(theme.PANE_TOKEN[s], GLASS_ALPHA)}; }}
+QStatusBar {{ background: transparent; }}
 """
     else:
         surfaces = ''
     return f"""
-/* ---- surfaces: one window sheet, a floating sidebar panel, transparent panes ---- */
+/* ---- surfaces: three regions (Sidebar | Canvas | Inspector), each its own
+   surface, hairline dividers between them (PaneSplitter) ---- */
 QMainWindow, QDialog {{ background: {c('background-secondary')}; }}
-QWidget#hig_content, QWidget#hig_inspector {{ background: transparent; }}
-QWidget#hig_sidebar {{
-    background: {tint('background', 0.55)}; border: 1px solid {line};
-    border-radius: {R_PANEL}px;
-}}
+QWidget#hig_content {{ background: {content}; }}
+QWidget#hig_sidebar, QWidget#hig_inspector {{ background: {pane}; border: none; }}
+QWidget#hig_inspector_head, QWidget#hig_inspector_body {{ background: transparent; }}
 QScrollArea, QScrollArea > QWidget > QWidget#qt_scrollarea_viewport,
 QScrollArea > QWidget#qt_scrollarea_viewport {{ background: transparent; border: none; }}
 QSplitter::handle {{ background: transparent; }}
-QSplitter::handle:horizontal {{ width: {INSET}px; }}
-QSplitter::handle:vertical {{ height: {INSET}px; }}
-QStatusBar {{ background: transparent; color: {c('label-secondary')}; }}
+QStatusBar {{ background: transparent; color: {c('label-secondary')};
+    border-top: 1px solid {c('separator')}; padding-left: 12px; }}
 QStatusBar QLabel {{ color: {c('label-secondary')}; }}
 QStatusBar::item {{ border: none; }}
 

@@ -325,11 +325,11 @@ class Canvas(QGraphicsView):
         self.viewport().setMouseTracking(True)
 
     def refresh_theme(self):
-        """The area around the image follows the window background (light /
+        """The area around the image is the centre region's surface (light /
         dark), so the preview shows no dark band in light mode."""
         from . import theme  # noqa: PLC0415
 
-        self.setBackgroundBrush(theme.color('background-secondary'))
+        self.setBackgroundBrush(theme.content_color())
     def set_image(self, qimg: QImage, refit=False):
         self.pix.setPixmap(QPixmap.fromImage(qimg))
         self._scene_rect()
@@ -1274,15 +1274,16 @@ class MainWindow(QMainWindow):
                             '그룹 지정 · 이름 변경 · 해제: 여러 이미지를 고른 뒤 우클릭')
         auto_btn.clicked.connect(self.auto_group)
         self.auto_group_btn = auto_btn
-        # tahoe sidebar: a floating panel inset 8 px from the window edge
+        # sidebar region: its own surface, divided from the canvas by a
+        # hairline, with its own inner padding
         left = QWidget()
         left.setObjectName('hig_sidebar')  # functional layer: sidebar material
         left.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         ll = QVBoxLayout(left)
-        ll.setContentsMargins(8, 12, 8, 8)
-        ll.setSpacing(8)
+        ll.setContentsMargins(*theme.SIDEBAR_MARGINS)
+        ll.setSpacing(12)
         head = QHBoxLayout()
-        head.setContentsMargins(6, 0, 0, 0)
+        head.setContentsMargins(4, 0, 0, 0)
         title = theme.text_style(QLabel('이미지'), 'headline')
         head.addWidget(title, 1)
         head.addWidget(auto_btn)
@@ -1293,13 +1294,10 @@ class MainWindow(QMainWindow):
                'Z: 3DFL OffsetZ). 끄면 HT와 FL이 따로 열립니다. 새로 추가하는 파일부터 적용됩니다.')
         self.align_tcf.setToolTip(tip)
         tcf_row = wrapped_check(self.align_tcf, 'TCF: HT와 FL을 정렬해 한 이미지로', tip)
-        tcf_row.setContentsMargins(6, 0, 0, 0)
+        tcf_row.setContentsMargins(4, 0, 0, 0)
         ll.addLayout(tcf_row)
         ll.addWidget(self.file_list, 1)
-        left_holder = QWidget()  # the panel floats: inset from the window edge
-        lh = QVBoxLayout(left_holder)
-        lh.setContentsMargins(8, 8, 0, 8)
-        lh.addWidget(left)
+        left_holder = left
         self.sidebar = left
 
         # crop regions of the current image (Crop menu > Crop 탭)
@@ -1426,6 +1424,8 @@ class MainWindow(QMainWindow):
         center.setObjectName('hig_content')  # content layer between the two side panes
         center.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         cl = QVBoxLayout(center)
+        cl.setContentsMargins(*theme.CONTENT_MARGINS)
+        cl.setSpacing(10)
         cl.addLayout(bar1)
         self.z_col = QWidget()
         zl = QVBoxLayout(self.z_col)
@@ -1586,7 +1586,7 @@ class MainWindow(QMainWindow):
 
         # the file list and the tools keep their widths; only the preview
         # grows or shrinks with the window.  Dragged widths are remembered.
-        split = QSplitter()
+        split = hig_widgets.PaneSplitter()  # hairline dividers between the regions
         self.main_split = split
         split.addWidget(left_holder)
         split.addWidget(center)

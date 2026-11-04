@@ -149,6 +149,29 @@ def scheme() -> str:
     return 'light'
 
 
+# The three regions of the window (Sidebar | Canvas | Inspector), each its
+# own surface with a hairline divider between them, and each with its own
+# inner padding (owner request 2026-11-04)
+PANE_TOKEN = {'light': 'background', 'dark': 'background-tertiary'}  # sidebar, inspector
+CONTENT_TOKEN = {'light': 'background-secondary', 'dark': 'background-secondary'}  # canvas
+SIDEBAR_MARGINS = (16, 16, 16, 16)
+INSPECTOR_MARGINS = (20, 16, 20, 16)
+CONTENT_MARGINS = (16, 12, 16, 12)
+DIVIDER = 1  # px line between the regions
+
+
+def pane_color(scheme_: str | None = None) -> QColor:
+    """Surface of the side panes (sidebar, inspector)."""
+    s = scheme_ or scheme()
+    return _hex(TOKENS[s][PANE_TOKEN[s]])
+
+
+def content_color(scheme_: str | None = None) -> QColor:
+    """Surface of the centre (canvas and the letterbox around the image)."""
+    s = scheme_ or scheme()
+    return _hex(TOKENS[s][CONTENT_TOKEN[s]])
+
+
 def color(name: str) -> QColor:
     """A colour token for the current light / dark scheme."""
     return _hex(TOKENS[scheme()][name])

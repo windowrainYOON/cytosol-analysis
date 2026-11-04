@@ -1,6 +1,7 @@
 """Design-system widgets that a style sheet cannot make (macOS tahoe style,
-Desktop profile): SF Symbols-style icons, toolbar icon buttons and the
-capsule chip switcher that replaces the inspector's tab bar.
+Desktop profile): SF Symbols-style icons, toolbar icon buttons, the capsule
+chip switcher that replaces the inspector's tab bar, and the hairline
+dividers between the window's regions (Sidebar | Canvas | Inspector).
 
 All colours come from `theme.color` (tokens, light / dark) and are re-read
 on every paint or on `theme.refresh`, so nothing here holds a fixed colour.
@@ -15,6 +16,8 @@ from PySide6.QtWidgets import (
     QAbstractButton,
     QMenu,
     QSizePolicy,
+    QSplitter,
+    QSplitterHandle,
     QTabWidget,
     QToolButton,
     QVBoxLayout,
@@ -247,14 +250,76 @@ class ChipTabs(QTabWidget):
         self._flow.invalidate()
 
 
+class Divider(QWidget):
+    """A 1 px hairline in the `separator` token (horizontal by default)."""
+
+    def __init__(self, vertical: bool = False, parent=None):
+        super().__init__(parent)
+        self.setObjectName('hig_divider')
+        if vertical:
+            self.setFixedWidth(theme.DIVIDER)
+        else:
+            self.setFixedHeight(theme.DIVIDER)
+
+    def paintEvent(self, _ev):
+        qp = QPainter(self)
+        qp.fillRect(self.rect(), theme.color('separator'))
+        qp.end()
+
+
+class _PaneHandle(QSplitterHandle):
+    """Splitter handle between two regions: a 1 px divider on the side pane's
+    edge, the rest of the (wider, easy to grab) handle in the canvas
+    surface, so the regions meet at one clean line."""
+
+    def paintEvent(self, _ev):
+        qp = QPainter(self)
+        qp.fillRect(self.rect(), theme.content_color())
+        sp = self.splitter()
+        i = sp.indexOf(self)
+        # the line sits next to the side pane: on the left for the handle after
+        # the sidebar, on the right for the handle before the inspector
+        x = 0 if i <= 1 else self.width() - theme.DIVIDER
+        qp.fillRect(x, 0, theme.DIVIDER, self.height(), theme.color('separator'))
+        qp.end()
+
+
+class PaneSplitter(QSplitter):
+    """The main window's Sidebar | Canvas | Inspector splitter."""
+
+    HANDLE_W = 5
+
+    def __init__(self, parent=None):
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self.setHandleWidth(self.HANDLE_W)
+
+    def createHandle(self):
+        return _PaneHandle(self.orientation(), self)
+
+
 def inspector(tabs: ChipTabs) -> QWidget:
-    """The inspector pane: chips on top, the pages below."""
+    """The inspector region: a header with the chips, a hairline under it,
+    then the pages, each part with its own padding."""
     pane = QWidget()
     pane.setObjectName('hig_inspector')
     pane.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
     lay = QVBoxLayout(pane)
-    lay.setContentsMargins(20, 10, 8, 8)  # tahoe inspector: 0 inset 8, margin 20
-    lay.setSpacing(12)
-    lay.addWidget(tabs.chips)
-    lay.addWidget(tabs, 1)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(0)
+    left, top, right, bottom = theme.INSPECTOR_MARGINS
+    head = QWidget()
+    head.setObjectName('hig_inspector_head')
+    hl = QVBoxLayout(head)
+    hl.setContentsMargins(left, top, right, 12)
+    hl.addWidget(tabs.chips)
+    lay.addWidget(head)
+    lay.addWidget(Divider())
+    body = QWidget()
+    body.setObjectName('hig_inspector_body')
+    bl = QVBoxLayout(body)
+    # the scroll bar sits in the right padding; pages keep 4 px for it (unify)
+    bl.setContentsMargins(left, 16, right - 8, bottom)
+    bl.addWidget(tabs, 1)
+    lay.addWidget(body, 1)
+    pane.head, pane.body = head, body
     return pane
