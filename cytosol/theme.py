@@ -364,7 +364,7 @@ PAGE_SPACING = 12  # between groups (plus the 24 px title band of the next group
 GROUP_MARGINS = (12, 10, 12, 12)  # inset row padding 12: titles, labels, controls align
 GROUP_SPACING = 8
 FORM_H_SPACING = 12
-FORM_V_SPACING = 8
+FORM_V_SPACING = 12  # settings rows: 28 + 12 = desktop-settings-row 40, a hairline between
 
 
 def unify(page: QWidget):
@@ -387,6 +387,7 @@ def unify(page: QWidget):
         if isinstance(lay, QFormLayout):
             lay.setHorizontalSpacing(FORM_H_SPACING)
             lay.setVerticalSpacing(FORM_V_SPACING)
+            settings_rows(lay)
         for i in range(lay.count()):
             forms(lay.itemAt(i).layout())
 
@@ -406,10 +407,150 @@ def unify(page: QWidget):
         if isinstance(w, QGroupBox):
             lay.setContentsMargins(*GROUP_MARGINS)
             lay.setSpacing(GROUP_SPACING)
+            RowLines.attach(w)
         elif not isinstance(w, QTabWidget) and default_margins(lay):
             lay.setContentsMargins(0, 0, 0, 0)
         forms(lay)
     forms(root)
+
+
+def settings_rows(form: QFormLayout):
+    """Settings card rows (owner rule 2026-11-04): the title at the leading
+    edge, the control (field, pop-up, [value][자동], swatch …) at the end of
+    the row.  Fields that stretch (sliders, text fields) still fill the row."""
+    from PySide6.QtWidgets import QBoxLayout  # noqa: PLC0415
+
+    lead = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+    end = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+    form.setLabelAlignment(lead)
+    form.setProperty('hig_settings', True)
+    for r in range(form.rowCount()):
+        item = form.itemAt(r, QFormLayout.ItemRole.FieldRole)
+        if item is None or form.itemAt(r, QFormLayout.ItemRole.SpanningRole) is not None:
+            continue  # a spanning row (check box, note, buttons) keeps its place
+        lab = form.itemAt(r, QFormLayout.ItemRole.LabelRole)
+        if lab is None or (isinstance(lab.widget(), QLabel) and not lab.widget().text().strip()):
+            continue  # a slider row under its field follows that field
+        sub = item.layout()
+        if isinstance(sub, QBoxLayout) and sub.direction() in (
+                QBoxLayout.Direction.LeftToRight, QBoxLayout.Direction.RightToLeft):
+            n = sub.count()
+            nxt = form.itemAt(r + 1, QFormLayout.ItemRole.FieldRole) if r + 1 < form.rowCount() else None
+            if nxt is not None and nxt.layout() is not None and nxt.layout().count() > 1:
+                continue  # [min – max] above a pair of sliders: keep them lined up
+            for i in range(n):  # a value field keeps its own width (80–140)
+                if isinstance(sub.itemAt(i).widget(), (QAbstractSpinBox, QComboBox)):
+                    sub.setStretch(i, 0)
+            if n and sub.itemAt(n - 1).spacerItem() is not None:
+                sub.insertItem(0, sub.takeAt(n - 1))  # a trailing stretch moves to the front
+            elif not sub.expandingDirections() & Qt.Orientation.Horizontal:
+                for i in range(n):
+                    sub.setStretch(i, 0)
+                sub.insertStretch(0, 1)
+        elif item.widget() is not None and not (
+                item.widget().sizePolicy().expandingDirections() & Qt.Orientation.Horizontal):
+            item.setAlignment(end)
+
+
+def _slider_only(item) -> bool:
+    from PySide6.QtWidgets import QAbstractSlider  # noqa: PLC0415
+
+    w = item.widget()
+    if w is not None:
+        return isinstance(w, QAbstractSlider)
+    lay = item.layout()
+    if lay is None:
+        return False
+    kids = [lay.itemAt(i) for i in range(lay.count())]
+    return any(k.widget() is not None for k in kids) and all(
+        k.spacerItem() is not None or isinstance(k.widget(), (QAbstractSlider, QLabel)) for k in kids)
+
+
+class RowLines(QWidget):
+    """Hairlines between the rows of a settings card (Settings component):
+    drawn over the group box in the gaps between consecutive form rows, from
+    the text start to the card's inner edge.  A row with an empty title (a
+    slider under its field) continues the row above it: no line."""
+
+    @classmethod
+    def attach(cls, group: QWidget):
+        if group.findChild(RowLines, options=Qt.FindChildOption.FindDirectChildrenOnly) is None:
+            cls(group)
+
+    def __init__(self, group: QWidget):
+        super().__init__(group)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setGeometry(group.rect())
+        group.installEventFilter(self)
+        self.raise_()
+
+    def eventFilter(self, obj, ev):
+        if obj is self.parentWidget() and ev.type() in (
+                QEvent.Type.Resize, QEvent.Type.LayoutRequest, QEvent.Type.Show):
+            self.setGeometry(obj.rect())
+            self.raise_()
+            self.update()
+        return False
+
+    def lines(self) -> list[tuple[int, int, int]]:
+        """(y, x0, x1) of every hairline, in the group's coordinates."""
+        from PySide6.QtCore import QPoint  # noqa: PLC0415
+
+        group = self.parentWidget()
+        out = []
+        m = group.layout().contentsMargins() if group.layout() else None
+        x0 = m.left() if m else 12
+        x1 = group.width() - (m.right() if m else 12)
+        for form in group.findChildren(QFormLayout):
+            if not form.property('hig_settings'):
+                continue
+            host = form.parentWidget()
+            if host is None or not host.isVisibleTo(group) or not host.isVisible():
+                continue
+            off = host.mapTo(group, QPoint(0, 0))
+            rows = []
+            for r in range(form.rowCount()):
+                rect, cont, shown = None, False, False
+                for role in (QFormLayout.ItemRole.LabelRole, QFormLayout.ItemRole.FieldRole,
+                             QFormLayout.ItemRole.SpanningRole):
+                    it = form.itemAt(r, role)
+                    if it is None or it.isEmpty():
+                        continue
+                    w = it.widget()
+                    if w is not None and not w.isVisible():
+                        continue
+                    if isinstance(w, QLabel) and not w.text().strip() and w.pixmap().isNull():
+                        cont = cont or role == QFormLayout.ItemRole.LabelRole
+                        continue  # an empty title / an empty status line
+                    if role == QFormLayout.ItemRole.SpanningRole and _slider_only(it):
+                        cont = True  # a slider under the field above
+                    g = it.geometry()
+                    if g.height() <= 0:
+                        continue
+                    shown = True
+                    rect = g if rect is None else rect.united(g)
+                if form.itemAt(r, QFormLayout.ItemRole.LabelRole) is None \
+                        and form.itemAt(r, QFormLayout.ItemRole.SpanningRole) is None:
+                    cont = True  # addRow('', slider): a field without a title follows the row above
+                if shown:
+                    rows.append((rect, cont))
+            for (a, _c), (b, cont) in zip(rows, rows[1:]):
+                if cont or b.top() <= a.bottom():
+                    continue
+                y = off.y() + (a.bottom() + 1 + b.top()) // 2
+                out.append((y, max(x0, off.x() + min(a.left(), b.left())), x1))
+        return out
+
+    def paintEvent(self, _ev):
+        from PySide6.QtGui import QPen  # noqa: PLC0415
+
+        p = QPainter(self)
+        p.setPen(QPen(color('separator'), 0))  # hairline: one device pixel
+        for y, a, b in self.lines():
+            p.drawLine(a, y, b, y)
+        p.end()
 
 
 def separator() -> QFrame:
@@ -550,9 +691,10 @@ class _Polisher(QObject):
     def eventFilter(self, obj, ev):
         if ev.type() == QEvent.Type.Polish and isinstance(obj, QAbstractSpinBox) \
                 and not obj.property('hig_num'):
-            # NumberInput: digits end-aligned (tabular figures come with the font)
+            # stepper: the value starts at the leading edge (owner rule
+            # 2026-11-04), the arrows sit at the end
             obj.setProperty('hig_num', True)
-            obj.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            obj.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             # NumberInput width: digits + 2 (72–96 px); the field still grows
             # to its size hint when the pane is wide enough
             if not obj.minimumWidth():
@@ -595,10 +737,10 @@ class _Polisher(QObject):
 
 
 def align_forms(root: QWidget):
-    trailing = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+    # dialogs too: titles at the leading edge, controls at the row end
     for form in root.findChildren(QFormLayout):
-        if form.rowWrapPolicy() == QFormLayout.RowWrapPolicy.DontWrapRows:
-            form.setLabelAlignment(trailing)
+        if not form.property('hig_settings'):
+            settings_rows(form)
 
 
 def refresh():

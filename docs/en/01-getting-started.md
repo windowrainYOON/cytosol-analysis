@@ -56,6 +56,9 @@ closes it.
 - The contents of a pane follow its width: rows of buttons and check boxes
   continue on the next line, and a field moves under its label when the
   row does not fit.
+- In a settings card each row has its name on the left and its value or
+  control at the right end, with a thin line between rows; numbers in a field
+  start at the left.
 - A **자동** (auto) switch sits after its label, at the end of the row (on =
   blue).
 - Pop-up menus have no box: the chosen value and a round arrow cap, as wide as

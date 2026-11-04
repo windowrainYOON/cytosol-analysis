@@ -228,6 +228,25 @@ def run(out_dir) -> int:
             if not combos or any(cb.sizePolicy().horizontalPolicy() != QSizePolicy.Policy.Maximum
                                  for cb in combos):
                 raise AssertionError('select pop-ups must fit their content')
+            # settings rows: title leading, control at the row end, stepper
+            # text leading, a hairline between rows
+            from PySide6.QtWidgets import QAbstractSpinBox, QFormLayout
+            mp = win.markers
+            spins = [b for b in win.findChildren(QAbstractSpinBox)]
+            if any(not b.alignment() & Qt.AlignmentFlag.AlignLeft for b in spins):
+                raise AssertionError('stepper text must be left-aligned')
+            win.right_tabs.setCurrentWidget(win.marker_tab)
+            app.processEvents()
+            form = mp.sb.layout()
+            if not isinstance(form, QFormLayout) or not form.property('hig_settings') \
+                    or not form.labelAlignment() & Qt.AlignmentFlag.AlignLeft:
+                raise AssertionError('marker card is not a settings card')
+            fld = form.itemAt(0, QFormLayout.ItemRole.FieldRole).geometry()
+            if form.contentsRect().right() - fld.right() > 2:
+                raise AssertionError('settings control not at the row end')
+            lines = mp.sb.findChild(theme.RowLines)
+            if lines is None or len(lines.lines()) < 5:
+                raise AssertionError('no hairlines between settings rows')
             qss = hig_style.stylesheet('light')
             if 'select_cap' not in qss:
                 raise AssertionError('select cap missing from the style sheet')

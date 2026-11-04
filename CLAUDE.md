@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.53.0)
+## Window structure (v0.54.0)
 
 - **Regions** (owner request 2026-11-04, v0.52; design system
   `components/RegionLayout`): Sidebar | Canvas | Inspector are told apart by
@@ -168,7 +168,10 @@ inset group 12; field 8; value 6; menu 12), capsule buttons (fill, no
 border; `theme.prominent(btn)` = filled accent, at most 2 per tab), fields /
 editable combos / steppers filled without border (number fields 80–140 px),
 pop-ups = Select (v0.53: no box, value + round `fill` cap, content width),
-switches after their label at the row end (v0.53), inset groups = settings
+switches after their label at the row end (v0.53), settings rows (v0.54,
+`theme.settings_rows` + `theme.RowLines` from `unify` / `align_forms`: title
+leading, control at the row end, hairline between rows, none before a
+title-less slider row; stepper text leading), inset groups = settings
 cards (`QGroupBox`: `label` 5 %, no border, title in `label` 600 above at
 x 12), icon-only toolbars as `hig_widgets.icon_group` capsules (tool tip =
 name + shortcut), choice chips for sub-tabs, accent pill + white text for
@@ -378,3 +381,4 @@ not affected.
 | #70 | 0.51.0 | Owner request: Sidebar, Canvas and Inspector clearly separate regions (own surfaces: side panes `background` / dark `background-tertiary`, canvas `background-secondary`; 1 px dividers, `PaneSplitter`), each with its own inner padding (sidebar 16, canvas 16 / 12, inspector 20 / 16 with a chip header and a divider under it); the floating sidebar panel is gone; status bar with a top divider |
 | #71 | 0.52.0 | Owner request + updated design system (`components/RegionLayout`): regions separated by tone and the sidebar's shade instead of lines (raised sidebar / inspector, recessed canvas, glass variant on macOS), padding 20 per region; fixes the box an info / LUT page painted over the inspector (scroll-area autofill) and the tab chip tool tip with square corners covering the page |
 | dev branch | 0.53.0 | Owner request + design system Toggle / Select: switches after their label at the row end (`theme.switch` RightToLeft, settings-look knob), pop-ups without a box (value + round `fill` cap with chevron.up.chevron.down, as wide as the content: `AdjustToContents` + `Maximum`; editable combos keep the field), inset groups as settings cards (`label` 5 %, no border, heading in `label`); 세포질 ROI editing buttons are icon buttons in capsule groups (`hig_widgets.icon_group`, `hig_no_reflow`; name + shortcut in the tool tip, red trash last) |
+| dev branch | 0.54.0 | Owner request: settings rows: titles left, controls at the row end (`theme.settings_rows`: field items aligned right, a trailing stretch of a [value][자동] row moved to the front), steppers' text left, hairlines between rows (`theme.RowLines` overlay per group, row gap 12 = 40 px rows); dialogs' forms the same |
