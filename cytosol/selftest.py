@@ -234,25 +234,36 @@ def run(out_dir) -> int:
             btns = [b.text() for b in win.sidebar.findChildren(QPushButton)]
             if btns != ['자동 그룹']:
                 raise AssertionError(f'left pane buttons: {btns}')
-            # three distinct regions (Sidebar | Canvas | Inspector): own
-            # surfaces, hairline dividers, own inner padding
+            # three regions (RegionLayout): raised sidebar / inspector, a
+            # recessed canvas, no line between them, the sidebar's shade on the
+            # canvas edge, the region margin inside each, no page painting its
+            # own sheet over the region
             split = win.main_split
             if [split.widget(i) for i in range(3)] != [win.sidebar, win.canvas.parentWidget(),
                                                         win.inspector]:
                 raise AssertionError('regions are not sidebar | canvas | inspector')
-            if theme.pane_color().name() == theme.content_color().name():
-                raise AssertionError('side panes and canvas share one surface')
-            if not all(isinstance(split.handle(i), hig_widgets._PaneHandle) for i in (1, 2)):
-                raise AssertionError('no divider between the regions')
-            m = win.sidebar.layout().contentsMargins()
-            if (m.left(), m.top(), m.right(), m.bottom()) != theme.SIDEBAR_MARGINS:
-                raise AssertionError('sidebar padding')
-            m = win.canvas.parentWidget().layout().contentsMargins()
-            if (m.left(), m.top(), m.right(), m.bottom()) != theme.CONTENT_MARGINS:
-                raise AssertionError('canvas padding')
-            if win.inspector.head.layout().contentsMargins().left() != theme.INSPECTOR_MARGINS[0] \
-                    or not win.inspector.findChildren(hig_widgets.Divider):
-                raise AssertionError('inspector header padding / divider')
+            for sch in ('light', 'dark'):
+                for gl in (False, True):
+                    cv = theme.region_color('canvas', sch, gl)
+                    for r in ('sidebar', 'inspector'):
+                        rc = theme.region_color(r, sch, gl)
+                        if rc.rgba() == cv.rgba() or rc.lightnessF() * rc.alphaF() \
+                                < cv.lightnessF() * cv.alphaF():
+                            raise AssertionError(f'{r} not raised over the canvas ({sch}, glass {gl})')
+            if 'separator' in sheet.split('/* ---- inset group')[0]:
+                raise AssertionError('a line between the regions')
+            if not isinstance(win.region_shade, hig_widgets.RegionShade) \
+                    or win.region_shade.width() != theme.SHADE_W:
+                raise AssertionError('no sidebar shade on the canvas')
+            for lay in (win.sidebar.layout(), win.canvas.parentWidget().layout()):
+                m = lay.contentsMargins()
+                if m.left() != theme.REGION_MARGIN or m.top() != theme.REGION_MARGIN:
+                    raise AssertionError('region padding')
+            from PySide6.QtWidgets import QScrollArea as _SA
+            for i in range(win.right_tabs.count()):
+                pg = win.right_tabs.widget(i)
+                if isinstance(pg, _SA) and pg.widget().autoFillBackground():
+                    raise AssertionError(f'page {win.right_tabs.tabText(i)} paints its own sheet')
             # selection controls: a switch only for the 자동 / 수동 choice
             from PySide6.QtWidgets import QCheckBox
             boxes = win.findChildren(QCheckBox)

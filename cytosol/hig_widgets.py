@@ -1,7 +1,7 @@
 """Design-system widgets that a style sheet cannot make (macOS tahoe style,
 Desktop profile): SF Symbols-style icons, toolbar icon buttons, the capsule
-chip switcher that replaces the inspector's tab bar, and the hairline
-dividers between the window's regions (Sidebar | Canvas | Inspector).
+chip switcher that replaces the inspector's tab bar, and the region
+splitter and shade (Sidebar | Canvas | Inspector, RegionLayout).
 
 All colours come from `theme.color` (tokens, light / dark) and are re-read
 on every paint or on `theme.refresh`, so nothing here holds a fixed colour.
@@ -219,7 +219,8 @@ class ChipTabs(QTabWidget):
             page = self.widget(i)
             closable = self.tabsClosable() and page not in self._fixed
             chip = Chip(self.tabText(i), closable, self.chips)
-            chip.setToolTip(self.tabText(i) + ('\n우클릭 또는 ×: 탭 닫기' if closable else ''))
+            if closable:  # a tool tip that only repeats the label would cover the page
+                chip.setToolTip('우클릭 또는 ×: 탭 닫기')
             chip.clicked.connect(lambda _=False, p=page: self.setCurrentWidget(p))
             chip.closeClicked.connect(lambda p=page: self._close(p))
             chip.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -250,44 +251,26 @@ class ChipTabs(QTabWidget):
         self._flow.invalidate()
 
 
-class Divider(QWidget):
-    """A 1 px hairline in the `separator` token (horizontal by default)."""
-
-    def __init__(self, vertical: bool = False, parent=None):
-        super().__init__(parent)
-        self.setObjectName('hig_divider')
-        if vertical:
-            self.setFixedWidth(theme.DIVIDER)
-        else:
-            self.setFixedHeight(theme.DIVIDER)
-
-    def paintEvent(self, _ev):
-        qp = QPainter(self)
-        qp.fillRect(self.rect(), theme.color('separator'))
-        qp.end()
-
-
 class _PaneHandle(QSplitterHandle):
-    """Splitter handle between two regions: a 1 px divider on the side pane's
-    edge, the rest of the (wider, easy to grab) handle in the canvas
-    surface, so the regions meet at one clean line."""
+    """Splitter handle between two regions.  No line (RegionLayout: the tone
+    difference is the border): it is painted as the canvas surface, and the
+    handle after the sidebar starts the sidebar's shade on the canvas."""
 
     def paintEvent(self, _ev):
         qp = QPainter(self)
-        qp.fillRect(self.rect(), theme.content_color())
+        qp.fillRect(self.rect(), theme.region_color('canvas'))
         sp = self.splitter()
-        i = sp.indexOf(self)
-        # the line sits next to the side pane: on the left for the handle after
-        # the sidebar, on the right for the handle before the inspector
-        x = 0 if i <= 1 else self.width() - theme.DIVIDER
-        qp.fillRect(x, 0, theme.DIVIDER, self.height(), theme.color('separator'))
+        a = theme.region_shade()
+        if a > 0 and sp.indexOf(self) == 1:
+            qp.fillRect(self.rect(), theme.shade_gradient(0, a))
         qp.end()
 
 
 class PaneSplitter(QSplitter):
-    """The main window's Sidebar | Canvas | Inspector splitter."""
+    """The main window's Sidebar | Canvas | Inspector splitter (9 px grab
+    area per the SplitView component, nothing drawn but the surfaces)."""
 
-    HANDLE_W = 5
+    HANDLE_W = 6
 
     def __init__(self, parent=None):
         super().__init__(Qt.Orientation.Horizontal, parent)
@@ -297,29 +280,50 @@ class PaneSplitter(QSplitter):
         return _PaneHandle(self.orientation(), self)
 
 
+class RegionShade(QWidget):
+    """The shade the raised sidebar casts on the canvas: an overlay gradient
+    over the canvas' leading edge (crisp at the edge, soft inwards), not a
+    drop shadow.  It lets the mouse through and follows its parent's size."""
+
+    def __init__(self, canvas: QWidget, offset: int = 0):
+        super().__init__(canvas)
+        self.setObjectName('hig_region_shade')
+        self.offset = offset  # the part of the shade already drawn by the handle
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        canvas.installEventFilter(self)
+        self._fit()
+
+    def eventFilter(self, obj, ev):
+        if ev.type() in (ev.Type.Resize, ev.Type.Show, ev.Type.ChildAdded):
+            self._fit()
+        return False
+
+    def _fit(self):
+        p = self.parentWidget()
+        self.setGeometry(0, 0, theme.SHADE_W, p.height())
+        self.raise_()
+
+    def paintEvent(self, _ev):
+        a = theme.region_shade()
+        if a <= 0:
+            return
+        qp = QPainter(self)
+        qp.fillRect(self.rect(), theme.shade_gradient(-self.offset, a))
+        qp.end()
+
+
 def inspector(tabs: ChipTabs) -> QWidget:
-    """The inspector region: a header with the chips, a hairline under it,
-    then the pages, each part with its own padding."""
+    """The inspector region (raised surface): the chips on top, the pages
+    below, separated by space (gap-section 24), not by a line."""
     pane = QWidget()
     pane.setObjectName('hig_inspector')
     pane.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
     lay = QVBoxLayout(pane)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.setSpacing(0)
     left, top, right, bottom = theme.INSPECTOR_MARGINS
-    head = QWidget()
-    head.setObjectName('hig_inspector_head')
-    hl = QVBoxLayout(head)
-    hl.setContentsMargins(left, top, right, 12)
-    hl.addWidget(tabs.chips)
-    lay.addWidget(head)
-    lay.addWidget(Divider())
-    body = QWidget()
-    body.setObjectName('hig_inspector_body')
-    bl = QVBoxLayout(body)
-    # the scroll bar sits in the right padding; pages keep 4 px for it (unify)
-    bl.setContentsMargins(left, 16, right - 8, bottom)
-    bl.addWidget(tabs, 1)
-    lay.addWidget(body, 1)
-    pane.head, pane.body = head, body
+    # the scroll bar sits in the right margin; pages keep 4 px for it (unify)
+    lay.setContentsMargins(left, top, right - 8, bottom)
+    lay.setSpacing(theme.REGION_GAP)
+    lay.addWidget(tabs.chips)
+    lay.addWidget(tabs, 1)
     return pane

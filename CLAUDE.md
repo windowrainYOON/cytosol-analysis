@@ -21,14 +21,18 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.51.0)
+## Window structure (v0.52.0)
 
-- **Regions** (owner request 2026-11-04, v0.51): Sidebar | Canvas | Inspector
-  are clearly separate: own surfaces (`theme.PANE_TOKEN` for the side panes,
-  `theme.CONTENT_TOKEN` for the canvas and its letterbox), 1 px `separator`
-  dividers drawn by `hig_widgets.PaneSplitter` handles, and own inner padding
-  (`theme.SIDEBAR_MARGINS`, `CONTENT_MARGINS`, `INSPECTOR_MARGINS`; the
-  inspector has a chip header, a `Divider`, then the pages).
+- **Regions** (owner request 2026-11-04, v0.52; design system
+  `components/RegionLayout`): Sidebar | Canvas | Inspector are told apart by
+  tone and depth, **never a line**: raised side panes, recessed canvas
+  (`theme.region_color(role)`, opaque or the glass variant; the canvas is
+  never the brightest), one shade the sidebar casts on the canvas edge
+  (`hig_widgets.RegionShade` + the first `PaneSplitter` handle,
+  `theme.shade_gradient`), padding `theme.REGION_MARGIN` 20 in each region,
+  24 between the inspector chips and the page. Pages in a QScrollArea must
+  not fill their background (`theme.unify` turns it off), or they paint a
+  box over the region.
 - **Panes** (`MainWindow.main_split`): left and right keep their width
   (stretch 0, defaults `LEFT_W` / `RIGHT_W`, widths remembered in
   `QSettings` `layout/*_width`), only the centre grows with the window.
@@ -165,7 +169,7 @@ border; `theme.prominent(btn)` = filled accent, at most 2 per tab), fields /
 combos / steppers filled without border (number fields 80–140 px), inset
 groups (`QGroupBox`: translucent `background` 62 %, 1 px `label` 12 % line,
 title above at x 12), choice chips for sub-tabs, accent pill + white text for
-menu and sidebar selection, three regions with hairline dividers (v0.51).
+menu and sidebar selection, three regions without lines (RegionLayout, v0.52).
 Selection controls (owner rule 2026-11-03): `QCheckBox` = check box; switch
 (`theme.switch`) only for the 자동 / 수동 choice (check boxes whose text
 starts with 자동 become switches by themselves); multi-select chips
@@ -177,7 +181,7 @@ holders without the style's default margins; text and options outside a
 group start at x 12 via `#hig_page`), so all titles, rows and labels share
 one grid line. Icons: `hig_widgets.ICONS` (24 px stroke glyphs of the design
 system's icon set; drawn in a token colour). Surfaces: window
-`background-secondary`, centre and inspector transparent. Liquid Glass
+`background-secondary`; regions use `theme.region_color` (RegionLayout). Liquid Glass
 (`cytosol/glass.py`, macOS, pyobjc): an `NSVisualEffectView` (sidebar
 material, behind window) under the Qt view, panes `#hig_sidebar` /
 `#hig_inspector` tinted see-through; opaque when pyobjc is missing or Reduce
@@ -368,4 +372,5 @@ not affected.
 | #67 | 0.49.2 | HIG polish after the Mac check: inspector pane padding (titles off the edge), number fields at most 140 px wide, centre background = window background (no black band), LUT tab main action filled, shorter bleach export switch text (marker card fits the pane) |
 | #68 | 0.50.0 | Owner request: macOS tahoe style of the updated design system (capsule buttons and chips, borderless filled fields, inset groups, accent-pill selection, floating sidebar panel, no dividers); left pane only 자동 그룹 + list (trash glyph per row, context menu with group actions for multi-selection, drop-target empty state); LUT tab one scroll with 일괄 적용 on top; 마커 its own tab; capsule chip tab switcher; zoom / fit icon buttons; one layout grid for every right tab (`theme.unify`); switches only for 자동 / 수동, check boxes / multi-select chips / radio otherwise |
 | #69 | 0.50.1 | Polish after the Mac check: number fields at least as wide as their text (suffix / 제한 없음, up to 118 px), [value][자동] order in every row, preview letterbox = window background (light / dark), no Z / T controls without an image, checkable group titles in label colour, visible edge on colour swatches, more compact tab chips |
-| this PR | 0.51.0 | Owner request: Sidebar, Canvas and Inspector clearly separate regions (own surfaces: side panes `background` / dark `background-tertiary`, canvas `background-secondary`; 1 px dividers, `PaneSplitter`), each with its own inner padding (sidebar 16, canvas 16 / 12, inspector 20 / 16 with a chip header and a divider under it); the floating sidebar panel is gone; status bar with a top divider |
+| #70 | 0.51.0 | Owner request: Sidebar, Canvas and Inspector clearly separate regions (own surfaces: side panes `background` / dark `background-tertiary`, canvas `background-secondary`; 1 px dividers, `PaneSplitter`), each with its own inner padding (sidebar 16, canvas 16 / 12, inspector 20 / 16 with a chip header and a divider under it); the floating sidebar panel is gone; status bar with a top divider |
+| this PR | 0.52.0 | Owner request + updated design system (`components/RegionLayout`): regions separated by tone and the sidebar's shade instead of lines (raised sidebar / inspector, recessed canvas, glass variant on macOS), padding 20 per region; fixes the box an info / LUT page painted over the inspector (scroll-area autofill) and the tab chip tool tip with square corners covering the page |

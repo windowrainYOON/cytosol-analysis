@@ -27,9 +27,9 @@ Inset group         QGroupBox
 List / Table        item views radius 12; sidebar rows = accent pill
 Menu / Tooltip      QMenu radius 12, items accent pill on hover
 Progress / Slider   6 px capsule, accent fill; slider knob 18
-Surfaces            three regions, each its own surface: sidebar and
-                    inspector = theme.PANE_TOKEN, canvas = CONTENT_TOKEN,
-                    1 px separator dividers (hig_widgets.PaneSplitter)
+Surfaces            RegionLayout: raised sidebar / inspector, recessed
+                    canvas (theme.region_color), no lines; the sidebar's
+                    shade on the canvas edge (hig_widgets.RegionShade)
 ==================  ==========================================================
 
 Not styled here (design system exclusion ``measurement-plots.md``): the image
@@ -62,6 +62,10 @@ PROGRESS_H = 6
 
 def rgba(name: str, scheme: str) -> str:
     c = theme._hex(theme.TOKENS[scheme][name])
+    return f'rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()})'
+
+
+def _qrgba(c) -> str:
     return f'rgba({c.red()}, {c.green()}, {c.blue()}, {c.alpha()})'
 
 
@@ -167,9 +171,6 @@ def icon_dir(scheme: str) -> Path:
 
 # ---- the style sheet ----------------------------------------------------------
 
-# materials.md: regular sidebar material over the blurred desktop (macOS)
-GLASS_ALPHA = 0.45
-
 # macOS tahoe style (components/MacOSStyle): concentric radii
 R_CAPSULE = CTL // 2  # buttons, chips, segmented controls
 R_FIELD = 8
@@ -202,28 +203,24 @@ def stylesheet(scheme: str | None = None, glass: bool | None = None) -> str:
     accent = c('blue')
     line = tint('label', 0.12)  # hig-glass-line
     group_bg = tint('background', 0.62)
-    pane = c(theme.PANE_TOKEN[s])  # sidebar, inspector
-    content = c(theme.CONTENT_TOKEN[s])  # canvas
-    if glass:  # functional layer (side panes) see-through, content opaque
-        surfaces = f"""
-QMainWindow {{ background: transparent; }}
-QWidget#hig_sidebar, QWidget#hig_inspector {{ background: {tint(theme.PANE_TOKEN[s], GLASS_ALPHA)}; }}
-QStatusBar {{ background: transparent; }}
+    region = lambda r: _qrgba(theme.region_color(r, s, glass))  # noqa: E731
+    if glass:  # the regions are see-through over the window's glass
+        surfaces = """
+QMainWindow { background: transparent; }
 """
     else:
         surfaces = ''
     return f"""
-/* ---- surfaces: three regions (Sidebar | Canvas | Inspector), each its own
-   surface, hairline dividers between them (PaneSplitter) ---- */
+/* ---- surfaces: three regions (RegionLayout) told apart by tone and the
+   sidebar's shade, no line, border or radius of their own ---- */
 QMainWindow, QDialog {{ background: {c('background-secondary')}; }}
-QWidget#hig_content {{ background: {content}; }}
-QWidget#hig_sidebar, QWidget#hig_inspector {{ background: {pane}; border: none; }}
-QWidget#hig_inspector_head, QWidget#hig_inspector_body {{ background: transparent; }}
+QWidget#hig_sidebar {{ background: {region('sidebar')}; border: none; }}
+QWidget#hig_content {{ background: {region('canvas')}; border: none; }}
+QWidget#hig_inspector {{ background: {region('inspector')}; border: none; }}
 QScrollArea, QScrollArea > QWidget > QWidget#qt_scrollarea_viewport,
 QScrollArea > QWidget#qt_scrollarea_viewport {{ background: transparent; border: none; }}
 QSplitter::handle {{ background: transparent; }}
-QStatusBar {{ background: transparent; color: {c('label-secondary')};
-    border-top: 1px solid {c('separator')}; padding-left: 12px; }}
+QStatusBar {{ background: {region('canvas')}; color: {c('label-secondary')}; }}
 QStatusBar QLabel {{ color: {c('label-secondary')}; }}
 QStatusBar::item {{ border: none; }}
 
@@ -446,8 +443,9 @@ QAbstractItemView::indicator:unchecked {{ image: {url('check_off')}; }}
 QAbstractItemView::indicator:indeterminate {{ image: {url('check_mixed')}; }}
 QToolTip {{
     background: {c('background-tertiary')}; color: {c('label')};
-    border: 1px solid {line}; border-radius: {R_VALUE}px; padding: 3px 8px;
-}}
+    border: 1px solid {line}; border-radius: 0; padding: 3px 8px;
+}}  /* a tool tip is its own window: rounded corners would leave square
+       white corners behind them (seen on macOS) */
 
 /* ---- Progress / Slider / Scroll bars ---- */
 QProgressBar {{
@@ -478,5 +476,5 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 /* ---- materials ---- */
 {surfaces}
 /* ---- excluded: measurement plots and the image canvas keep their look ---- */
-QGraphicsView {{ border: none; border-radius: 0; padding: 0; }}
+QGraphicsView {{ border: none; border-radius: 0; padding: 0; background: transparent; }}
 """
