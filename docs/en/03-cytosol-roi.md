@@ -93,6 +93,11 @@ is usually faster).
 
 ## 3. 확인 · 수정 (Check and edit)
 
+All editing tools are icon buttons; hover one to see its name and shortcut.
+From the left: the tool group (arrow = select, ⊕ = add, ⊖ = subtract, dashed
+square = new cell, scissors = cut), merge and renumber (#), undo and redo, and
+at the end the red trash can, which deletes the selected cells.
+
 | Tool / key | Action |
 |---|---|
 | **선택/이동 (V)** | Click a cell to select it (or pick it in the list); drag pans. **Shift+click** picks several cells (Shift+click again takes one out) to merge or delete; **Option (Alt)+drag** draws a cut line without switching tools (as 자르기) |

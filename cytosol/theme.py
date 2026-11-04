@@ -336,9 +336,11 @@ def _restyle(w: QWidget):
 
 
 def switch(box: QWidget) -> QWidget:
-    """Toggle switch: reserved for the 자동 / 수동 choice."""
+    """Toggle switch: reserved for the 자동 / 수동 choice.  Toggle component:
+    the label sits before the switch, the switch at the end of the row."""
     box.setProperty('hig_switch', True)
     box.setProperty('hig_chip', False)
+    box.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     _restyle(box)
     return box
 
@@ -573,6 +575,13 @@ class _Polisher(QObject):
                 and not obj.property('hig_sel') and not obj.minimumWidth():
             obj.setProperty('hig_sel', True)
             obj.setMinimumWidth(SELECT_MIN_W)  # can shrink in a narrow pane
+            if not obj.isEditable():
+                # Select component: a borderless pop-up as wide as its longest
+                # choice, never stretched like a field
+                from PySide6.QtWidgets import QSizePolicy  # noqa: PLC0415
+
+                obj.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+                obj.setSizePolicy(QSizePolicy.Policy.Maximum, obj.sizePolicy().verticalPolicy())
         if ev.type() == QEvent.Type.Show and isinstance(obj, QWidget) and obj.isWindow() \
                 and not obj.property('hig_polished'):
             obj.setProperty('hig_polished', True)

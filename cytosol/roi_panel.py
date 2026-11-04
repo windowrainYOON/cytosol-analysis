@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import theme
+from . import hig_widgets, theme
 from .cellroi import (
     CellRois,
     RoiParams,
@@ -58,6 +58,8 @@ EDGE_LABELS = [
     ('keep', '그대로 두기'),
 ]
 STATUS_KO = {'ok': '', 'edge-trimmed': '프레임 안쪽으로 자름', 'edge': '프레임에 걸침'}
+TOOL_ICONS = {'select': 'cursorarrow', 'add': 'plus.circle', 'sub': 'minus.circle',
+              'new': 'plus.square.dashed', 'cut': 'scissors'}
 TOOLS = [
     ('select', '선택/이동', 'V', '클릭: 세포 선택, Shift+클릭: 여러 세포 선택 (합치기), '
      'Option(Alt)+드래그: 선을 그어 자르기, 드래그: 화면 이동'),
@@ -369,31 +371,32 @@ class RoiPanel(QWidget):
         # editing
         self.tool_group = QButtonGroup(self)
         self.tool_group.setExclusive(True)
+        # icon buttons (owner request 2026-11-04): the name, key and help
+        # appear on hover; the same commands keep their shortcuts
         tools = QHBoxLayout()
+        tools.setSpacing(8)
         self.tool_btns = {}
         for key, text, sc, tip in TOOLS:
-            b = QPushButton(f'{text} ({sc})')
-            b.setCheckable(True)
-            b.setToolTip(tip)
+            b = hig_widgets.IconButton(TOOL_ICONS[key], f'{text} ({sc})\n{tip}', checkable=True)
             self.tool_group.addButton(b)
-            tools.addWidget(b)
             self.tool_btns[key] = b
             b.toggled.connect(lambda on, k=key: on and self.set_tool(k))
             QShortcut(QKeySequence(sc), win, activated=lambda k=key: self.tool_btns[k].setChecked(True))
         self.tool_btns['select'].setChecked(True)
-        merge_btn = QPushButton('합치기 (M)')
-        merge_btn.setToolTip('Shift+클릭으로 고른 세포들을 하나로 합칩니다. 떨어져 있으면 사이 틈(3 µm 이하)을 '
-                             '메워 잇고, 가까운 핵 조각도 하나로 잇습니다.')
+        merge_btn = hig_widgets.IconButton(
+            'arrow.triangle.merge', '합치기 (M)\nShift+클릭으로 고른 세포들을 하나로 합칩니다. 떨어져 있으면 '
+            '사이 틈(3 µm 이하)을 메워 잇고, 가까운 핵 조각도 하나로 잇습니다.')
         merge_btn.clicked.connect(self.merge_selected)
         QShortcut(QKeySequence('M'), win, activated=self.merge_selected)
-        del_btn = theme.destructive(QPushButton('선택 세포 삭제'))  # undo: 되돌리기
-        del_btn.setToolTip('선택한 세포 ROI를 지웁니다 (Delete). 되돌리기(Ctrl/⌘+Z)로 복구합니다.')
+        del_btn = hig_widgets.IconButton(  # destructive, undo: 되돌리기
+            'trash', '선택 세포 삭제 (Delete)\n선택한 세포 ROI를 지웁니다. 되돌리기(Ctrl/⌘+Z)로 복구합니다.',
+            token='red')
         del_btn.clicked.connect(self.delete_selected)
-        undo_btn = QPushButton('되돌리기')
+        undo_btn = hig_widgets.IconButton('arrow.uturn.backward', '되돌리기 (Ctrl/⌘+Z)')
         undo_btn.clicked.connect(self.undo)
-        redo_btn = QPushButton('다시 실행')
+        redo_btn = hig_widgets.IconButton('arrow.uturn.forward', '다시 실행 (Ctrl/⌘+Shift+Z)')
         redo_btn.clicked.connect(self.redo)
-        renum_btn = QPushButton('번호 다시 매기기')
+        renum_btn = hig_widgets.IconButton('number', '번호 다시 매기기\n세포 번호를 위에서 아래, 왼쪽에서 오른쪽 순서로 다시 붙입니다.')
         renum_btn.clicked.connect(self.renumber)
         QShortcut(QKeySequence.StandardKey.Undo, win, activated=self.undo)
         QShortcut(QKeySequence.StandardKey.Redo, win, activated=self.redo)
@@ -412,18 +415,20 @@ class RoiPanel(QWidget):
         self.cell_list.currentRowChanged.connect(self._list_selected)
         ed = QGroupBox('확인 · 수정')
         el = QVBoxLayout(ed)
+        # one toolbar row: drawing tools | edit actions | history, the
+        # destructive delete set apart at the end
+        tools.addWidget(hig_widgets.icon_group(*(self.tool_btns[k] for k, *_ in TOOLS)))
+        tools.addWidget(hig_widgets.icon_group(merge_btn, renum_btn))
+        tools.addWidget(hig_widgets.icon_group(undo_btn, redo_btn))
+        tools.addStretch()
+        tools.addWidget(hig_widgets.icon_group(del_btn))
         el.addLayout(tools)
-        row = QHBoxLayout()
-        row.addWidget(merge_btn)
-        row.addWidget(del_btn)
-        row.addWidget(undo_btn)
-        row.addWidget(redo_btn)
-        el.addLayout(row)
+        self.edit_buttons = {'merge': merge_btn, 'delete': del_btn, 'undo': undo_btn,
+                             'redo': redo_btn, 'renumber': renum_btn}
         row = QHBoxLayout()
         row.addWidget(self.show_rois)
         row.addWidget(self.show_nuc)
         row.addStretch()
-        row.addWidget(renum_btn)
         el.addLayout(row)
         el.addWidget(self.cell_list, 1)
         hint = QLabel('세포를 클릭해 선택한 뒤 더하기/빼기로 영역을 그리세요. '

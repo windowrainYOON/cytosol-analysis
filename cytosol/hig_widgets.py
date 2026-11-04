@@ -43,6 +43,21 @@ ICONS = {
     'fit': '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/><rect x="8" y="8" width="8" height="8" rx="1.5"/>',
     'tray.and.arrow.down': ('<path d="M12 3.5V14M8.3 10.3 12 14l3.7-3.7"/><path d="M4.5 13.5v4A2.5 '
                             '2.5 0 0 0 7 20h10a2.5 2.5 0 0 0 2.5-2.5v-4"/>'),
+    # HIG standard symbols (icons.json) used by the ROI editing tools
+    'scissors': ('<circle cx="6.5" cy="6.5" r="2.7"/><circle cx="6.5" cy="17.5" r="2.7"/>'
+                 '<path d="M8.6 8.2 20 18M8.6 15.8 20 6"/>'),
+    'plus.circle': '<circle cx="12" cy="12" r="8.5"/><path d="M12 8v8M8 12h8"/>',
+    'arrow.uturn.backward': '<path d="M8.5 5.5 4 10l4.5 4.5"/><path d="M4 10h10a5 5 0 0 1 0 10h-4"/>',
+    'arrow.uturn.forward': '<path d="M15.5 5.5 20 10l-4.5 4.5"/><path d="M20 10H10a5 5 0 0 0 0 10h4"/>',
+    'chevron.up.chevron.down': '<path d="m7.5 9.5 4.5-4.5 4.5 4.5M7.5 14.5l4.5 4.5 4.5-4.5"/>',
+    # not in the set: drawn on the same 24 px grid and stroke
+    'minus.circle': '<circle cx="12" cy="12" r="8.5"/><path d="M8 12h8"/>',
+    'cursorarrow': '<path d="M6.5 4.5 18 11.2l-5 1.4-2.4 5.1z"/><path d="M13 12.6 17 17"/>',
+    'plus.square.dashed': ('<rect x="4" y="4" width="16" height="16" rx="3.5" stroke-dasharray="3 2.4"/>'
+                           '<path d="M12 8.5v7M8.5 12h7"/>'),
+    'arrow.triangle.merge': ('<path d="M6 4v3.5a5 5 0 0 0 2 4L12 14.5V20"/><path d="M18 4v3.5a5 5 0 0 1-2 4'
+                             'L12 14.5"/><path d="M9.5 17.5 12 20l2.5-2.5"/>'),
+    'number': '<path d="M10 4 8 20M16 4l-2 16M4.5 9h15M4 15h15"/>',
 }
 
 
@@ -77,9 +92,11 @@ class IconButton(QToolButton):
     """Toolbar icon button (desktop): 28 × 28 with a 16 px glyph, always with a
     tool tip; the same command also lives in a menu or a shortcut."""
 
-    def __init__(self, glyph: str, tip: str, checkable: bool = False, parent=None):
+    def __init__(self, glyph: str, tip: str, checkable: bool = False, parent=None,
+                 token: str = 'label'):
         super().__init__(parent)
         self.setProperty('hig_icon', glyph)
+        self.setProperty('hig_icon_token', token)  # 'red' for a destructive action
         self.setToolTip(tip)
         self.setAccessibleName(tip.split('\n')[0])
         self.setCheckable(checkable)
@@ -88,7 +105,24 @@ class IconButton(QToolButton):
         self.refresh_icon()
 
     def refresh_icon(self):
-        self.setIcon(icon(self.property('hig_icon')))
+        self.setIcon(icon(self.property('hig_icon'), 16, self.property('hig_icon_token') or 'label'))
+
+
+def icon_group(*buttons) -> QWidget:
+    """Icon buttons on one capsule (toolbar group: gap 2 inside)."""
+    from PySide6.QtWidgets import QHBoxLayout  # noqa: PLC0415
+
+    cap = QWidget()
+    cap.setObjectName('hig_capsule')
+    cap.setProperty('hig_no_reflow', True)
+    cap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+    lay = QHBoxLayout(cap)
+    lay.setContentsMargins(3, 3, 3, 3)
+    lay.setSpacing(2)
+    for b in buttons:
+        lay.addWidget(b)
+    cap.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+    return cap
 
 
 # ---- chip tabs ------------------------------------------------------------------

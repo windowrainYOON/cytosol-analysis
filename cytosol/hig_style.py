@@ -53,6 +53,7 @@ R_GROUP = 10
 R_WINDOW = 12
 ROW = 28
 SW_W, SW_H = 38, 22
+SELECT_CAP = 18  # desktop-select-cap
 CHECK = 16
 STEPPER_W = 20
 GAP_GROUP = 12
@@ -93,7 +94,10 @@ def _icons(scheme: str) -> dict[str, str]:
     sec = theme._hex(t['label-secondary'])
     chev = f'rgb({sec.red()},{sec.green()},{sec.blue()})'
     chev_op = f'{sec.alphaF():.2f}'
-    knob_shadow = '<circle cx="{cx}" cy="11.5" r="9" fill="#000" fill-opacity="0.12"/>'
+    # macOS switch (Toggle component, settings look): knob with a soft
+    # hairline and a small shadow, off track `fill` with an inner hairline
+    knob_shadow = ('<circle cx="{cx}" cy="12" r="9.2" fill="#000" fill-opacity="0.10"/>'
+                   '<circle cx="{cx}" cy="11.6" r="9.4" fill="#000" fill-opacity="0.05"/>')
     base = t['background-tertiary'][:7]
 
     def switch(on: bool, disabled: bool = False):
@@ -101,9 +105,12 @@ def _icons(scheme: str) -> dict[str, str]:
         cx = 27 if on else 11
         bg = (f'<rect x="0" y="0" width="38" height="22" rx="11" fill="{accent}"/>' if on else
               f'<rect x="0" y="0" width="38" height="22" rx="11" fill="{track}" '
-              f'fill-opacity="{track_op}"/>')
+              f'fill-opacity="{track_op}"/>'
+              '<rect x="0.25" y="0.25" width="37.5" height="21.5" rx="10.75" fill="none" '
+              'stroke="#000" stroke-opacity="0.10" stroke-width="0.5"/>')
         knob = (knob_shadow.format(cx=cx)
-                + f'<circle cx="{cx}" cy="11" r="9" fill="{white}"/>')
+                + f'<circle cx="{cx}" cy="11" r="9" fill="{white}" stroke="#000" '
+                  'stroke-opacity="0.12" stroke-width="0.5"/>')
         return _svg(f'<g opacity="{op}">{bg}{knob}</g>', SW_W, SW_H)
 
     def check(state: str, disabled: bool = False):
@@ -129,6 +136,17 @@ def _icons(scheme: str) -> dict[str, str]:
 
     stroke = (f'fill="none" stroke="{chev}" stroke-opacity="{chev_op}" stroke-width="1.6" '
               'stroke-linecap="round" stroke-linejoin="round"')
+
+    def select_cap(darker: float, op: float = 1.0):
+        a = min(1.0, fill.alphaF() + darker)
+        n = SELECT_CAP
+        k = n / 24  # the 24 px chevron.up.chevron.down glyph scaled into the cap
+        g = (f'<g transform="translate({n * 0.12:.2f} {n * 0.12:.2f}) scale({k * 0.76:.4f})">'
+             f'<path d="m7.5 9.5 4.5-4.5 4.5 4.5M7.5 14.5l4.5 4.5 4.5-4.5" fill="none" '
+             f'stroke="{chev}" stroke-opacity="{chev_op}" stroke-width="2.4" '
+             'stroke-linecap="round" stroke-linejoin="round"/></g>')
+        return _svg(f'<g opacity="{op}"><circle cx="{n / 2}" cy="{n / 2}" r="{n / 2}" '
+                    f'fill="{track}" fill-opacity="{a:.2f}"/>{g}</g>', n, n)
     return {
         'switch_on': switch(True), 'switch_off': switch(False),
         'switch_on_dis': switch(True, True), 'switch_off_dis': switch(False, True),
@@ -148,6 +166,10 @@ def _icons(scheme: str) -> dict[str, str]:
         'xmark': _svg(f'<path d="M3 3 L9 9 M9 3 L3 9" {stroke}/>', 12, 12),
         # chevron.up.chevron.down (Select)
         'updown': _svg(f'<path d="M3 5.5 L6 2.5 L9 5.5 M3 8.5 L6 11.5 L9 8.5" {stroke}/>', 12, 14),
+        # Select cap: round `fill` cap (18) with the chevron pair, a step
+        # darker on hover, faded when disabled
+        'select_cap': select_cap(0.0), 'select_cap_hover': select_cap(0.10),
+        'select_cap_dis': select_cap(0.0, 0.4),
         # Stepper halves
         'up': _svg(f'<path d="M2.5 5 L5 2.5 L7.5 5" {stroke}/>', 10, 7),
         'down': _svg(f'<path d="M2.5 2 L5 4.5 L7.5 2" {stroke}/>', 10, 7),
@@ -202,7 +224,6 @@ def stylesheet(scheme: str | None = None, glass: bool | None = None) -> str:
     url = lambda n: f'url("{d}/{n}.svg")'  # noqa: E731
     accent = c('blue')
     line = tint('label', 0.12)  # hig-glass-line
-    group_bg = tint('background', 0.62)
     region = lambda r: _qrgba(theme.region_color(r, s, glass))  # noqa: E731
     if glass:  # the regions are see-through over the window's glass
         surfaces = """
@@ -226,13 +247,13 @@ QStatusBar::item {{ border: none; }}
 
 /* ---- inset group (hig-inset-group): rounded translucent card, title above ---- */
 QGroupBox {{
-    background: {group_bg}; border: 1px solid {line};
+    background: {tint('label', 0.05)}; border: none;
     border-radius: {R_INSET_GROUP}px; margin-top: 24px; padding: 0;
 }}
 QGroupBox::title {{
     subcontrol-origin: margin; subcontrol-position: top left;
     left: {ROW_PAD}px; top: 4px; padding: 0;
-    color: {c('label-secondary')}; font-weight: 600;
+    color: {c('label')}; font-weight: 600;
 }}
 QGroupBox[checkable="true"]::title {{ color: {c('label')}; }}
 QGroupBox[checkable="true"]:!checked::title {{ color: {c('label-secondary')}; }}
@@ -301,13 +322,26 @@ QAbstractSpinBox:focus {{ border: 1px solid {accent}; background: {c('background
 QLineEdit:disabled, QComboBox:disabled, QAbstractSpinBox:disabled {{
     color: {c('label-tertiary')}; background: {c('fill-quaternary')};
 }}
-QComboBox {{ padding-right: {FIELD_PAD + 22}px; }}
-QComboBox:hover {{ background: {c('fill-secondary')}; }}
+/* Select (pop-up button): NO box: the value text and a round chevron cap at
+   its end, as wide as the longest choice (theme: size policy Maximum) */
+QComboBox {{
+    background: transparent; border: 1px solid transparent; border-radius: {R_VALUE}px;
+    min-height: {CTL_SM}px; padding: 0 {SELECT_CAP + 6}px 0 2px; color: {c('label')};
+}}
+QComboBox:hover, QComboBox:on {{ background: transparent; }}
+QComboBox:focus {{ border: 1px solid {accent}; background: transparent; }}
+QComboBox:disabled {{ background: transparent; color: {c('label-tertiary')}; }}
 QComboBox::drop-down {{
     subcontrol-origin: padding; subcontrol-position: center right;
-    width: 22px; border: none;
+    width: {SELECT_CAP}px; border: none; background: transparent;
 }}
-QComboBox::down-arrow {{ image: {url('updown')}; width: 12px; height: 14px; }}
+QComboBox::down-arrow {{ image: {url('select_cap')}; width: {SELECT_CAP}px; height: {SELECT_CAP}px; }}
+QComboBox::down-arrow:hover, QComboBox::down-arrow:on {{ image: {url('select_cap_hover')}; }}
+QComboBox::down-arrow:disabled {{ image: {url('select_cap_dis')}; }}
+/* an editable combo is a text field with a pop-up: keep the field */
+QComboBox:editable {{
+    background: {c('fill-tertiary')}; border-radius: {R_FIELD}px; padding-left: {FIELD_PAD}px;
+}}
 QComboBox QAbstractItemView {{
     background: {c('background-tertiary')}; border: 1px solid {line};
     border-radius: {R_MENU}px; padding: 6px; outline: none;

@@ -149,7 +149,9 @@ def run(out_dir) -> int:
         styles instead of fixed values, no box in a box, StatusIndicator,
         destructive actions with 취소 as the default."""
         from PySide6.QtGui import QPalette
-        from PySide6.QtWidgets import QApplication, QGroupBox, QLabel, QPushButton, QWidget
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QGroupBox, QLabel,
+                                       QPushButton, QSizePolicy, QWidget)
 
         from . import hig_widgets, theme
         from .app import MainWindow
@@ -205,9 +207,30 @@ def run(out_dir) -> int:
                 raise AssertionError('hint labels not label-secondary')
             red = theme.color('red').name()
             danger = [b for b in win.findChildren(QPushButton) if b.property('hig_destructive')]
-            if len(danger) < 3 or any(
+            if len(danger) < 2 or any(
                     b.palette().color(QPalette.ColorRole.ButtonText).name() != red for b in danger):
                 raise AssertionError(f'destructive buttons: {[b.text() for b in danger]}')
+            # 세포질 ROI editing: icon buttons only, the text in the tool tip
+            from .hig_widgets import IconButton
+            rp = win.roi_panel
+            edit = list(rp.tool_btns.values()) + list(rp.edit_buttons.values())
+            bad = [b.text() or b.toolTip() for b in edit
+                   if not isinstance(b, IconButton) or b.icon().isNull() or not b.toolTip()]
+            if bad:
+                raise AssertionError(f'ROI edit buttons without icon / tool tip: {bad}')
+            if rp.edit_buttons['delete'].property('hig_icon_token') != 'red':
+                raise AssertionError('ROI delete icon not red')
+            # Toggle: label before the switch; Select: no box, as wide as its content
+            sws = [b for b in win.findChildren(QCheckBox) if b.property('hig_switch')]
+            if not sws or any(b.layoutDirection() != Qt.LayoutDirection.RightToLeft for b in sws):
+                raise AssertionError('switches: label must come before the switch')
+            combos = [cb for cb in win.findChildren(QComboBox) if not cb.isEditable()]
+            if not combos or any(cb.sizePolicy().horizontalPolicy() != QSizePolicy.Policy.Maximum
+                                 for cb in combos):
+                raise AssertionError('select pop-ups must fit their content')
+            qss = hig_style.stylesheet('light')
+            if 'select_cap' not in qss:
+                raise AssertionError('select cap missing from the style sheet')
             for key, (page, title) in win.tab_pages.items():
                 n = sum(1 for b in page.findChildren(QPushButton) if b.property('hig_prominent'))
                 if n > 2:

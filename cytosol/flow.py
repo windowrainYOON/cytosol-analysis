@@ -131,8 +131,8 @@ def reflow(root: QWidget):
     or more buttons / check boxes become flow layouts, form rows may wrap."""
     for w in [root] + root.findChildren(QWidget):
         lay = w.layout()
-        if lay is None:
-            continue
+        if lay is None or w.property('hig_no_reflow'):
+            continue  # e.g. an icon-button capsule: one toolbar group, never wrapped
         if isinstance(lay, (QHBoxLayout, QGridLayout)):
             flow = _to_flow(lay)
             if flow is not None:  # the widget's own layout: swap it

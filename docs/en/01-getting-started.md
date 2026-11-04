@@ -56,6 +56,11 @@ closes it.
 - The contents of a pane follow its width: rows of buttons and check boxes
   continue on the next line, and a field moves under its label when the
   row does not fit.
+- A **자동** (auto) switch sits after its label, at the end of the row (on =
+  blue).
+- Pop-up menus have no box: the chosen value and a round arrow cap, as wide as
+  the longest choice. Click the value or the cap to open the list.
+- Hover an icon-only button to see its name (and shortcut).
 
 ## Image list
 
