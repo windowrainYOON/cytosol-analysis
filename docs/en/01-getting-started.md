@@ -42,9 +42,10 @@ entries. The setting applies to files added afterwards.
 ## Window layout
 
 The window has three panes: the image list (left), the preview (centre) and
-the tools (right: LUT, 마커, 이미지 정보 and the feature tabs). The image list is
-a rounded panel inset from the window edge; the capsule buttons at the top of
-the tools pane switch tabs. A feature tab's **×** (or right-click › 탭 닫기)
+the tools (right: LUT, 마커, 이미지 정보 and the feature tabs). The three regions
+have their own surfaces (the side panes light, the preview one step darker),
+a hairline divider between them and their own inner padding. The capsule
+buttons at the top of the tools pane (a divider under them) switch tabs. A feature tab's **×** (or right-click › 탭 닫기)
 closes it.
 
 - The image list and the tools pane keep their width; making the window

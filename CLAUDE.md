@@ -21,8 +21,14 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.50.0)
+## Window structure (v0.51.0)
 
+- **Regions** (owner request 2026-11-04, v0.51): Sidebar | Canvas | Inspector
+  are clearly separate: own surfaces (`theme.PANE_TOKEN` for the side panes,
+  `theme.CONTENT_TOKEN` for the canvas and its letterbox), 1 px `separator`
+  dividers drawn by `hig_widgets.PaneSplitter` handles, and own inner padding
+  (`theme.SIDEBAR_MARGINS`, `CONTENT_MARGINS`, `INSPECTOR_MARGINS`; the
+  inspector has a chip header, a `Divider`, then the pages).
 - **Panes** (`MainWindow.main_split`): left and right keep their width
   (stretch 0, defaults `LEFT_W` / `RIGHT_W`, widths remembered in
   `QSettings` `layout/*_width`), only the centre grows with the window.
@@ -31,7 +37,7 @@ owner writes in Korean, so reply in Korean.
   rows wrap; use `FlowLayout` (or word-wrapping labels, `wrapped_check` for a
   long check box) in new panels instead of wide fixed rows.
 - **Left**: image list with group folders (`image_tree.py`, `groups.py`;
-  long names wrap, `WrapDelegate`) in a floating panel (`MainWindow.sidebar`,
+  long names wrap, `WrapDelegate`) in the sidebar region (`MainWindow.sidebar`,
   `#hig_sidebar`). Only one button, 자동 그룹 (owner request 2026-11-03);
   files come in by 파일 › 불러오기 or drag and drop (the empty list paints a
   drop glyph). Remove: trash glyph at the end of the hovered / selected row
@@ -153,13 +159,13 @@ platform (macOS too) runs Fusion + `theme.palette()` + one app-wide style
 sheet generated from the tokens (`hig_style.stylesheet(scheme)`, light/dark,
 re-applied on colour-scheme change; indicator SVGs written to a temp dir):
 since v0.50 the **macOS tahoe style** (`components/MacOSStyle` of the design
-system): concentric radii (sidebar panel 18 inset 8 → selected row 10;
+system): concentric radii (selected row 10;
 inset group 12; field 8; value 6; menu 12), capsule buttons (fill, no
 border; `theme.prominent(btn)` = filled accent, at most 2 per tab), fields /
 combos / steppers filled without border (number fields 80–140 px), inset
 groups (`QGroupBox`: translucent `background` 62 %, 1 px `label` 12 % line,
 title above at x 12), choice chips for sub-tabs, accent pill + white text for
-menu and sidebar selection, transparent splitter handles (no dividers).
+menu and sidebar selection, three regions with hairline dividers (v0.51).
 Selection controls (owner rule 2026-11-03): `QCheckBox` = check box; switch
 (`theme.switch`) only for the 자동 / 수동 choice (check boxes whose text
 starts with 자동 become switches by themselves); multi-select chips
@@ -361,4 +367,5 @@ not affected.
 | #66 | 0.49.1 | Glass only with the Cocoa platform plugin (offscreen self-test on macOS crashed in `glass.attach`) |
 | #67 | 0.49.2 | HIG polish after the Mac check: inspector pane padding (titles off the edge), number fields at most 140 px wide, centre background = window background (no black band), LUT tab main action filled, shorter bleach export switch text (marker card fits the pane) |
 | #68 | 0.50.0 | Owner request: macOS tahoe style of the updated design system (capsule buttons and chips, borderless filled fields, inset groups, accent-pill selection, floating sidebar panel, no dividers); left pane only 자동 그룹 + list (trash glyph per row, context menu with group actions for multi-selection, drop-target empty state); LUT tab one scroll with 일괄 적용 on top; 마커 its own tab; capsule chip tab switcher; zoom / fit icon buttons; one layout grid for every right tab (`theme.unify`); switches only for 자동 / 수동, check boxes / multi-select chips / radio otherwise |
-| this PR | 0.50.1 | Polish after the Mac check: number fields at least as wide as their text (suffix / 제한 없음, up to 118 px), [value][자동] order in every row, preview letterbox = window background (light / dark), no Z / T controls without an image, checkable group titles in label colour, visible edge on colour swatches, more compact tab chips |
+| #69 | 0.50.1 | Polish after the Mac check: number fields at least as wide as their text (suffix / 제한 없음, up to 118 px), [value][자동] order in every row, preview letterbox = window background (light / dark), no Z / T controls without an image, checkable group titles in label colour, visible edge on colour swatches, more compact tab chips |
+| this PR | 0.51.0 | Owner request: Sidebar, Canvas and Inspector clearly separate regions (own surfaces: side panes `background` / dark `background-tertiary`, canvas `background-secondary`; 1 px dividers, `PaneSplitter`), each with its own inner padding (sidebar 16, canvas 16 / 12, inspector 20 / 16 with a chip header and a divider under it); the floating sidebar panel is gone; status bar with a top divider |

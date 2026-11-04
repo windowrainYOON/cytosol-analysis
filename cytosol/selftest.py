@@ -151,7 +151,7 @@ def run(out_dir) -> int:
         from PySide6.QtGui import QPalette
         from PySide6.QtWidgets import QApplication, QGroupBox, QLabel, QPushButton, QWidget
 
-        from . import theme
+        from . import hig_widgets, theme
         from .app import MainWindow
         app = QApplication.instance() or QApplication([sys.argv[0]])
         theme.apply(app)
@@ -234,6 +234,25 @@ def run(out_dir) -> int:
             btns = [b.text() for b in win.sidebar.findChildren(QPushButton)]
             if btns != ['자동 그룹']:
                 raise AssertionError(f'left pane buttons: {btns}')
+            # three distinct regions (Sidebar | Canvas | Inspector): own
+            # surfaces, hairline dividers, own inner padding
+            split = win.main_split
+            if [split.widget(i) for i in range(3)] != [win.sidebar, win.canvas.parentWidget(),
+                                                        win.inspector]:
+                raise AssertionError('regions are not sidebar | canvas | inspector')
+            if theme.pane_color().name() == theme.content_color().name():
+                raise AssertionError('side panes and canvas share one surface')
+            if not all(isinstance(split.handle(i), hig_widgets._PaneHandle) for i in (1, 2)):
+                raise AssertionError('no divider between the regions')
+            m = win.sidebar.layout().contentsMargins()
+            if (m.left(), m.top(), m.right(), m.bottom()) != theme.SIDEBAR_MARGINS:
+                raise AssertionError('sidebar padding')
+            m = win.canvas.parentWidget().layout().contentsMargins()
+            if (m.left(), m.top(), m.right(), m.bottom()) != theme.CONTENT_MARGINS:
+                raise AssertionError('canvas padding')
+            if win.inspector.head.layout().contentsMargins().left() != theme.INSPECTOR_MARGINS[0] \
+                    or not win.inspector.findChildren(hig_widgets.Divider):
+                raise AssertionError('inspector header padding / divider')
             # selection controls: a switch only for the 자동 / 수동 choice
             from PySide6.QtWidgets import QCheckBox
             boxes = win.findChildren(QCheckBox)
