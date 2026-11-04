@@ -149,27 +149,66 @@ def scheme() -> str:
     return 'light'
 
 
-# The three regions of the window (Sidebar | Canvas | Inspector), each its
-# own surface with a hairline divider between them, and each with its own
-# inner padding (owner request 2026-11-04)
-PANE_TOKEN = {'light': 'background', 'dark': 'background-tertiary'}  # sidebar, inspector
-CONTENT_TOKEN = {'light': 'background-secondary', 'dark': 'background-secondary'}  # canvas
-SIDEBAR_MARGINS = (16, 16, 16, 16)
-INSPECTOR_MARGINS = (20, 16, 20, 16)
-CONTENT_MARGINS = (16, 12, 16, 12)
-DIVIDER = 1  # px line between the regions
+# The three regions of the window (Sidebar | Canvas | Inspector), design
+# system components/RegionLayout (owner request 2026-11-04): separated by
+# TONE and DEPTH, never by a line.  Sidebar and inspector are raised
+# surfaces, the canvas is the recessed one (never the brightest); the sidebar
+# casts one soft shade onto the canvas' leading edge.  Each region pads its
+# content with the desktop margin (20).
+REGION_MARGIN = 20
+SIDEBAR_MARGINS = (REGION_MARGIN,) * 4
+INSPECTOR_MARGINS = (REGION_MARGIN,) * 4
+CONTENT_MARGINS = (REGION_MARGIN,) * 4
+SHADE_W = 96  # width of the sidebar's shade on the canvas
+REGION_GAP = 24  # gap-section: between a region's header and its content
+# token name, or (white, alpha) for the see-through (glass) variant
+_REGIONS = {
+    ('light', False): {'sidebar': 'background', 'canvas': 'background-secondary',
+                       'inspector': 'background', 'shade': 0.07},
+    ('dark', False): {'sidebar': 'background-secondary', 'canvas': 'background',
+                      'inspector': 'background-secondary', 'shade': 0.0},
+    ('light', True): {'sidebar': 0.44, 'canvas': 0.26, 'inspector': 0.62, 'shade': 0.11},
+    ('dark', True): {'sidebar': 0.14, 'canvas': 0.05, 'inspector': 0.20, 'shade': 0.30},
+}
 
 
-def pane_color(scheme_: str | None = None) -> QColor:
-    """Surface of the side panes (sidebar, inspector)."""
+def _glass_on() -> bool:
+    from . import glass  # noqa: PLC0415
+
+    return glass.active()
+
+
+def region_color(role: str, scheme_: str | None = None, glass_: bool | None = None) -> QColor:
+    """Surface of a region: 'sidebar', 'canvas' or 'inspector'."""
     s = scheme_ or scheme()
-    return _hex(TOKENS[s][PANE_TOKEN[s]])
+    g = _glass_on() if glass_ is None else glass_
+    v = _REGIONS[(s, bool(g))][role]
+    if isinstance(v, str):
+        return _hex(TOKENS[s][v])
+    c = QColor(255, 255, 255)
+    c.setAlphaF(v)
+    return c
 
 
-def content_color(scheme_: str | None = None) -> QColor:
-    """Surface of the centre (canvas and the letterbox around the image)."""
+def region_shade(scheme_: str | None = None, glass_: bool | None = None) -> float:
+    """Alpha `a` of the sidebar's shade on the canvas (0 = none)."""
     s = scheme_ or scheme()
-    return _hex(TOKENS[s][CONTENT_TOKEN[s]])
+    g = _glass_on() if glass_ is None else glass_
+    return _REGIONS[(s, bool(g))]['shade']
+
+
+def shade_gradient(x0: float, a: float):
+    """The sidebar's shade as a horizontal gradient starting at `x0` (the
+    region edge): black a -> 0.45a at 28 % -> 0.12a at 62 % -> 0, crisp at
+    the edge, fading softly inwards."""
+    from PySide6.QtGui import QLinearGradient  # noqa: PLC0415
+
+    g = QLinearGradient(x0, 0, x0 + SHADE_W, 0)
+    for at, k in ((0.0, 1.0), (0.28, 0.45), (0.62, 0.12), (1.0, 0.0)):
+        c = QColor(0, 0, 0)
+        c.setAlphaF(a * k)
+        g.setColorAt(at, c)
+    return g
 
 
 def color(name: str) -> QColor:
@@ -351,6 +390,9 @@ def unify(page: QWidget):
 
     if not page.objectName():
         page.setObjectName('hig_page')  # text outside the groups starts on the grid line too
+    # QScrollArea.setWidget turns autoFillBackground on: the page would paint
+    # an opaque sheet over the region's surface (a box inside the inspector)
+    page.setAutoFillBackground(False)
     root = page.layout()
     if root is not None:
         root.setContentsMargins(0, 0, 4, 12)

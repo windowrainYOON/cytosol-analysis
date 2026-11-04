@@ -325,11 +325,14 @@ class Canvas(QGraphicsView):
         self.viewport().setMouseTracking(True)
 
     def refresh_theme(self):
-        """The area around the image is the centre region's surface (light /
-        dark), so the preview shows no dark band in light mode."""
+        """The area around the image is the canvas region's surface (light /
+        dark, see-through with glass), so the preview shows no band."""
         from . import theme  # noqa: PLC0415
 
-        self.setBackgroundBrush(theme.content_color())
+        c = theme.region_color('canvas')
+        # see-through (glass): the region already paints it, don't double it
+        self.setBackgroundBrush(c if c.alpha() == 255 else QColor(0, 0, 0, 0))
+        self.viewport().setAutoFillBackground(False)
     def set_image(self, qimg: QImage, refit=False):
         self.pix.setPixmap(QPixmap.fromImage(qimg))
         self._scene_rect()
@@ -1274,8 +1277,8 @@ class MainWindow(QMainWindow):
                             '그룹 지정 · 이름 변경 · 해제: 여러 이미지를 고른 뒤 우클릭')
         auto_btn.clicked.connect(self.auto_group)
         self.auto_group_btn = auto_btn
-        # sidebar region: its own surface, divided from the canvas by a
-        # hairline, with its own inner padding
+        # sidebar region (RegionLayout): a raised surface, set apart from the
+        # canvas by tone and its shade, padded with the region margin
         left = QWidget()
         left.setObjectName('hig_sidebar')  # functional layer: sidebar material
         left.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -1283,7 +1286,7 @@ class MainWindow(QMainWindow):
         ll.setContentsMargins(*theme.SIDEBAR_MARGINS)
         ll.setSpacing(12)
         head = QHBoxLayout()
-        head.setContentsMargins(4, 0, 0, 0)
+        head.setContentsMargins(0, 0, 0, 0)
         title = theme.text_style(QLabel('이미지'), 'headline')
         head.addWidget(title, 1)
         head.addWidget(auto_btn)
@@ -1294,7 +1297,7 @@ class MainWindow(QMainWindow):
                'Z: 3DFL OffsetZ). 끄면 HT와 FL이 따로 열립니다. 새로 추가하는 파일부터 적용됩니다.')
         self.align_tcf.setToolTip(tip)
         tcf_row = wrapped_check(self.align_tcf, 'TCF: HT와 FL을 정렬해 한 이미지로', tip)
-        tcf_row.setContentsMargins(4, 0, 0, 0)
+        tcf_row.setContentsMargins(0, 0, 0, 0)
         ll.addLayout(tcf_row)
         ll.addWidget(self.file_list, 1)
         left_holder = left
@@ -1425,7 +1428,7 @@ class MainWindow(QMainWindow):
         center.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         cl = QVBoxLayout(center)
         cl.setContentsMargins(*theme.CONTENT_MARGINS)
-        cl.setSpacing(10)
+        cl.setSpacing(12)
         cl.addLayout(bar1)
         self.z_col = QWidget()
         zl = QVBoxLayout(self.z_col)
@@ -1586,10 +1589,12 @@ class MainWindow(QMainWindow):
 
         # the file list and the tools keep their widths; only the preview
         # grows or shrinks with the window.  Dragged widths are remembered.
-        split = hig_widgets.PaneSplitter()  # hairline dividers between the regions
+        split = hig_widgets.PaneSplitter()  # regions meet without a line
         self.main_split = split
         split.addWidget(left_holder)
         split.addWidget(center)
+        # the raised sidebar's shade on the canvas edge (the handle draws its start)
+        self.region_shade = hig_widgets.RegionShade(center, offset=split.handleWidth())
         split.addWidget(inspector)
         split.setChildrenCollapsible(False)
         for i, f in enumerate((0, 1, 0)):

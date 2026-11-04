@@ -82,8 +82,8 @@ The screens follow the desktop rules of the Apple Human Interface Guidelines.
 - macOS (tahoe) style: buttons, tab buttons and chips are capsules, fields
   are borderless fills (radius 8), and radii shrink inwards (card 12 → selected
   row 10 → value 6). The window is three regions (image list, preview, tools)
-  set apart by their surfaces and hairline dividers, each with its own inner
-  padding (16–20 px). Only each tab's main action (e.g. **ROI 검출 (현재
+  set apart by tone, not lines, with the image list's soft shade on the
+  preview edge, each with its own inner padding (20 px). Only each tab's main action (e.g. **ROI 검출 (현재
   이미지)**, **지금 측정**) is a filled blue button.
 - Selection controls follow their use: a **switch** only for a value's
   **자동 / 수동** (auto / manual) choice, a **check box** for one on / off
