@@ -1,9 +1,12 @@
-"""그래프 편집 창: one window per feature graph (FRAP, line profile, distance
-bands, Coloc 2, measurement tables). The top 70 % shows the graph with its
-settings next to it, the bottom 30 % the data. It opens with the graph the
-tab shows; everything (chart type, x / y columns, series styles, axes,
-fonts, legend, text boxes) can be changed, text boxes and the legend dragged
-on the graph, and the graph and its data exported."""
+"""그래프 편집 창: one window for every graph (owner request 2026-11-05).
+Sidebar: the graphs (several at once). Canvas: a chip per tool (세포질 ROI
+측정, 입자 ROI 측정, 강도 측정, 등거리 띠, Coloc 2, 라인 프로파일, FRAP,
+일괄 분석) whose result becomes the graph's data (tools with nothing
+analysed look disabled), the graph, and its data underneath. Inspector:
+종류 / 값 / 모양 / 컴포넌트; the first three show 선택한 요소 (what was
+clicked on the graph: a series, an axis name, the title, the legend, a text
+box) above 전체 그래프. Graphs and their data are saved through
+파일 › 내보내기 (exporter.py)."""
 
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QKeySequence, QPalette
+from PySide6.QtGui import QAction, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -40,8 +43,8 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QTableView,
-    QTabWidget,
-    QToolBar,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -52,7 +55,8 @@ from .flow import FlowLayout
 
 IMAGE_FILTERS = {'PNG (*.png)': '.png', 'TIFF (*.tif)': '.tif', 'PDF (*.pdf)': '.pdf',
                  'SVG (*.svg)': '.svg'}
-EDITOR_W = 380
+EDITOR_W = 400
+SIDEBAR_W = 220
 ZOOM_STEP = 1.25
 ZOOM_DRAG_RATE = 0.004
 HANDLE_PX = 9
@@ -279,48 +283,119 @@ class TableModel(QAbstractTableModel):
         return str(section + 1)
 
 
-class GraphWindow(QMainWindow):
-    """data_fn() -> GraphData of the feature's current result (called to open
-    and to reload)."""
+class GraphDoc:
+    """One graph of the window: its data (from a tool or tables brought in),
+    its settings and what is selected on it."""
 
-    def __init__(self, win, key, title, data_fn, parent=None):
+    def __init__(self, key, title, data_fn=None, source=None):
+        self.key = key
+        self.title = title
+        self.data_fn = data_fn or (lambda: None)
+        self.source = source  # graph_sources key the data comes from (None: own tables)
+        self.data: G.GraphData | None = None
+        self.spec = G.GraphSpec()
+        self.default_spec = G.GraphSpec()
+        self.extra = []  # tables brought in from other analyses / CSV files
+        self.series_i = -1
+        self.text_i = -1
+        self.item_i = -1
+        self.sel = None  # selected object on the graph: (kind, index)
+
+    def tables(self) -> dict:
+        return {t.name: t for t in (self.data.tables if self.data else [])}
+
+
+def _doc(name):
+    return property(lambda self: getattr(self.doc, name), lambda self, v: setattr(self.doc, name, v))
+
+
+class _AllSeries:
+    """Every series at once (전체 그래프 settings): reads the first one,
+    writes all of them."""
+
+    def __init__(self, spec):
+        object.__setattr__(self, '_spec', spec)
+
+    def __getattr__(self, k):
+        s = self._spec.series[0]
+        if k == 'err_show':
+            return s.err_style != 'none'
+        if k == 'err_kind':
+            return self._spec.bar_err if self._spec.chart in G.CATEGORY_CHARTS else s.agg_err
+        return getattr(s, k)
+
+    def __setattr__(self, k, v):
+        sp = self._spec
+        for s in sp.series:
+            if k == 'err_show':
+                s.err_style = ('bar' if s.err_style == 'none' else s.err_style) if v else 'none'
+            elif k == 'err_kind':
+                s.agg_err = v
+            else:
+                setattr(s, k, v)
+        if k == 'err_kind':
+            sp.bar_err = v
+        if k == 'err_show' and not v:
+            sp.bar_err = 'none'
+        elif k == 'err_show' and sp.bar_err == 'none':
+            sp.bar_err = 'sd'
+
+
+SEL_KINDS = ('none', 'series', 'axis', 'title', 'legend', 'text')
+
+
+class GraphWindow(QMainWindow):
+    """그래프 편집 창 (owner request 2026-11-05): one window, Sidebar (the
+    graphs) | Canvas (a chip per tool to take the data from, the graph, the
+    data below it) | Inspector (종류 / 값 / 모양 / 컴포넌트, each split into
+    선택한 요소 = what was clicked on the graph and 전체 그래프). Saving goes
+    through 파일 › 내보내기 of the main window."""
+
+    data = _doc('data')
+    spec = _doc('spec')
+    default_spec = _doc('default_spec')
+    extra = _doc('extra')
+    key = _doc('key')
+    feature = _doc('title')
+    data_fn = _doc('data_fn')
+    _series_i = _doc('series_i')
+    _text_i = _doc('text_i')
+    _item_i = _doc('item_i')
+    sel = _doc('sel')
+
+    def __init__(self, win, parent=None):
         super().__init__(parent)
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
         from matplotlib.figure import Figure
 
+        from . import hig_widgets
+
         self.win = win
-        self.key = key
-        self.feature = title
-        self.data_fn = data_fn
-        self.data: G.GraphData | None = None
-        self.spec = G.GraphSpec()
-        self.default_spec = G.GraphSpec()
+        self.docs: list[GraphDoc] = []
+        self.doc = GraphDoc(None, '')  # nothing yet
         self.art = {}
         self._drag = None
         self._scales = {}
-        self.extra = []  # tables brought in from other analyses / CSV files
-        self._series_i = -1
-        self._text_i = -1
-        self._item_i = -1
-        self.setWindowTitle(f'그래프 편집 · {title}')
-        self.resize(1280, 860)
+        self.setWindowTitle('그래프 편집')
+        self.resize(1440, 900)
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(40)
         self._timer.timeout.connect(self.render)
         self.b = Binder(self._changed)
 
-        # ---- top 70 %: the graph | its settings ----
+        # ---- canvas box: data chips, the graph, the data table ----
         self.fig = Figure(figsize=(5, 3.6), dpi=100, layout='constrained')
         self.canvas = FigureCanvasQTAgg(self.fig)
         self.canvas.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.canvas.setToolTip('클릭으로 고른 뒤 끌어 옮기고, 파란 모서리 핸들을 끌어 크기를 바꿉니다. '
+                               '두 번 클릭: 글자 고치기 · 오른쪽 클릭: 글자 상자 추가 · '
+                               '확대·축소: Cmd(Ctrl)+위아래 드래그, Cmd(Ctrl)+휠, ] [')
         self.zoom = 1.0  # 1 = the whole graph fits the preview
-        self.sel = None  # selected object: (kind, index)
         self._overlay = []
         self._last_live = 0.0
         self.holder = QScrollArea()
-        # the desk around the graph page: a system role, so it follows light / dark
-        self.holder.setBackgroundRole(QPalette.ColorRole.Mid)
+        self.holder.setFrameShape(QScrollArea.Shape.NoFrame)
         self.holder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.holder.setWidgetResizable(False)
         self.holder.setWidget(self.canvas)
@@ -328,64 +403,39 @@ class GraphWindow(QMainWindow):
         for ev, fn in (('button_press_event', self._press), ('motion_notify_event', self._motion),
                        ('button_release_event', self._release), ('scroll_event', self._scroll_ev)):
             self.canvas.mpl_connect(ev, fn)
-        preview = QWidget()
-        pl = QVBoxLayout(preview)
-        pl.setContentsMargins(0, 0, 0, 0)
-        zrow = QHBoxLayout()
-        for text, fn, tip in (('－', lambda: self.zoom_by(1 / ZOOM_STEP), '축소 ( [ )'),
-                              ('＋', lambda: self.zoom_by(ZOOM_STEP), '확대 ( ] )'),
-                              ('화면 맞춤', self.zoom_fit, '그래프 전체가 보이게 (Ctrl+0)')):
-            b = QPushButton(text)
-            b.setToolTip(tip)
-            b.clicked.connect(fn)
-            zrow.addWidget(b)
+
+        self.chips = {}  # graph source key -> Chip
+        chip_row = QWidget()
+        cr = FlowLayout(chip_row)
+        cr.setContentsMargins(0, 0, 0, 0)
+        lab = QLabel('데이터')
+        theme.secondary(lab)
+        cr.addWidget(lab)
+        for key, (title, *_r) in self._sources().items():
+            c = hig_widgets.Chip(title, False)
+            c.clicked.connect(lambda _=False, k=key: self.load_source(k))
+            self.chips[key] = c
+            cr.addWidget(c)
         self.zoom_label = QLabel('100 %')
         theme.secondary(self.zoom_label)
-        zrow.addWidget(self.zoom_label)
-        zrow.addStretch()
-        pl.addLayout(zrow)
-        pl.addWidget(self.holder, 1)
-        pl.addWidget(_hint('클릭으로 고른 뒤 끌어 옮기고, 파란 모서리 핸들을 끌어 크기를 바꿉니다 (그래프 영역, 제목, '
-                           '축 이름, 글자 상자, 범례). 두 번 클릭: 글자 고치기 · 오른쪽 클릭: 글자 상자 추가, '
-                           '자동 배치로 되돌리기 · 확대·축소: Cmd(Ctrl)+위아래 드래그, Cmd(Ctrl)+휠, ] [ · '
-                           '이동: 가운데 버튼 드래그, 휠.'))
+        self.zoom_label.setToolTip('미리보기 배율 (보기 메뉴, Cmd/Ctrl+드래그)')
 
-        self.editor = QTabWidget()
-        self.editor.addTab(self._scroll(self._build_graph_tab()), '그래프')
-        self.editor.addTab(self._scroll(self._build_series_tab()), '데이터 시리즈')
-        self.editor.addTab(self._scroll(self._build_axes_tab()), '축')
-        self.editor.addTab(self._scroll(self._build_font_tab()), '글꼴')
-        self.editor.addTab(self._scroll(self._build_legend_tab()), '범례·글자')
-        self.editor.setMinimumWidth(320)
-
-        top = QSplitter(Qt.Orientation.Horizontal)
-        top.addWidget(preview)
-        top.addWidget(self.editor)
-        top.setStretchFactor(0, 1)
-        top.setStretchFactor(1, 0)
-        top.setSizes([900, EDITOR_W])
-
-        # ---- bottom 30 %: data ----
-        bottom = QWidget()
-        bl = QVBoxLayout(bottom)
-        bl.setContentsMargins(4, 2, 4, 2)
+        table_box = QWidget()
+        bl = QVBoxLayout(table_box)
+        bl.setContentsMargins(0, 8, 0, 0)
         row = QHBoxLayout()
-        row.addWidget(QLabel('데이터'))
         self.table_pick = QComboBox()
-        self.table_pick.setMinimumWidth(220)
         self.table_pick.currentIndexChanged.connect(lambda _: self.fill_table())
         row.addWidget(self.table_pick)
         self.only_sel = QCheckBox('선택한 시리즈만')
-        self.only_sel.setToolTip('그래프에 쓰인 데이터 / 요약에서 ‘데이터 시리즈’ 탭에서 고른 시리즈만 봅니다.')
+        self.only_sel.setToolTip('그래프에 쓰인 데이터 / 요약에서 고른 시리즈만 봅니다.')
         self.only_sel.toggled.connect(lambda _: self.fill_table())
         row.addWidget(self.only_sel)
+        row.addStretch()
         self.table_info = QLabel()
         theme.secondary(self.table_info)
-        row.addWidget(self.table_info, 1)
-        for text, fn in (('표 CSV 저장…', self.export_table), ('선택한 행 CSV…', self.export_selected_rows)):
-            b = QPushButton(text)
-            b.clicked.connect(fn)
-            row.addWidget(b)
+        row.addWidget(self.table_info)
+        row.addWidget(self.zoom_label)
         bl.addLayout(row)
         self.model = TableModel()
         self.view = QTableView()
@@ -400,14 +450,256 @@ class GraphWindow(QMainWindow):
         bl.addWidget(self.view, 1)
 
         split = QSplitter(Qt.Orientation.Vertical)
-        split.addWidget(top)
-        split.addWidget(bottom)
+        split.addWidget(self.holder)
+        split.addWidget(table_box)
         split.setStretchFactor(0, 7)
         split.setStretchFactor(1, 3)
-        split.setSizes([700, 300])
+        split.setSizes([640, 300])
+        split.setChildrenCollapsible(False)
         self.split = split
-        self.setCentralWidget(split)
+        content = QWidget()
+        content.setObjectName('hig_content')
+        content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        cl = QVBoxLayout(content)
+        cl.setContentsMargins(*theme.CONTENT_MARGINS)
+        cl.setSpacing(12)
+        cl.addWidget(chip_row)
+        cl.addWidget(split, 1)
+
+        # ---- inspector box: 종류 / 값 / 모양 / 컴포넌트 ----
+        self._sel_heads = []  # (headline label, hint label)
+        self._sel_stacks = []  # (QStackedWidget, {kind: page index})
+        self.editor = hig_widgets.ChipTabs()
+        for title, build in (('종류', self._build_kind_tab), ('값', self._build_value_tab),
+                             ('모양', self._build_look_tab), ('컴포넌트', self._build_comp_tab)):
+            self.editor.addTab(self._scroll(build()), title)
+        insp = hig_widgets.inspector(self.editor)
+        insp.setFixedWidth(EDITOR_W)
+
+        # ---- sidebar: the graphs ----
+        side = QWidget()
+        side.setObjectName('hig_sidebar')
+        side.setFixedWidth(SIDEBAR_W)
+        sl = QVBoxLayout(side)
+        sl.setContentsMargins(*theme.SIDEBAR_MARGINS)
+        sl.setSpacing(8)
+        top = QHBoxLayout()
+        nb = QPushButton('새 그래프')
+        nb.setToolTip('빈 그래프를 하나 더 만듭니다. 위의 데이터 칩으로 분석 결과를 가져옵니다.')
+        nb.clicked.connect(lambda: self.new_doc())
+        top.addWidget(nb)
+        db = QPushButton('복제')
+        db.setToolTip('지금 그래프를 같은 데이터와 설정으로 하나 더 만듭니다.')
+        db.clicked.connect(self.duplicate_doc)
+        top.addWidget(db)
+        top.addStretch()
+        sl.addLayout(top)
+        from .image_tree import WrapDelegate
+
+        self.doc_list = QTreeWidget()
+        self.doc_list.setHeaderHidden(True)
+        self.doc_list.setRootIsDecorated(False)
+        self.doc_list.setIndentation(0)
+        self.doc_list.setItemDelegate(WrapDelegate(self.doc_list))
+        self.doc_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.doc_list.currentItemChanged.connect(self._doc_picked)
+        self.doc_list.itemDoubleClicked.connect(lambda *_: self.rename_doc())
+        self.doc_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.doc_list.customContextMenuRequested.connect(self._doc_menu)
+        sl.addWidget(self.doc_list, 1)
+
+        body = hig_widgets.PaneSplitter()
+        body.addWidget(side)
+        body.addWidget(content)
+        body.addWidget(insp)
+        body.setChildrenCollapsible(False)
+        for i, f in enumerate((0, 1, 0)):
+            body.setStretchFactor(i, f)
+        self.setCentralWidget(body)
         self._build_menus()
+        self._show_selection()
+
+    # ---- graphs (documents) ------------------------------------------------------------------
+
+    def doc_for(self, key) -> GraphDoc | None:
+        return next((d for d in self.docs if d.key == key), None)
+
+    def _free_key(self) -> str:
+        n = 1
+        while self.doc_for(f'free{n}') is not None:
+            n += 1
+        return f'free{n}'
+
+    def add_doc(self, key, title, data_fn=None, source=None) -> GraphDoc:
+        d = GraphDoc(key, title, data_fn, source)
+        self.docs.append(d)
+        it = QTreeWidgetItem([title])
+        self.doc_list.addTopLevelItem(it)
+        return d
+
+    def new_doc(self, key=None, title=None) -> GraphDoc:
+        key = key or self._free_key()
+        d = self.add_doc(key, title or f'새 그래프 {key[4:] if key.startswith("free") else ""}'.strip())
+        d.data = G.GraphData(d.title, [], G.GraphSpec(title=''))
+        d.spec = d.data.spec.copy()
+        self.show_doc(d)
+        return d
+
+    def duplicate_doc(self):
+        src = self.doc
+        if src.key is None:
+            return
+        d = self.add_doc(self._free_key(), f'{src.title} (복제)', src.data_fn, src.source)
+        d.data = G.GraphData(d.title, list(src.data.tables) if src.data else [], src.spec.copy(),
+                             *(() if src.data is None else (src.data.name, src.data.folder)))
+        d.spec, d.default_spec = src.spec.copy(), src.default_spec.copy()
+        d.extra = list(src.extra)
+        d.series_i = src.series_i
+        self.show_doc(d)
+        self._changed_no_redraw()
+
+    def rename_doc(self):
+        d = self.doc
+        if d.key is None:
+            return
+        text, ok = QInputDialog.getText(self, '그래프 이름', '이름:', text=d.title)
+        if ok and text.strip():
+            d.title = text.strip()
+            self._doc_item(d).setText(0, d.title)
+            self._changed_no_redraw()
+
+    def remove_doc(self, d=None):
+        d = d or self.doc
+        if d not in self.docs:
+            return
+        i = self.docs.index(d)
+        self.docs.pop(i)
+        self.doc_list.takeTopLevelItem(i)
+        if self.docs:
+            self.show_doc(self.docs[min(i, len(self.docs) - 1)])
+        else:
+            self.doc = GraphDoc(None, '')
+            self.fig.clear()
+            self.art = {}
+            self.canvas.draw_idle()
+            self._fill_lists()
+            self.sync()
+            self._show_selection()
+        self._changed_no_redraw()
+
+    def clear_docs(self):
+        while self.docs:
+            self.remove_doc(self.docs[-1])
+
+    def _doc_item(self, d):
+        return self.doc_list.topLevelItem(self.docs.index(d))
+
+    def _doc_picked(self, cur, _prev):
+        if cur is None:
+            return
+        i = self.doc_list.indexOfTopLevelItem(cur)
+        if 0 <= i < len(self.docs) and self.docs[i] is not self.doc:
+            self.show_doc(self.docs[i])
+
+    def _doc_menu(self, pos):
+        it = self.doc_list.itemAt(pos)
+        m = QMenu(self)
+        m.addAction('새 그래프', lambda: self.new_doc())
+        if it is not None:
+            self._doc_picked(it, None)
+            m.addAction('복제', self.duplicate_doc)
+            m.addAction('이름 바꾸기…', self.rename_doc)
+            m.addSeparator()
+            m.addAction('그래프 삭제…', self.confirm_remove_doc)
+        m.exec(self.doc_list.viewport().mapToGlobal(pos))
+
+    def confirm_remove_doc(self):
+        if self.doc.key is not None and theme.confirm_destructive(
+                self, '그래프 삭제', f'‘{self.doc.title}’ 그래프를 삭제할까요?', '삭제'):
+            self.remove_doc()
+
+    def show_doc(self, d: GraphDoc):
+        """Make d the graph shown and edited."""
+        self.doc = d
+        self._scales = {}
+        it = self._doc_item(d)
+        if self.doc_list.currentItem() is not it:
+            self.doc_list.blockSignals(True)
+            self.doc_list.setCurrentItem(it)
+            it.setSelected(True)
+            self.doc_list.blockSignals(False)
+        self.setWindowTitle(f'그래프 편집 · {d.title}')
+        self._fill_lists()
+        self.sync()
+        self._show_selection()
+        self.refresh_chips()
+        if d.data is not None:
+            self.render()
+        else:
+            self.fig.clear()
+            self.art = {}
+            self.canvas.draw_idle()
+
+    def states(self) -> dict:
+        """key -> settings of every graph (projects)."""
+        cur = self.doc
+        out = {}
+        for d in self.docs:
+            self.doc = d
+            out[d.key] = self.state()
+        self.doc = cur
+        return out
+
+    # ---- data sources (chips) -----------------------------------------------------------------
+
+    def refresh_chips(self):
+        """A chip per tool; tools with nothing analysed yet look disabled."""
+        from PySide6.QtWidgets import QGraphicsOpacityEffect
+
+        srcs = self._sources()
+        for key, c in self.chips.items():
+            title, _tab, fn, hint = srcs.get(key, ('', None, lambda: None, ''))
+            try:
+                ok = fn() is not None
+            except Exception:
+                ok = False
+            c.setEnabled(ok)
+            c.setChecked(self.doc.source == key)
+            if ok:
+                c.setGraphicsEffect(None)
+                c.setToolTip(f'{title}의 결과로 지금 그래프를 그립니다.')
+            else:
+                eff = QGraphicsOpacityEffect(c)
+                eff.setOpacity(0.4)
+                c.setGraphicsEffect(eff)
+                c.setToolTip(hint)
+
+    def load_source(self, key):
+        """A data chip: the tool's result becomes the data of the graph shown."""
+        title, _tab, fn, hint = self._sources()[key]
+        try:
+            data = fn()
+        except Exception as exc:
+            traceback.print_exc()
+            QMessageBox.warning(self, '그래프 편집', f'데이터를 만들지 못했습니다: {exc}')
+            data = None
+        if data is None:
+            self.refresh_chips()
+            self._status(hint)
+            return None
+        d = self.doc if self.doc.key is not None else self.new_doc()
+        d.source, d.data_fn = key, fn
+        if d.title.startswith('새 그래프'):
+            d.title = title
+            self._doc_item(d).setText(0, title)
+        self.set_data(data)
+        self.refresh_chips()
+        self._changed_no_redraw()
+        return d
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
+        QTimer.singleShot(0, self.refresh_chips)
 
     # ---- building -----------------------------------------------------------------
 
@@ -415,7 +707,10 @@ class GraphWindow(QMainWindow):
     def _scroll(w) -> QScrollArea:
         s = QScrollArea()
         s.setWidgetResizable(True)
+        s.setFrameShape(QScrollArea.Shape.NoFrame)
+        s.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         s.setWidget(w)
+        theme.unify(w)
         return s
 
     def _act(self, menu, text, fn, key=None, tip=None):
@@ -432,9 +727,11 @@ class GraphWindow(QMainWindow):
     def _build_menus(self):
         mb = self.menuBar()
         m = mb.addMenu('파일')
-        self._act(m, '그래프 이미지 저장 (PNG / TIFF / PDF / SVG)…', self.save_image,
-                  QKeySequence.StandardKey.Save)
-        m.addSeparator()
+        exp = getattr(self.win, 'export_dialog', None)
+        if exp is not None:
+            self._act(m, '내보내기…', lambda: exp('graph'), 'Ctrl+E',
+                      '그래프(하나 또는 모두)와 그 데이터를 파일 › 내보내기 창에서 저장합니다.')
+            m.addSeparator()
         self._act(m, '그래프 설정 저장 (JSON)…', self.save_settings,
                   tip='모든 스타일·축·글꼴·범례·글자 상자 설정을 파일로 저장합니다.')
         self._act(m, '그래프 설정 불러오기 (전체)…', lambda: self.load_settings(False))
@@ -444,19 +741,27 @@ class GraphWindow(QMainWindow):
         m.addSeparator()
         self._act(m, '닫기', self.close, QKeySequence.StandardKey.Close)
 
-        m = mb.addMenu('내보내기')
-        self._act(m, '그래프에 쓰인 데이터 (CSV)…', lambda: self.export_plotted(False),
-                  tip='그래프에 그려진 모든 점 (시리즈, x, y, 에러)')
-        self._act(m, '선택한 시리즈의 데이터 (CSV)…', lambda: self.export_plotted(True))
-        self._act(m, '그래프 요약: 평균·SD·SEM·n (CSV)…', self.export_summary)
+        m = mb.addMenu('편집')
+        self._act(m, '새 그래프', lambda: self.new_doc(), QKeySequence.StandardKey.New)
+        self._act(m, '그래프 복제', self.duplicate_doc)
+        self._act(m, '그래프 이름 바꾸기…', self.rename_doc)
         m.addSeparator()
-        self._act(m, '아래 표 전체 (CSV)…', self.export_table)
-        self._act(m, '아래 표의 선택한 행 (CSV)…', self.export_selected_rows)
-        self._act(m, '모든 데이터 표 (폴더, CSV)…', self.export_all,
-                  tip='기능이 넘겨준 모든 결과 표 + 그래프에 쓰인 데이터 + 요약을 한 폴더에 저장합니다.')
+        self._act(m, '데이터 시리즈 추가', self.add_series)
+        self._act(m, '글자 상자 추가', lambda: self.add_text())
+        self._act(m, '범례 항목 추가', self.add_legend_item)
+        self._act(m, '모든 위치·크기 자동 배치로', self.auto_layout,
+                  tip='끌어 옮기거나 크기를 바꾼 그래프 영역·제목·축 이름을 자동 배치로 되돌립니다.')
+        m.addSeparator()
+        self._act(m, '처음 그래프로 되돌리기', self.reset_spec,
+                  tip='도구에서 가져온 처음 그래프로 모든 설정을 되돌립니다.')
+        self._act(m, '도구의 현재 결과 다시 불러오기', self.reload, 'Ctrl+R',
+                  tip='도구의 최신 결과로 데이터를 바꿉니다. 열이 그대로면 고친 설정은 유지합니다.')
+        m.addSeparator()
+        a = self._act(m, '그래프 삭제…', self.confirm_remove_doc)
+        a.setProperty('hig_destructive', True)
 
         m = mb.addMenu('데이터')
-        self.import_menu = m.addMenu('다른 분석 결과 가져오기')
+        self.import_menu = m.addMenu('다른 분석 결과 더하기')
         self.import_menu.aboutToShow.connect(self._fill_import_menu)
         self._act(m, 'CSV 파일 불러오기…', self.import_csv,
                   tip='CSV 표를 불러와 이 그래프의 데이터 표로 씁니다 (첫 줄 = 열 이름).')
@@ -467,124 +772,130 @@ class GraphWindow(QMainWindow):
         self._act(m, '축소', lambda: self.zoom_by(1 / ZOOM_STEP), '[')
         self._act(m, '화면 맞춤', self.zoom_fit, 'Ctrl+0')
 
-        m = mb.addMenu('편집')
-        self._act(m, '데이터 시리즈 추가', self.add_series)
-        self._act(m, '글자 상자 추가', lambda: self.add_text())
-        self._act(m, '범례 항목 추가', self.add_legend_item)
-        self._act(m, '모든 위치·크기 자동 배치로', self.auto_layout,
-                  tip='끌어 옮기거나 크기를 바꾼 그래프 영역·제목·축 이름을 자동 배치로 되돌립니다.')
-        m.addSeparator()
-        self._act(m, '처음 그래프로 되돌리기', self.reset_spec,
-                  tip='탭에서 보던 그래프로 모든 설정을 되돌립니다.')
-        self._act(m, '탭의 현재 결과 다시 불러오기', self.reload, 'Ctrl+R',
-                  tip='탭의 최신 결과로 데이터를 바꿉니다. 열이 그대로면 고친 설정은 유지합니다.')
+    # ---- inspector pieces ----
 
-        tb = QToolBar('그래프')
-        tb.setMovable(False)
-        self.addToolBar(tb)
-        for text, fn in (('이미지 저장…', self.save_image), ('데이터 CSV…', lambda: self.export_plotted(False)),
-                         ('모든 표…', self.export_all), ('글자 상자 +', lambda: self.add_text()),
-                         ('다른 분석 데이터 +', self._import_popup),
-                         ('처음 그래프로', self.reset_spec), ('다시 불러오기', self.reload)):
-            tb.addAction(text, fn)
-
-    def _build_graph_tab(self) -> QWidget:
+    def _sel_section(self, pages: dict, hint_none: str) -> QWidget:
+        """선택한 요소: a headline, a hint and the page for the kind of object
+        selected on the graph (pages: kind -> widget; 'none' = nothing / no
+        settings of this tab)."""
         w = QWidget()
-        f = QFormLayout(w)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        head = QLabel('선택한 요소')
+        theme.text_style(head, 'headline')
+        head.setWordWrap(True)
+        lay.addWidget(head)
+        hint = _hint('')
+        lay.addWidget(hint)
+        self._sel_heads.append((head, hint, hint_none))
+        from .roi_panel import _ModePages
+
+        stack = _ModePages()  # as tall as the page shown
+        idx = {}
+        empty = QWidget()
+        idx['none'] = stack.addWidget(empty)
+        for kind, page in pages.items():
+            idx[kind] = stack.addWidget(page)
+        lay.addWidget(stack)
+        self._sel_stacks.append((stack, idx))
+        return w
+
+    @staticmethod
+    def _card(title='', *rows) -> QGroupBox:
+        box = QGroupBox(title)
+        f = QFormLayout(box)
+        for r in rows:
+            if isinstance(r, tuple):
+                f.addRow(*r)
+            else:
+                f.addRow(r)
+        return box
+
+    @staticmethod
+    def _page(*widgets) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        for x in widgets:
+            lay.addWidget(x)
+        return w
+
+    @staticmethod
+    def _global_head(text, sub=''):
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 12, 0, 0)
+        h = QLabel(text)
+        theme.text_style(h, 'headline')
+        lay.addWidget(h)
+        if sub:
+            lay.addWidget(_hint(sub))
+        return w
+
+    def _axis(self):
+        """The axis selected on the graph (its name was clicked)."""
+        k = self.sel[0] if self.sel else None
+        return getattr(self.spec, 'y' if k == 'ylabel' else 'x')
+
+    def _sel_font(self):
+        k = self.sel[0] if self.sel else None
+        return {'title': self.spec.title_font, 'xlabel': self.spec.label_font, 'ylabel': self.spec.label_font,
+                'legend': self.spec.legend_font}.get(k)
+
+    def _all(self):
+        return _AllSeries(self.spec) if self.spec.series else None
+
+    def _build_kind_tab(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        cur = self.cur_series
+        series = self._card('', ('그리기 방식', self.b.bind(_combo(G.STYLES), cur, 'style', data=True)),
+                            ('선 모양', self.b.bind(_combo(G.LINE_STYLES), cur, 'line_style', data=True)),
+                            self.b.bind(QCheckBox('그래프에 표시'), cur, 'visible'),
+                            self.b.bind(QCheckBox('범례에 넣기'), cur, 'legend'))
+        lay.addWidget(self._sel_section({'series': self._page(series)},
+                                        '종류 설정은 시리즈에 있습니다. 그래프에서 선이나 점을 누르거나 '
+                                        '‘값’ 탭의 시리즈 목록에서 고르세요.'))
+        lay.addWidget(self._global_head('전체 그래프', '모든 시리즈에 적용됩니다.'))
         sp = lambda: self.spec  # noqa: E731
         self.chart = self.b.bind(_combo(G.CHARTS), sp, 'chart', data=True)
         self.chart.currentIndexChanged.connect(lambda _: self._chart_changed())
-        f.addRow('그래프 종류', self.chart)
-        f.addRow(_hint('XY: x 열과 y 열의 값 · 막대 / 점 그림 / 상자 / 바이올린: x 열의 값(범주)마다 y 값을 모아 '
-                       '그립니다 (x가 비면 시리즈마다 하나) · 히스토그램: y 값의 분포 · 히트맵: x, y, z 열 '
-                       '(첫 시리즈, 다른 시리즈는 위에 선으로).'))
-        f.addRow('제목', self.b.bind(QLineEdit(), sp, 'title'))
-        self.w_in = self.b.bind(_dspin(1, 40, 0.1, 2, ' in'), sp, 'width_in')
-        self.h_in = self.b.bind(_dspin(1, 40, 0.1, 2, ' in'), sp, 'height_in')
-        f.addRow('크기 (가로 × 세로)', _row(self.w_in, QLabel('×'), self.h_in))
-        dpi = QSpinBox()
-        dpi.setRange(50, 1200)
-        f.addRow('이미지 해상도', _row(self.b.bind(dpi, sp, 'dpi'), QLabel('dpi (PNG / TIFF)')))
-        f.addRow('배경색', self.b.bind(ColorButton(), sp, 'background'))
-
-        lay_box = QGroupBox('배치 (그래프 위에서 끌어 옮기고 크기 조절)')
-        lf = QFormLayout(lay_box)
-        lf.addRow(self.b.bind(QCheckBox('그래프 영역 자동 배치'), sp, 'plot_auto'))
-        self.plot_edits = {k: self.b.bind(_dspin(lo, hi, 0.01, 3), sp, k)
-                           for k, lo, hi in (('plot_x', -0.5, 1.5), ('plot_y', -0.5, 1.5),
-                                             ('plot_w', 0.02, 2), ('plot_h', 0.02, 2))}
-        lf.addRow('영역 왼쪽·아래', _row(self.plot_edits['plot_x'], self.plot_edits['plot_y']))
-        lf.addRow('영역 너비·높이', _row(self.plot_edits['plot_w'], self.plot_edits['plot_h']))
-        lf.addRow(_row(self.b.bind(QCheckBox('제목 자동 위치'), sp, 'title_auto'),
-                       self.b.bind(QCheckBox('X 축 이름 자동 위치'), sp, 'xlabel_auto'),
-                       self.b.bind(QCheckBox('Y 축 이름 자동 위치'), sp, 'ylabel_auto')))
-        b = QPushButton('모두 자동 배치로')
-        b.clicked.connect(self.auto_layout)
-        lf.addRow(b)
-        lf.addRow(_hint('영역 값은 그림 전체에 대한 비율(0–1)입니다. 크기 핸들로 글자를 키우면 그 글꼴 크기가 '
-                        '바뀝니다 (축 이름은 X·Y가 같은 크기).'))
-        f.addRow(lay_box)
-
-        self.cat_box = QGroupBox('막대 / 점 그림 / 상자 / 바이올린')
-        cf = QFormLayout(self.cat_box)
-        cf.addRow('에러바', self.b.bind(_combo(G.ERR_KINDS), sp, 'bar_err', data=True))
-        cf.addRow(self.b.bind(QCheckBox('개별 값을 점으로 표시'), sp, 'bar_points'))
-        cf.addRow('폭', self.b.bind(_dspin(0.1, 1.0, 0.05), sp, 'bar_width'))
-        cf.addRow('채움 투명도', self.b.bind(_dspin(0, 1, 0.05), sp, 'bar_alpha'))
-        cf.addRow('점 흩뿌림', self.b.bind(_dspin(0, 0.5, 0.05), sp, 'point_jitter'))
-        f.addRow(self.cat_box)
-        self.hist_box = QGroupBox('히스토그램')
-        hf = QFormLayout(self.hist_box)
+        self.all_agg = self.b.bind(_combo(G.AGGREGATES), self._all, 'agg', data=True)
+        self.all_agg.setToolTip('모든 시리즈의 점을 x 값마다 묶습니다 (시리즈마다는 ‘값’ 탭에서).')
+        lay.addWidget(self._card('', ('그래프 종류', self.chart), ('묶기', self.all_agg),
+                                 ('묶을 때 에러', self.b.bind(_combo(G.ERR_KINDS), self._all, 'agg_err', data=True)),
+                                 _hint('XY: x 열과 y 열의 값 · 막대 / 점 그림 / 상자 / 바이올린: x 열의 값(범주)마다 '
+                                       'y 값을 모아 그립니다 · 히스토그램: y 값의 분포 · 히트맵: x, y, z 열.')))
+        self.cat_box = self._card('막대 / 점 그림 / 상자 / 바이올린',
+                                  self.b.bind(QCheckBox('개별 값을 점으로 표시'), sp, 'bar_points'),
+                                  ('폭', self.b.bind(_dspin(0.1, 1.0, 0.05), sp, 'bar_width')),
+                                  ('채움 투명도', self.b.bind(_dspin(0, 1, 0.05), sp, 'bar_alpha')),
+                                  ('점 흩뿌림', self.b.bind(_dspin(0, 0.5, 0.05), sp, 'point_jitter')))
+        lay.addWidget(self.cat_box)
         bins = QSpinBox()
         bins.setRange(0, 1000)
         bins.setSpecialValueText('자동')
-        hf.addRow('구간 수', theme.auto_value(self.b.bind(bins, sp, 'hist_bins'), 20))
-        hf.addRow(self.b.bind(QCheckBox('밀도 (넓이 = 1)'), sp, 'hist_density'))
-        hf.addRow(self.b.bind(QCheckBox('채우기'), sp, 'hist_fill'))
-        f.addRow(self.hist_box)
-        self.heat_box = QGroupBox('히트맵')
-        mf = QFormLayout(self.heat_box)
+        self.hist_box = self._card('히스토그램', ('구간 수', theme.auto_value(self.b.bind(bins, sp, 'hist_bins'), 20)),
+                                   self.b.bind(QCheckBox('밀도 (넓이 = 1)'), sp, 'hist_density'),
+                                   self.b.bind(QCheckBox('채우기'), sp, 'hist_fill'))
+        lay.addWidget(self.hist_box)
         cm = QComboBox()
         cm.addItems(G.CMAPS)
-        mf.addRow('색 지도', self.b.bind(cm, sp, 'cmap'))
-        mf.addRow(self.b.bind(QCheckBox('로그 색 눈금'), sp, 'cmap_log'))
-        mf.addRow(self.b.bind(QCheckBox('색 막대 표시'), sp, 'colorbar'))
-        f.addRow(self.heat_box)
+        self.heat_box = self._card('히트맵', ('색 지도', self.b.bind(cm, sp, 'cmap')),
+                                   self.b.bind(QCheckBox('로그 색 눈금'), sp, 'cmap_log'),
+                                   self.b.bind(QCheckBox('색 막대 표시'), sp, 'colorbar'))
+        lay.addWidget(self.heat_box)
+        lay.addStretch()
         return w
 
-    def _build_series_tab(self) -> QWidget:
+    def _build_value_tab(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
-        self.series_list = QListWidget()
-        self.series_list.setMaximumHeight(150)
-        self.series_list.currentRowChanged.connect(self._series_picked)
-        self.series_list.itemChanged.connect(self._series_checked)
-        lay.addWidget(self.series_list)
-        btns = []
-        for text, fn, tip in (('추가', self.add_series, '새 시리즈 (선택한 시리즈를 바탕으로)'),
-                              ('복제', self.dup_series, None),
-                              ('▲', lambda: self.move_series(-1), '앞으로 (먼저 그림)'),
-                              ('▼', lambda: self.move_series(1), '뒤로'),
-                              ('값마다 나누기…', self.split_series,
-                               '고른 열의 값(그룹, 이미지 …)마다 색이 다른 시리즈로 나눕니다.')):
-            b = QPushButton(text)
-            if tip:
-                b.setToolTip(tip)
-            b.clicked.connect(fn)
-            btns.append(b)
-        rm = theme.destructive(QPushButton('시리즈 삭제…'))  # last, red, confirmed
-        rm.clicked.connect(lambda: self.cur_series() is not None and theme.confirm_destructive(
-            self, '시리즈', '선택한 시리즈를 삭제할까요?', '삭제') and self.del_series())
-        btns.append(rm)
-        lay.addWidget(_row(*btns))
         cur = self.cur_series
-
-        data = QGroupBox('데이터')
-        f = QFormLayout(data)
         self.s_table = self.b.bind(QComboBox(), cur, 'table')
         self.s_table.currentTextChanged.connect(lambda _: self._fill_columns())
-        f.addRow('표', self.s_table)
         self.col_boxes = {}
+        rows = [('표', self.s_table)]
         for attr, title, tip in (('x', 'x', '범주 그래프에서는 범주가 되는 열 (비우면 시리즈 하나가 한 범주)'),
                                  ('y', 'y', None), ('err', '에러 (±)', '점마다 ± 값이 든 열 (선택)'),
                                  ('z', 'z (히트맵)', None)):
@@ -592,209 +903,282 @@ class GraphWindow(QMainWindow):
             if tip:
                 c.setToolTip(tip)
             self.col_boxes[attr] = c
-            f.addRow(title, c)
+            rows.append((title, c))
         self.s_where = self.b.bind(QComboBox(), cur, 'where')
         self.s_where.currentTextChanged.connect(lambda _: self._fill_values())
         self.col_boxes['where'] = self.s_where
         self.s_equals = QComboBox()
         self.s_equals.setEditable(True)
         self.b.bind(self.s_equals, cur, 'equals')
-        f.addRow('조건: 열', self.s_where)
-        f.addRow('　= 값', self.s_equals)
         w2 = self.b.bind(QComboBox(), cur, 'where2')
         self.col_boxes['where2'] = w2
         self.s_equals2 = QComboBox()
         self.s_equals2.setEditable(True)
         self.b.bind(self.s_equals2, cur, 'equals2')
         w2.currentTextChanged.connect(lambda _: self._fill_values())
-        f.addRow('그리고 열', w2)
-        f.addRow('　= 값', self.s_equals2)
-        sp = self.b.bind(QComboBox(), cur, 'split')
-        sp.setToolTip('이 열의 값(세포, 이미지 …)마다 선을 따로 그리되 모두 같은 스타일로 그립니다.')
-        self.col_boxes['split'] = sp
-        f.addRow('같은 스타일로 나눠 그리기', sp)
-        f.addRow('묶기', self.b.bind(_combo(G.AGGREGATES), cur, 'agg', data=True))
+        spl = self.b.bind(QComboBox(), cur, 'split')
+        spl.setToolTip('이 열의 값(세포, 이미지 …)마다 선을 따로 그리되 모두 같은 스타일로 그립니다.')
+        self.col_boxes['split'] = spl
         ab = self.b.bind(QComboBox(), cur, 'agg_by')
         ab.setToolTip('비우면 x 값이 같은 행끼리 묶습니다.')
         self.col_boxes['agg_by'] = ab
-        f.addRow('　묶는 열', ab)
-        f.addRow('　묶을 때 에러', self.b.bind(_combo(G.ERR_KINDS), cur, 'agg_err', data=True))
-        lay.addWidget(data)
-
-        look = QGroupBox('이름·스타일')
-        f = QFormLayout(look)
-        self.s_label = self.b.bind(QLineEdit(), cur, 'label')
-        self.s_label.textChanged.connect(lambda _: self._relabel_list())
-        f.addRow('범례 이름', self.s_label)
-        f.addRow(_row(self.b.bind(QCheckBox('표시'), cur, 'visible'),
-                      self.b.bind(QCheckBox('범례에 넣기'), cur, 'legend')))
-        f.addRow('모양', self.b.bind(_combo(G.STYLES), cur, 'style', data=True))
-        f.addRow('색', self.b.bind(ColorButton(), cur, 'color'))
-        f.addRow('선 굵기', self.b.bind(_dspin(0, 20, 0.1, 2, ' pt'), cur, 'line_width'))
-        f.addRow('선 모양', self.b.bind(_combo(G.LINE_STYLES), cur, 'line_style', data=True))
-        f.addRow('점 모양', self.b.bind(_combo(G.MARKERS), cur, 'marker', data=True))
-        f.addRow('점 크기', self.b.bind(_dspin(0, 40, 0.5, 1, ' pt'), cur, 'marker_size'))
-        f.addRow(self.b.bind(QCheckBox('점 속 채우기 (끄면 속이 빈 점)'), cur, 'marker_fill'))
-        f.addRow('점 테두리', self.b.bind(_dspin(0, 10, 0.1, 2, ' pt'), cur, 'marker_edge'))
-        f.addRow('불투명도', self.b.bind(_dspin(0, 1, 0.05), cur, 'alpha'))
-        f.addRow('에러 표시', self.b.bind(_combo(G.ERR_STYLES), cur, 'err_style', data=True))
-        f.addRow('에러바 색', self.b.bind(ColorButton(allow_empty=True), cur, 'err_color'))
-        f.addRow('에러바 굵기', self.b.bind(_dspin(0, 10, 0.1, 2, ' pt'), cur, 'err_width'))
-        f.addRow('에러바 끝 길이', self.b.bind(_dspin(0, 20, 0.5, 1, ' pt'), cur, 'capsize'))
-        b = QPushButton('이 스타일을 모든 시리즈에')
-        b.setToolTip('색을 뺀 모양·굵기·점·에러바 설정을 다른 시리즈에도 적용합니다.')
-        b.clicked.connect(self.style_to_all)
-        f.addRow(b)
-        lay.addWidget(look)
-        lay.addStretch()
-        return w
-
-    def _build_axes_tab(self) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        self.range_edits = {}
-        for which, title in (('x', 'X 축'), ('y', 'Y 축')):
-            box = QGroupBox(title)
-            f = QFormLayout(box)
-            ax = (lambda which=which: getattr(self.spec, which))
-            f.addRow('이름', self.b.bind(QLineEdit(), ax, 'label'))
-            auto = self.b.bind(QCheckBox('자동'), ax, 'auto_range')
-            lo, hi = self.b.bind(FloatEdit(), ax, 'lo'), self.b.bind(FloatEdit(), ax, 'hi')
-            auto.setToolTip('데이터에 맞춥니다. 칸에는 지금 쓰는 범위가 보입니다.')
-            auto.toggled.connect(lambda on, w=which: self._auto_toggled(w, 'range', on))
-            f.addRow('최소 – 최대', _row(lo, QLabel('–'), hi, auto))
-            sauto = self.b.bind(QCheckBox('자동'), ax, 'auto_step')
-            step = self.b.bind(FloatEdit(), ax, 'step')
-            sauto.setToolTip('보기 좋은 간격을 자동으로 고릅니다. 칸에는 지금 쓰는 간격이 보입니다.')
-            sauto.toggled.connect(lambda on, w=which: self._auto_toggled(w, 'step', on))
-            f.addRow('눈금 간격', _row(step, sauto))
-            self.range_edits[which] = (lo, hi, auto, step, sauto)
-            unit = QComboBox()
-            unit.setEditable(True)
-            unit.addItems(['', 's', 'min', 'h', 'ms', 'µm', 'nm', 'mm', 'px', '%', 'a.u.', 'µm²'])
-            unit.setToolTip('축 이름 뒤 괄호 안에 붙는 단위')
-            self.b.bind(unit, ax, 'unit')
-            scale = self.b.bind(FloatEdit(), ax, 'scale')
-            scale.setToolTip('그릴 때 값에 곱하는 수. 예: 초 → 분 = 1/60, 0–1 → % = 100, px → µm = 픽셀 크기')
-            conv = QComboBox()
-            conv.setToolTip('자주 쓰는 단위 바꾸기: 배율과 단위를 함께 정합니다.')
-            for text, k, u in (('단위 바꾸기…', None, None), ('그대로 (× 1)', 1.0, None), ('s → min', 1 / 60, 'min'),
-                               ('min → s', 60.0, 's'), ('s → ms', 1000.0, 'ms'), ('min → h', 1 / 60, 'h'),
-                               ('0–1 → %', 100.0, '%'), ('% → 0–1', 0.01, ''), ('µm → nm', 1000.0, 'nm'),
-                               ('nm → µm', 0.001, 'µm')):
-                conv.addItem(text, (k, u))
-            conv.activated.connect(lambda i, c=conv, w=which: self._convert_unit(w, c))
-            f.addRow('단위', _row(unit, conv))
-            f.addRow('값 배율 (×)', _row(scale, QLabel('1/60 처럼 분수도 됩니다')))
-            f.addRow(_row(self.b.bind(QCheckBox('로그 눈금'), ax, 'log'),
-                          self.b.bind(QCheckBox('보조 눈금'), ax, 'minor')))
-            f.addRow('눈금 방향', self.b.bind(_combo(G.TICK_DIRS), ax, 'tick_dir', data=True))
-            f.addRow('눈금 글자 회전', self.b.bind(_dspin(-90, 90, 15, 0, '°'), ax, 'rotation'))
-            lay.addWidget(box)
-        box = QGroupBox('축선·격자')
-        f = QFormLayout(box)
-        sp = lambda: self.spec  # noqa: E731
-        f.addRow(_row(self.b.bind(QCheckBox('위 축선'), sp, 'spine_top'),
-                      self.b.bind(QCheckBox('오른쪽 축선'), sp, 'spine_right')))
-        f.addRow('축선·눈금 굵기', self.b.bind(_dspin(0, 5, 0.1, 2, ' pt'), sp, 'spine_width'))
-        f.addRow(_row(self.b.bind(QCheckBox('격자'), sp, 'grid'), self.b.bind(ColorButton(), sp, 'grid_color')))
+        rows += [('조건: 열', self.s_where), ('= 값', self.s_equals), ('그리고 열', w2), ('= 값', self.s_equals2),
+                 ('같은 스타일로 나눠 그리기', spl),
+                 ('묶기', self.b.bind(_combo(G.AGGREGATES), cur, 'agg', data=True)), ('묶는 열', ab),
+                 ('묶을 때 에러', self.b.bind(_combo(G.ERR_KINDS), cur, 'agg_err', data=True))]
+        series = self._card('', *rows)
+        ax = self._axis
+        self.unit_conv = []
+        axis = self._card('', ('이름', self.b.bind(QLineEdit(), ax, 'label')),
+                          ('단위', self._unit_combo(ax)), ('단위 바꾸기', self._conv_combo(None)),
+                          ('값 배율 (×)', self.b.bind(FloatEdit(), ax, 'scale')),
+                          self.b.bind(QCheckBox('보조 눈금'), ax, 'minor'))
+        title = self._card('', ('제목', self.b.bind(QLineEdit(), lambda: self.spec, 'title')))
+        legend = self._card('', ('범례 제목', self.b.bind(QLineEdit(), lambda: self.spec, 'legend_title')))
+        te = QPlainTextEdit()
+        te.setMaximumHeight(70)
+        self.b.bind(te, self.cur_text, 'text')
+        te.textChanged.connect(self._relabel_texts)
+        text = self._card('', ('글자', te),
+                          ('위치 x (축 비율)', self.b.bind(_dspin(-1, 2, 0.01, 3), self.cur_text, 'x')),
+                          ('위치 y (축 비율)', self.b.bind(_dspin(-1, 2, 0.01, 3), self.cur_text, 'y')))
+        lay.addWidget(self._sel_section({'series': self._page(series), 'axis': self._page(axis),
+                                         'title': self._page(title), 'legend': self._page(legend),
+                                         'text': self._page(text)},
+                                        '그래프에서 시리즈, 축 이름, 제목, 범례, 글자 상자를 누르면 그 값이 '
+                                        '여기에 나옵니다.'))
+        lay.addWidget(self._global_head('전체 그래프', 'x 축과 y 축은 모든 시리즈가 함께 씁니다.'))
+        # the series of the graph
+        box = QGroupBox('시리즈')
+        bl = QVBoxLayout(box)
+        self.series_list = QListWidget()
+        self.series_list.setMaximumHeight(150)
+        self.series_list.currentRowChanged.connect(self._series_picked)
+        self.series_list.itemChanged.connect(self._series_checked)
+        bl.addWidget(self.series_list)
+        btns = []
+        for text_, fn, tip in (('추가', self.add_series, '새 시리즈 (선택한 시리즈를 바탕으로)'),
+                               ('복제', self.dup_series, None),
+                               ('▲', lambda: self.move_series(-1), '앞으로 (먼저 그림)'),
+                               ('▼', lambda: self.move_series(1), '뒤로'),
+                               ('값마다 나누기…', self.split_series,
+                                '고른 열의 값(그룹, 이미지 …)마다 색이 다른 시리즈로 나눕니다.')):
+            b = QPushButton(text_)
+            if tip:
+                b.setToolTip(tip)
+            b.clicked.connect(fn)
+            btns.append(b)
+        rm = theme.destructive(QPushButton('삭제…'))  # last, red, confirmed
+        rm.setToolTip('선택한 시리즈 삭제')
+        rm.clicked.connect(lambda: self.cur_series() is not None and theme.confirm_destructive(
+            self, '시리즈', '선택한 시리즈를 삭제할까요?', '삭제') and self.del_series())
+        btns.append(rm)
+        bl.addWidget(_row(*btns))
         lay.addWidget(box)
+        self.range_edits = {}
+        for which, title_ in (('x', 'X 축'), ('y', 'Y 축')):
+            a = (lambda which=which: getattr(self.spec, which))
+            auto = self.b.bind(QCheckBox('범위 자동'), a, 'auto_range')
+            auto.setToolTip('데이터에 맞춥니다. 칸에는 지금 쓰는 범위가 보입니다.')
+            auto.toggled.connect(lambda on, w_=which: self._auto_toggled(w_, 'range', on))
+            lo, hi = self.b.bind(FloatEdit(), a, 'lo'), self.b.bind(FloatEdit(), a, 'hi')
+            sauto = self.b.bind(QCheckBox('눈금 간격 자동'), a, 'auto_step')
+            sauto.setToolTip('보기 좋은 간격을 자동으로 고릅니다. 칸에는 지금 쓰는 간격이 보입니다.')
+            sauto.toggled.connect(lambda on, w_=which: self._auto_toggled(w_, 'step', on))
+            step = self.b.bind(FloatEdit(), a, 'step')
+            self.range_edits[which] = (lo, hi, auto, step, sauto)
+            lay.addWidget(self._card(title_, auto, ('최소', lo), ('최대', hi), sauto, ('눈금 간격', step),
+                                     ('단위', self._unit_combo(a)),
+                                     self.b.bind(QCheckBox('로그 눈금'), a, 'log')))
         lay.addStretch()
         return w
 
-    def _build_font_tab(self) -> QWidget:
+    def _unit_combo(self, ax):
+        unit = QComboBox()
+        unit.setEditable(True)
+        unit.addItems(['', 's', 'min', 'h', 'ms', 'µm', 'nm', 'mm', 'px', '%', 'a.u.', 'µm²'])
+        unit.setToolTip('축 이름 뒤 괄호 안에 붙는 단위')
+        return self.b.bind(unit, ax, 'unit')
+
+    def _conv_combo(self, which):
+        conv = QComboBox()
+        conv.setToolTip('자주 쓰는 단위 바꾸기: 배율과 단위를 함께 정합니다.')
+        for text, k, u in (('고르기…', None, None), ('그대로 (× 1)', 1.0, None), ('s → min', 1 / 60, 'min'),
+                           ('min → s', 60.0, 's'), ('s → ms', 1000.0, 'ms'), ('min → h', 1 / 60, 'h'),
+                           ('0–1 → %', 100.0, '%'), ('% → 0–1', 0.01, ''), ('µm → nm', 1000.0, 'nm'),
+                           ('nm → µm', 0.001, 'µm')):
+            conv.addItem(text, (k, u))
+        conv.activated.connect(lambda i, c=conv: self._convert_unit(
+            which or ('y' if self.sel and self.sel[0] == 'ylabel' else 'x'), c))
+        return conv
+
+    def _font_rows(self, fo):
+        return [('크기', self.b.bind(_dspin(2, 72, 0.5, 1, ' pt'), fo, 'size')),
+                ('색', self.b.bind(ColorButton(), fo, 'color')),
+                self.b.bind(QCheckBox('굵게'), fo, 'bold'), self.b.bind(QCheckBox('기울임'), fo, 'italic')]
+
+    def _build_look_tab(self) -> QWidget:
         from .figure import installed_families
 
         w = QWidget()
         lay = QVBoxLayout(w)
-        f = QFormLayout()
+        cur = self.cur_series
+        self.s_label = self.b.bind(QLineEdit(), cur, 'label')
+        self.s_label.textChanged.connect(lambda _: self._relabel_list())
+        style_all = QPushButton('이 모양을 모든 시리즈에')
+        style_all.setToolTip('색을 뺀 모양·굵기·점·에러바 설정을 다른 시리즈에도 적용합니다.')
+        style_all.clicked.connect(self.style_to_all)
+        series = self._card('', ('색', self.b.bind(ColorButton(), cur, 'color')),
+                            ('선 굵기', self.b.bind(_dspin(0, 20, 0.1, 2, ' pt'), cur, 'line_width')),
+                            ('점 모양', self.b.bind(_combo(G.MARKERS), cur, 'marker', data=True)),
+                            ('점 크기', self.b.bind(_dspin(0, 40, 0.5, 1, ' pt'), cur, 'marker_size')),
+                            self.b.bind(QCheckBox('점 속 채우기 (끄면 속이 빈 점)'), cur, 'marker_fill'),
+                            ('점 테두리', self.b.bind(_dspin(0, 10, 0.1, 2, ' pt'), cur, 'marker_edge')),
+                            ('불투명도', self.b.bind(_dspin(0, 1, 0.05), cur, 'alpha')),
+                            ('범례 이름', self.s_label),
+                            ('에러바 색', self.b.bind(ColorButton(allow_empty=True), cur, 'err_color')),
+                            ('에러바 굵기', self.b.bind(_dspin(0, 10, 0.1, 2, ' pt'), cur, 'err_width')),
+                            style_all)
+        font = self._sel_font
+        title = self._card('', *self._font_rows(font))
+        ax = self._axis
+        axis = self._card('', *self._font_rows(font),
+                          ('눈금 방향', self.b.bind(_combo(G.TICK_DIRS), ax, 'tick_dir', data=True)),
+                          ('눈금 글자 회전', self.b.bind(_dspin(-90, 90, 15, 0, '°'), ax, 'rotation')))
+        ncol = QSpinBox()
+        ncol.setRange(1, 10)
+        legend = self._card('', *self._font_rows(font), ('열 수', self.b.bind(ncol, lambda: self.spec, 'legend_ncol')),
+                            self.b.bind(QCheckBox('테두리'), lambda: self.spec, 'legend_frame'))
+        ct = self.cur_text
+        text = self._card('', ('크기', self.b.bind(_dspin(2, 72, 0.5, 1, ' pt'), ct, 'size')),
+                          ('색', self.b.bind(ColorButton(), ct, 'color')),
+                          self.b.bind(QCheckBox('굵게'), ct, 'bold'), self.b.bind(QCheckBox('기울임'), ct, 'italic'),
+                          self.b.bind(QCheckBox('테두리'), ct, 'frame'),
+                          ('정렬', self.b.bind(_combo(G.ALIGNS), ct, 'align', data=True)))
+        lay.addWidget(self._sel_section({'series': self._page(series), 'axis': self._page(axis),
+                                         'title': self._page(title), 'legend': self._page(legend),
+                                         'text': self._page(text)},
+                                        '그래프에서 시리즈, 축 이름, 제목, 범례, 글자 상자를 누르면 그 색과 '
+                                        '글꼴이 여기에 나옵니다.'))
+        lay.addWidget(self._global_head('전체 그래프'))
+        sp = lambda: self.spec  # noqa: E731
+        self.w_in = self.b.bind(_dspin(1, 40, 0.1, 2, ' in'), sp, 'width_in')
+        self.h_in = self.b.bind(_dspin(1, 40, 0.1, 2, ' in'), sp, 'height_in')
+        dpi = QSpinBox()
+        dpi.setRange(50, 1200)
+        dpi.setSuffix(' dpi')
         fam = QComboBox()
         fam.addItem('')
-        fam.setItemText(0, '')
         fam.addItems(installed_families())
         fam.setToolTip('비우면 기본 글꼴 (한글은 자동으로 한글 글꼴)')
-        f.addRow('글꼴', self.b.bind(fam, lambda: self.spec, 'font_family'))
-        lay.addLayout(f)
-        for attr, title in (('title_font', '제목'), ('label_font', '축 이름'), ('tick_font', '눈금 글자'),
-                            ('legend_font', '범례')):
-            box = QGroupBox(title)
-            bf = QFormLayout(box)
-            fo = (lambda attr=attr: getattr(self.spec, attr))
-            bf.addRow('크기', _row(self.b.bind(_dspin(2, 72, 0.5, 1, ' pt'), fo, 'size'),
-                                 self.b.bind(ColorButton(), fo, 'color')))
-            bf.addRow(_row(self.b.bind(QCheckBox('굵게'), fo, 'bold'),
-                           self.b.bind(QCheckBox('기울임'), fo, 'italic')))
-            lay.addWidget(box)
-        lay.addWidget(_hint('눈금 글자 색은 축선과 눈금에도 쓰입니다. 글자 상자 글꼴은 ‘범례·글자’ 탭에서 '
-                            '상자마다 정합니다.'))
+        tick = lambda: self.spec.tick_font  # noqa: E731
+        lay.addWidget(self._card('', ('크기 (가로)', self.w_in), ('크기 (세로)', self.h_in),
+                                 ('이미지 해상도', self.b.bind(dpi, sp, 'dpi')),
+                                 ('배경색', self.b.bind(ColorButton(), sp, 'background')),
+                                 ('글꼴', self.b.bind(fam, sp, 'font_family')),
+                                 ('눈금 글자 크기', self.b.bind(_dspin(2, 72, 0.5, 1, ' pt'), tick, 'size')),
+                                 ('눈금 · 축선 색', self.b.bind(ColorButton(), tick, 'color')),
+                                 self.b.bind(QCheckBox('위 축선'), sp, 'spine_top'),
+                                 self.b.bind(QCheckBox('오른쪽 축선'), sp, 'spine_right'),
+                                 ('축선·눈금 굵기', self.b.bind(_dspin(0, 5, 0.1, 2, ' pt'), sp, 'spine_width')),
+                                 self.b.bind(QCheckBox('격자'), sp, 'grid'),
+                                 ('격자 색', self.b.bind(ColorButton(), sp, 'grid_color'))))
+        self.plot_edits = {k: self.b.bind(_dspin(lo, hi, 0.01, 3), sp, k)
+                           for k, lo, hi in (('plot_x', -0.5, 1.5), ('plot_y', -0.5, 1.5),
+                                             ('plot_w', 0.02, 2), ('plot_h', 0.02, 2))}
+        b = QPushButton('모두 자동 배치로')
+        b.clicked.connect(self.auto_layout)
+        lay.addWidget(self._card('배치', self.b.bind(QCheckBox('그래프 영역 자동 배치'), sp, 'plot_auto'),
+                                 ('영역 왼쪽', self.plot_edits['plot_x']), ('영역 아래', self.plot_edits['plot_y']),
+                                 ('영역 너비', self.plot_edits['plot_w']), ('영역 높이', self.plot_edits['plot_h']),
+                                 self.b.bind(QCheckBox('제목 자동 위치'), sp, 'title_auto'),
+                                 self.b.bind(QCheckBox('X 축 이름 자동 위치'), sp, 'xlabel_auto'),
+                                 self.b.bind(QCheckBox('Y 축 이름 자동 위치'), sp, 'ylabel_auto'), b,
+                                 _hint('그래프 위에서 끌어 옮기고 크기를 바꿉니다. 영역 값은 그림 전체에 대한 '
+                                       '비율(0–1)입니다.')))
         lay.addStretch()
         return w
 
-    def _build_legend_tab(self) -> QWidget:
+    def _build_comp_tab(self) -> QWidget:
         w = QWidget()
         lay = QVBoxLayout(w)
         sp = lambda: self.spec  # noqa: E731
-        box = QGroupBox('범례')
-        f = QFormLayout(box)
-        f.addRow(self.b.bind(QCheckBox('범례 표시'), sp, 'legend_show'))
-        f.addRow('위치', self.b.bind(_combo(G.LEGEND_LOCS), sp, 'legend_loc', data=True))
-        f.addRow('제목', self.b.bind(QLineEdit(), sp, 'legend_title'))
-        ncol = QSpinBox()
-        ncol.setRange(1, 10)
-        f.addRow('열 수', _row(self.b.bind(ncol, sp, 'legend_ncol'),
-                              self.b.bind(QCheckBox('테두리'), sp, 'legend_frame')))
-        f.addRow(_hint('범례를 그래프 위에서 끌면 ‘직접 놓기’가 됩니다. 항목 이름은 시리즈의 ‘범례 이름’이며, '
-                       '범례에서 두 번 클릭해도 고칩니다.'))
-        lay.addWidget(box)
-
-        box = QGroupBox('범례에 직접 넣는 항목')
-        f = QFormLayout(box)
+        # legend and its own entries
         self.item_list = QListWidget()
         self.item_list.setMaximumHeight(90)
         self.item_list.currentRowChanged.connect(self._item_picked)
-        f.addRow(self.item_list)
-        add, rm = QPushButton('추가'), theme.destructive(QPushButton('항목 삭제…'))
+        add, rm = QPushButton('범례 항목 추가'), theme.destructive(QPushButton('삭제…'))
         add.clicked.connect(self.add_legend_item)
+        rm.setToolTip('선택한 범례 항목 삭제')
         rm.clicked.connect(lambda: self.cur_item() is not None and theme.confirm_destructive(
             self, '범례', '선택한 범례 항목을 삭제할까요?', '삭제') and self.del_legend_item())
-        f.addRow(_row(add, rm))
-        cur = self.cur_item
-        it_label = self.b.bind(QLineEdit(), cur, 'label')
+        ci = self.cur_item
+        it_label = self.b.bind(QLineEdit(), ci, 'label')
         it_label.textChanged.connect(lambda _: self._relabel_items())
-        f.addRow('이름', it_label)
-        f.addRow('색', self.b.bind(ColorButton(), cur, 'color'))
-        f.addRow('점 모양', self.b.bind(_combo(G.MARKERS), cur, 'marker', data=True))
-        f.addRow('선 모양', self.b.bind(_combo(G.LINE_STYLES), cur, 'line_style', data=True))
-        f.addRow(self.b.bind(QCheckBox('점 속 채우기'), cur, 'fill'))
-        lay.addWidget(box)
-
-        box = QGroupBox('글자 상자')
-        f = QFormLayout(box)
+        lay.addWidget(self._card('범례', self.b.bind(QCheckBox('범례 표시'), sp, 'legend_show'),
+                                 ('위치', self.b.bind(_combo(G.LEGEND_LOCS), sp, 'legend_loc', data=True)),
+                                 ('제목', self.b.bind(QLineEdit(), sp, 'legend_title')),
+                                 _hint('범례를 그래프 위에서 끌면 ‘직접 놓기’가 됩니다. 아래는 시리즈 말고 '
+                                       '직접 넣는 항목입니다.'),
+                                 self.item_list, _row(add, rm), ('항목 이름', it_label),
+                                 ('색', self.b.bind(ColorButton(), ci, 'color')),
+                                 ('점 모양', self.b.bind(_combo(G.MARKERS), ci, 'marker', data=True)),
+                                 ('선 모양', self.b.bind(_combo(G.LINE_STYLES), ci, 'line_style', data=True)),
+                                 self.b.bind(QCheckBox('점 속 채우기'), ci, 'fill')))
+        al = self._all
+        kinds = {k: v for k, v in G.ERR_KINDS.items() if k != 'none'}
+        styles = {k: v for k, v in G.ERR_STYLES.items() if k != 'none'}
+        lay.addWidget(self._card('에러바', self.b.bind(QCheckBox('에러바 표시'), al, 'err_show'),
+                                 ('값', self.b.bind(_combo(kinds), al, 'err_kind', data=True)),
+                                 ('모양', self.b.bind(_combo(styles), al, 'err_style', data=True)),
+                                 ('캡 길이', self.b.bind(_dspin(0, 20, 0.5, 1, ' pt'), al, 'capsize')),
+                                 _hint('모든 시리즈에 적용됩니다. 값(SD · SEM · 95% CI)은 점을 묶거나 막대를 '
+                                       '그릴 때 쓰고, 에러 열이 있으면 그 열의 값을 씁니다.')))
         self.text_list = QListWidget()
-        self.text_list.setMaximumHeight(90)
+        self.text_list.setMaximumHeight(110)
         self.text_list.currentRowChanged.connect(self._text_picked)
-        f.addRow(self.text_list)
-        add, rm = QPushButton('추가'), theme.destructive(QPushButton('글자 상자 삭제…'))
+        add, rm = QPushButton('글자 상자 추가'), theme.destructive(QPushButton('삭제…'))
         add.clicked.connect(lambda: self.add_text())
+        rm.setToolTip('선택한 글자 상자 삭제')
         rm.clicked.connect(lambda: self.cur_text() is not None and theme.confirm_destructive(
             self, '글자 상자', '선택한 글자 상자를 삭제할까요?', '삭제') and self.del_text())
-        f.addRow(_row(add, rm))
-        cur = self.cur_text
-        te = QPlainTextEdit()
-        te.setMaximumHeight(60)
-        self.b.bind(te, cur, 'text')
-        te.textChanged.connect(self._relabel_texts)
-        f.addRow('글자', te)
-        f.addRow('크기', _row(self.b.bind(_dspin(2, 72, 0.5, 1, ' pt'), cur, 'size'),
-                            self.b.bind(ColorButton(), cur, 'color')))
-        f.addRow(_row(self.b.bind(QCheckBox('굵게'), cur, 'bold'), self.b.bind(QCheckBox('기울임'), cur, 'italic'),
-                      self.b.bind(QCheckBox('테두리'), cur, 'frame')))
-        f.addRow('정렬', self.b.bind(_combo(G.ALIGNS), cur, 'align', data=True))
-        f.addRow('위치 (축 비율)', _row(self.b.bind(_dspin(-1, 2, 0.01, 3), cur, 'x'),
-                                     self.b.bind(_dspin(-1, 2, 0.01, 3), cur, 'y')))
-        lay.addWidget(box)
+        lay.addWidget(self._card('글자 상자', self.text_list, _row(add, rm),
+                                 _hint('글자와 모양은 글자 상자를 고르면 ‘값’ · ‘모양’ 탭의 선택한 요소에 '
+                                       '나옵니다.')))
         lay.addStretch()
         return w
+
+    # ---- the selection on the graph -> inspector ----
+
+    def _sel_kind(self) -> str:
+        k = self.sel[0] if self.sel else None
+        if k == 'series' and self.cur_series() is not None:
+            return 'series'
+        if k in ('xlabel', 'ylabel'):
+            return 'axis'
+        if k == 'title':
+            return 'title'
+        if k == 'legend':
+            return 'legend'
+        if k == 'text' and self.cur_text() is not None:
+            return 'text'
+        return 'none'
+
+    def _show_selection(self):
+        kind = self._sel_kind()
+        name = {'series': lambda: f'시리즈 ‘{G._label(self.cur_series(), self._series_i)}’',
+                'axis': lambda: 'Y 축' if self.sel[0] == 'ylabel' else 'X 축',
+                'title': lambda: '제목', 'legend': lambda: '범례',
+                'text': lambda: f'글자 상자 ‘{self.cur_text().text.splitlines()[0] if self.cur_text().text else ""}’',
+                'none': lambda: ''}[kind]()
+        for stack, idx in self._sel_stacks:
+            stack.setCurrentIndex(idx.get(kind, idx['none']))
+        for (head, hint, none_text), (_st, idx) in zip(self._sel_heads, self._sel_stacks):
+            has = kind in idx and kind != 'none'
+            head.setText(f'선택한 요소 · {name}' if name else '선택한 요소')
+            hint.setText('그래프에서 고른 것에만 적용됩니다. 다른 것을 누르면 바뀝니다.' if has else
+                         (none_text if kind == 'none' else '이 탭에는 고른 요소의 설정이 없습니다.'))
+        self.b.sync()
 
     # ---- current selections ----------------------------------------------------------------
 
@@ -818,6 +1202,7 @@ class GraphWindow(QMainWindow):
     def state(self) -> dict:
         """Settings plus the tables brought in from other analyses / CSV (for projects)."""
         d = self.spec.to_dict()
+        d['_title'] = self.doc.title
         d['_tables'] = [{'name': t.name, 'columns': list(t.columns), 'rows': [list(r) for r in t.rows]}
                         for t in self.extra]
         return d
@@ -916,6 +1301,7 @@ class GraphWindow(QMainWindow):
         self._fill_values()
         self._chart_changed(sync=False)
         self._show_used()
+        self._show_selection()
 
     def _fill_columns(self):
         """Column choices of the selected series' table ('' = none)."""
@@ -997,7 +1383,10 @@ class GraphWindow(QMainWindow):
 
     def _series_picked(self, i):
         self._series_i = i
+        if i >= 0:
+            self.sel = ('series', i)
         self.sync()
+        self._draw_selection()
         if self.only_sel.isChecked():
             self.fill_table()
 
@@ -1010,7 +1399,10 @@ class GraphWindow(QMainWindow):
 
     def _text_picked(self, i):
         self._text_i = i
-        self.b.sync()
+        if i >= 0:
+            self.sel = ('text', i)
+        self._show_selection()
+        self._draw_selection()
 
     def _item_picked(self, i):
         self._item_i = i
@@ -1133,8 +1525,9 @@ class GraphWindow(QMainWindow):
         self.spec.texts.append(G.TextBox(text=text, x=float(x), y=float(y),
                                          size=self.spec.label_font.size))
         self._text_i = len(self.spec.texts) - 1
+        self.sel = ('text', self._text_i)
         self._after_list_change()
-        self.editor.setCurrentIndex(4)
+        self.editor.setCurrentIndex(3)
 
     def del_text(self):
         if self.cur_text() is None:
@@ -1149,7 +1542,7 @@ class GraphWindow(QMainWindow):
         self.spec.legend_show = True
         self._item_i = len(self.spec.legend_items) - 1
         self._after_list_change()
-        self.editor.setCurrentIndex(4)
+        self.editor.setCurrentIndex(3)
 
     def del_legend_item(self):
         if self.cur_item() is None:
@@ -1299,8 +1692,8 @@ class GraphWindow(QMainWindow):
             except Exception:
                 pass
         self._overlay = []
-        if self.sel is None or not self.art:
-            self.canvas.draw_idle()
+        if self.sel is None or not self.art or self.sel[0] == 'series':
+            self.canvas.draw_idle()  # a series: picked only (its settings in the inspector)
             return
         bb = self._bbox(*self.sel)
         if bb is None:
@@ -1321,7 +1714,7 @@ class GraphWindow(QMainWindow):
                                      '모서리 핸들로 크기', 4000)
 
     def _on_handle(self, event) -> bool:
-        if self.sel is None:
+        if self.sel is None or self.sel[0] == 'series':
             return False
         bb = self._bbox(*self.sel)
         if bb is None:
@@ -1342,6 +1735,16 @@ class GraphWindow(QMainWindow):
             if a is not None and a.get_text() and a.contains(event)[0]:
                 return k, None
         ax = self.art.get('ax')
+        if ax is not None:
+            for a in reversed(ax.get_children()):
+                gid = a.get_gid() or ''
+                if gid.startswith('series:') and a.get_visible():
+                    try:
+                        hit = a.contains(event)[0]
+                    except Exception:
+                        hit = False
+                    if hit:
+                        return 'series', int(gid[7:])
         if ax is not None and ax.bbox.contains(event.x, event.y):
             return 'plot', None
         return None, None
@@ -1384,8 +1787,14 @@ class GraphWindow(QMainWindow):
         if kind == 'text':
             self._text_i = i
             self._fill_lists()
+        elif kind == 'series':
+            self._series_i = i
+            self._fill_lists()
+            self._fill_columns()
+            self._fill_values()
+        self._show_selection()
         self._draw_selection()
-        if kind:
+        if kind and kind != 'series':
             self._start_drag('move', kind, i, event)
 
     def _start_drag(self, mode, kind, i, event):

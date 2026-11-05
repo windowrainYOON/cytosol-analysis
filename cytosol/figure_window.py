@@ -6,10 +6,18 @@ import traceback
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QByteArray, QMimeData, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QImage, QPixmap
+from PySide6.QtCore import QByteArray, QMimeData, QPointF, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QAbstractSpinBox,
+    QApplication,
+    QFrame,
+    QGraphicsView,
+    QHeaderView,
+    QInputDialog,
+    QTreeWidget,
+    QTreeWidgetItem,
     QButtonGroup,
     QCheckBox,
     QColorDialog,
@@ -41,7 +49,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from . import theme
+from . import flow, hig_widgets, theme
 from .figure import (
     CORNERS,
     FigureCell,
@@ -62,6 +70,9 @@ from .figure import (
 )
 
 THUMB = 110
+INSPECTOR_W = 404   # fixed: the cards never get cut, the canvas takes the rest
+SIDEBAR_W = 220
+PLUS_W, PLUS_H = 44, 36   # the ＋ column / row
 CELL_MIME = 'application/x-cytosol-figure-cell'   # "row,col" of a dragged cell
 RGB_EXT = ('.png', '.jpg', '.jpeg', '.bmp')        # always placed as a picture file
 EXPORT_FILTERS = {
@@ -225,6 +236,160 @@ class LevelRow(QWidget):
         self._busy = False
 
 
+class FigureHeader(QHeaderView):
+    """Row / column titles of the figure table.  The last section is the ＋
+    that adds a row / column (grey, darker under the mouse); a hovered title
+    shows a red × right beside its text (delete, confirmed); dragging a title
+    moves the row / column, a blue line shows where it goes."""
+
+    X_GAP = 9    # px between the title text and the ×
+    X_HIT = 8    # half size of the × click area
+
+    def __init__(self, orient, win, kind):
+        super().__init__(orient)
+        self.win, self.kind = win, kind
+        self.setSectionsClickable(True)
+        self.setHighlightSections(False)
+        self.setMouseTracking(True)
+        self.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hover = -1
+        self._press = None      # (section, pos) of a press on a title
+        self._drop = None       # insertion index while dragging
+
+    # ---- geometry ----
+    def count_real(self):
+        return self.count() - 1  # without the ＋ section
+
+    def _rect(self, i) -> QRect:
+        pos, size = self.sectionViewportPosition(i), self.sectionSize(i)
+        if self.orientation() == Qt.Orientation.Horizontal:
+            return QRect(pos, 0, size, self.height())
+        return QRect(0, pos, self.width(), size)
+
+    def x_center(self, i) -> QPointF:
+        r = self._rect(i)
+        item = (self.win.table.horizontalHeaderItem(i) if self.kind == 'col'
+                else self.win.table.verticalHeaderItem(i))
+        text = item.text() if item is not None else ''
+        fm = self.fontMetrics()
+        w = max((fm.horizontalAdvance(t) for t in text.split('\n')), default=0)
+        x = min(r.center().x() + w / 2 + self.X_GAP, r.right() - self.X_HIT)
+        return QPointF(x, r.center().y())
+
+    def _on_x(self, pos) -> int:
+        i = self.logicalIndexAt(pos)
+        if 0 <= i < self.count_real() and self.count_real() > 1:
+            c = self.x_center(i)
+            if abs(pos.x() - c.x()) <= self.X_HIT and abs(pos.y() - c.y()) <= self.X_HIT:
+                return i
+        return -1
+
+    def _insert_at(self, pos) -> int:
+        horiz = self.orientation() == Qt.Orientation.Horizontal
+        v = pos.x() if horiz else pos.y()
+        n = self.count_real()
+        for i in range(n):
+            r = self._rect(i)
+            start, size = (r.x(), r.width()) if horiz else (r.y(), r.height())
+            if v < start + size / 2:
+                return i
+        return n
+
+    def line_pos(self, k) -> int:
+        """Viewport coordinate of the boundary before section k."""
+        if k < self.count_real():
+            return self.sectionViewportPosition(k)
+        last = self.count_real() - 1
+        return self.sectionViewportPosition(last) + self.sectionSize(last)
+
+    # ---- painting ----
+    def paintSection(self, painter, rect, i):
+        super().paintSection(painter, rect, i)
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if i == self.count_real():  # the ＋
+            pen = QPen(theme.color('label' if i == self._hover else 'label-tertiary'), 1.8)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            c = QPointF(rect.center())
+            painter.drawLine(c - QPointF(5, 0), c + QPointF(5, 0))
+            painter.drawLine(c - QPointF(0, 5), c + QPointF(0, 5))
+        elif i == self._hover and self._drop is None and self.count_real() > 1:
+            c = self.x_center(i)
+            pen = QPen(theme.color('red'), 1.6)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawLine(c + QPointF(-3.5, -3.5), c + QPointF(3.5, 3.5))
+            painter.drawLine(c + QPointF(-3.5, 3.5), c + QPointF(3.5, -3.5))
+        painter.restore()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._drop is None:
+            return
+        p = QPainter(self.viewport())
+        p.setPen(QPen(theme.color('blue'), 3))
+        v = self.line_pos(self._drop)
+        if self.orientation() == Qt.Orientation.Horizontal:
+            p.drawLine(v, 0, v, self.height())
+        else:
+            p.drawLine(0, v, self.width(), v)
+        p.end()
+
+    # ---- mouse ----
+    def mouseMoveEvent(self, event):
+        pos = event.position().toPoint()
+        if self._press is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            if (self._drop is not None or (pos - self._press[1]).manhattanLength()
+                    >= QApplication.startDragDistance()):
+                self._drop = self._insert_at(pos)
+                self.setCursor(Qt.CursorShape.ClosedHandCursor)
+                self.viewport().update()
+                self.win.table.set_drop_line(self.kind, self._drop)
+                return
+        i = self.logicalIndexAt(pos)
+        if i != self._hover:
+            self._hover = i
+            self.viewport().update()
+        on = self._on_x(pos) >= 0 or i == self.count_real()
+        self.setCursor(Qt.CursorShape.PointingHandCursor if on else Qt.CursorShape.ArrowCursor)
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = -1
+        self.viewport().update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        pos = event.position().toPoint()
+        if event.button() == Qt.MouseButton.LeftButton:
+            i = self.logicalIndexAt(pos)
+            if i == self.count_real():
+                self.win.add_at_end(self.kind)
+                return
+            k = self._on_x(pos)
+            if k >= 0:
+                self.win._confirm_remove(self.kind, k)
+                return
+            if 0 <= i < self.count_real():
+                self._press = (i, pos)
+                self.win.select_label(self.kind, i)
+                return
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        press, drop = self._press, self._drop
+        self._press = self._drop = None
+        self.unsetCursor()
+        self.win.table.set_drop_line(self.kind, None)
+        self.viewport().update()
+        if press is not None:
+            if drop is not None:
+                self.win.move_label(self.kind, press[0], drop)
+            return
+        super().mouseReleaseEvent(event)
+
+
 class FigureTable(QTableWidget):
     """The figure's cell table with drag and drop: a cell is dragged onto
     another cell (moved, Option/Alt = copied); image files and images from the
@@ -239,6 +404,38 @@ class FigureTable(QTableWidget):
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDropIndicatorShown(True)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self._line = None  # (kind, index): blue insertion line of a header drag
+
+    def set_drop_line(self, kind, index):
+        self._line = None if index is None else (kind, index)
+        self.viewport().update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._line is None:
+            return
+        kind, k = self._line
+        p = QPainter(self.viewport())
+        p.setPen(QPen(theme.color('blue'), 3))
+        if kind == 'col':
+            x = self.horizontalHeader().line_pos(k)
+            p.drawLine(x, 0, x, self.viewport().height())
+        else:
+            y = self.verticalHeader().line_pos(k)
+            p.drawLine(0, y, self.viewport().width(), y)
+        p.end()
+
+    def is_plus(self, r, c) -> bool:
+        s = self.win.spec
+        return r >= s.nrows or c >= s.ncols
+
+    def mousePressEvent(self, event):
+        idx = self.indexAt(event.position().toPoint())
+        if idx.isValid() and self.is_plus(idx.row(), idx.column()):
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.win.add_at_end('row' if idx.row() >= self.win.spec.nrows else 'col')
+            return
+        super().mousePressEvent(event)
 
     def mimeTypes(self):
         return [CELL_MIME, 'text/uri-list']
@@ -255,7 +452,9 @@ class FigureTable(QTableWidget):
 
     def _target(self, event):
         idx = self.indexAt(event.position().toPoint())
-        return (idx.row(), idx.column()) if idx.isValid() else None
+        if not idx.isValid() or self.is_plus(idx.row(), idx.column()):
+            return None
+        return idx.row(), idx.column()
 
     def dragEnterEvent(self, event):
         if self.win.can_drop(event.mimeData()):
@@ -304,49 +503,25 @@ class FigureWindow(QMainWindow):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setIconSize(QSize(THUMB, THUMB))
         self.table.currentCellChanged.connect(lambda *_: self._cell_selected())
-        for header, kind in ((self.table.horizontalHeader(), 'col'),
-                             (self.table.verticalHeader(), 'row')):
+        for orient, kind in ((Qt.Orientation.Horizontal, 'col'), (Qt.Orientation.Vertical, 'row')):
+            header = FigureHeader(orient, self, kind)
+            if kind == 'col':
+                self.table.setHorizontalHeader(header)
+            else:
+                self.table.setVerticalHeader(header)
             header.sectionDoubleClicked.connect(lambda i, k=kind: self.edit_label(k, i))
             header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             header.customContextMenuRequested.connect(
                 lambda pos, h=header, k=kind: self._header_menu(k, h.logicalIndexAt(pos), h, pos))
         self.table.horizontalHeader().setDefaultSectionSize(THUMB + 70)
         self.table.verticalHeader().setDefaultSectionSize(THUMB + 12)
-
-        tb = QHBoxLayout()
-        for text, fn in (
-            ('행 추가', lambda: self._add('row')),
-            ('열 추가', lambda: self._add('col')),
-            ('행 ▲', lambda: self._move('row', -1)),
-            ('행 ▼', lambda: self._move('row', 1)),
-            ('열 ◀', lambda: self._move('col', -1)),
-            ('열 ▶', lambda: self._move('col', 1)),
-        ):
-            b = QPushButton(text)
-            b.clicked.connect(fn)
-            tb.addWidget(b)
-        self.move_whole = QCheckBox('행/열 전체 옮기기')
+        # drags of a cell move the whole row / column (the image with every
+        # channel) or only that cell; kept in the selected cell's card
+        self.move_whole = QCheckBox('칸을 끌면 행/열 전체 옮기기')
         self.move_whole.setChecked(True)
         self.move_whole.setToolTip(
-            '켜면 ▲▼◀▶ 버튼과 칸 끌기가 행 전체(그 이미지의 모든 채널) 또는\n'
-            '열 전체를 옮깁니다. 끄면 선택한 칸 하나만 옆 칸과 자리를 바꿉니다.')
-        tb.addWidget(self.move_whole)
-        tb.addSpacing(16)  # destructive actions set apart, red text, confirmed
-        for text, kind in (('행 삭제…', 'row'), ('열 삭제…', 'col')):
-            b = theme.destructive(QPushButton(text))
-            b.clicked.connect(lambda _=False, k=kind: self._confirm_remove(k))
-            tb.addWidget(b)
-        tb.addStretch()
-        hint = QLabel('칸 끌기 = 옮기기 (Option/Alt = 복사) · 파일이나 이미지 목록을 칸에 끌어 넣기 · '
-                      '행/열 이름: 머리글 더블클릭')
-        hint.setWordWrap(True)
-        theme.secondary(hint)
-        tb.addWidget(hint)
-        table_box = QWidget()
-        tl = QVBoxLayout(table_box)
-        tl.setContentsMargins(0, 0, 0, 0)
-        tl.addLayout(tb)
-        tl.addWidget(self.table, 1)
+            '켜면 칸을 끌어 옮길 때 행 전체(그 이미지의 모든 채널) 또는 열 전체가 옮겨집니다.\n'
+            '끄면 끈 칸 하나만 놓은 칸과 자리를 바꿉니다. Option/Alt + 끌기 = 복사.')
 
         # ---- preview --------------------------------------------------
         self.preview = QLabel()
@@ -361,6 +536,7 @@ class FigureWindow(QMainWindow):
         self.preview_dpi.setCurrentIndex(1)
         self.preview_dpi.currentIndexChanged.connect(lambda _: self.schedule())
         self.preview_info = QLabel()
+        theme.secondary(self.preview_info)
         pbar = QHBoxLayout()
         pbar.addWidget(QLabel('미리보기'))
         pbar.addWidget(self.preview_dpi)
@@ -373,35 +549,129 @@ class FigureWindow(QMainWindow):
         pl.addWidget(pscroll, 1)
 
         vsplit = QSplitter(Qt.Orientation.Vertical)
-        vsplit.addWidget(table_box)
+        vsplit.addWidget(self.table)
         vsplit.addWidget(prev_box)
         vsplit.setSizes([380, 520])
+        vsplit.setChildrenCollapsible(False)
+        content = QWidget()
+        content.setObjectName('hig_content')
+        content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        cl = QVBoxLayout(content)
+        cl.setContentsMargins(*theme.CONTENT_MARGINS)
+        cl.addWidget(vsplit)
 
-        # ---- right: cell editor, layout, export ------------------------
+        # ---- inspector: cell, brightness, insets, layout (fixed width) --
         right = QWidget()
         rl = QVBoxLayout(right)
+        rl.setContentsMargins(0, 0, 4, 0)
         rl.addWidget(self._cell_editor())
         rl.addWidget(self._level_editor())
         rl.addWidget(self._inset_editor())
         rl.addWidget(self._layout_editor())
-        rl.addWidget(self._export_box())
         rl.addStretch()
+        flow.reflow(right, min_n=2)  # rows of 2+ buttons wrap in the fixed width
+        for w in right.findChildren(QWidget):
+            if isinstance(w, (QComboBox, QAbstractSpinBox, QGraphicsView)):
+                w.setMinimumWidth(0)
+                if isinstance(w, QComboBox):
+                    w.setSizeAdjustPolicy(
+                        QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+                    w.setMinimumContentsLength(8)
+        for lab in right.findChildren(QLabel):
+            lab.setWordWrap(True)
         rscroll = QScrollArea()
         rscroll.setWidgetResizable(True)
+        rscroll.setFrameShape(QFrame.Shape.NoFrame)
+        rscroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         rscroll.setWidget(right)
-        rscroll.setMinimumWidth(420)
+        insp = QWidget()
+        insp.setObjectName('hig_inspector')
+        insp.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        il = QVBoxLayout(insp)
+        left, top, rgt, bottom = theme.INSPECTOR_MARGINS
+        il.setContentsMargins(left, top, max(0, rgt - 8), bottom)
+        il.addWidget(rscroll)
+        insp.setFixedWidth(INSPECTOR_W)
 
-        split = QSplitter()
-        split.addWidget(vsplit)
-        split.addWidget(rscroll)
-        split.setSizes([1050, 450])
-        self.setCentralWidget(split)
+        # ---- sidebar: the figures ----------------------------------------
+        from .image_tree import WrapDelegate
 
+        side = QWidget()
+        side.setObjectName('hig_sidebar')
+        side.setFixedWidth(SIDEBAR_W)
+        sl = QVBoxLayout(side)
+        sl.setContentsMargins(*theme.SIDEBAR_MARGINS)
+        self.fig_list = QTreeWidget()
+        self.fig_list.setHeaderHidden(True)
+        self.fig_list.setRootIsDecorated(False)
+        self.fig_list.setIndentation(0)
+        self.fig_list.setItemDelegate(WrapDelegate(self.fig_list))
+        self.fig_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.fig_list.currentItemChanged.connect(self._figure_picked)
+        self.fig_list.itemDoubleClicked.connect(lambda *_: self.rename_figure())
+        self.fig_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.fig_list.customContextMenuRequested.connect(self._figure_menu)
+        sl.addWidget(self.fig_list, 1)
+
+        body = hig_widgets.PaneSplitter()
+        body.addWidget(side)
+        body.addWidget(content)
+        body.addWidget(insp)
+        body.setChildrenCollapsible(False)
+        for i, f in enumerate((0, 1, 0)):
+            body.setStretchFactor(i, f)
+        body.setSizes([SIDEBAR_W, 4000, INSPECTOR_W])
+        self.body = body
+
+        # ---- toolbar on top: figures and saving --------------------------
+        bar = QWidget()
+        tl = QHBoxLayout(bar)
+        g = theme.BOX_GAP
+        tl.setContentsMargins(theme.SIDEBAR_MARGINS[0], g, g, 0)
+        new_b = QPushButton('새 Figure')
+        new_b.setToolTip('빈 Figure를 하나 더 만듭니다 (사이드바에 추가).')
+        new_b.clicked.connect(lambda: self.new_figure())
+        dup_b = QPushButton('복제')
+        dup_b.setToolTip('지금 Figure를 같은 칸과 설정으로 하나 더 만듭니다.')
+        dup_b.clicked.connect(self.duplicate_figure)
+        tl.addWidget(new_b)
+        tl.addWidget(dup_b)
+        tl.addStretch()
+        tl.addWidget(QLabel('해상도'))
+        self.dpi = QSpinBox()
+        self.dpi.setRange(72, 2400)
+        self.dpi.setValue(300)
+        self.dpi.setSuffix(' dpi')
+        self.dpi.valueChanged.connect(lambda _: self.schedule())
+        tl.addWidget(self.dpi)
+        self.fmt = QComboBox()
+        for name, ext in (('PNG', '.png'), ('TIFF', '.tif'), ('PDF', '.pdf'), ('SVG', '.svg')):
+            self.fmt.addItem(name, ext)
+        self.fmt.setToolTip('모든 Figure 저장의 파일 형식 (Figure 저장…은 파일 이름의 확장자를 따릅니다)')
+        tl.addWidget(self.fmt)
+        all_b = QPushButton('모든 Figure 저장…')
+        all_b.setToolTip('사이드바의 모든 Figure를 고른 폴더에 한꺼번에 저장합니다.')
+        all_b.clicked.connect(self.export_all)
+        tl.addWidget(all_b)
+        save_b = theme.prominent(QPushButton('Figure 저장…'))
+        save_b.setToolTip('지금 Figure 저장 (⌘S)')
+        save_b.clicked.connect(self.export)
+        tl.addWidget(save_b)
         export_act = QAction('Figure 저장…', self)
         export_act.setShortcut('Ctrl+S')
         export_act.triggered.connect(self.export)
-        self.menuBar().addMenu('Figure').addAction(export_act)
+        self.addAction(export_act)
 
+        holder = QWidget()
+        hl = QVBoxLayout(holder)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(0)
+        hl.addWidget(bar)
+        hl.addWidget(body, 1)
+        self.setCentralWidget(holder)
+
+        self.figures: list[list] = []  # [name, FigureSpec]
+        self.add_figure('Figure 1', self.spec)
         self.rebuild_table()
         self.table.setCurrentCell(0, 0)
 
@@ -424,8 +694,10 @@ class FigureWindow(QMainWindow):
                                    '아래 채널 체크박스를 바꾸면 이 칸만의 조합으로 바뀝니다.')
         self.merged_chk.toggled.connect(self._channels_changed)
         # one checkbox per channel (color swatch + name), any combination per cell
-        self.chan_box = QGroupBox('채널 조합')
+        self.chan_box = QWidget()  # no box inside the card: a section header
         chan_lay = QVBoxLayout(self.chan_box)
+        chan_lay.setContentsMargins(0, 4, 0, 0)
+        chan_lay.addWidget(theme.section_header('채널 조합'))
         self.chan_grid = QGridLayout()
         chan_lay.addLayout(self.chan_grid)
         self.chan_checks: list[QCheckBox] = []
@@ -473,6 +745,7 @@ class FigureWindow(QMainWindow):
         row.addWidget(same_src)
         row.addWidget(clear)
         lay.addLayout(row)
+        lay.addWidget(self.move_whole)
         return box
 
     def _level_editor(self):
@@ -574,6 +847,7 @@ class FigureWindow(QMainWindow):
             sp.setRange(3, 100000)
             sp.setValue(50)
             sp.setSuffix(' px')
+            sp.setFixedWidth(100)
             sp.valueChanged.connect(self._fixed_size_changed)
         size_all = QPushButton('모든 칸에 이 크기 적용')
         size_all.setToolTip('그림 전체의 모든 확대 영역을 이 크기(픽셀)로 바꿉니다.\n'
@@ -588,13 +862,13 @@ class FigureWindow(QMainWindow):
         lay = QVBoxLayout(box)
         lay.addWidget(self.cell_canvas, 1)
         lay.addWidget(self.inset_btn)
+        lay.addWidget(self.fixed_size)
         row = QHBoxLayout()
-        row.addWidget(self.fixed_size)
-        row.addWidget(self.box_w)
-        row.addWidget(QLabel('×'))
-        row.addWidget(self.box_h)
-        row.addWidget(size_all)
+        for w in (self.box_w, QLabel('×'), self.box_h):
+            row.addWidget(w)
+        row.addStretch()
         lay.addLayout(row)
+        lay.addWidget(size_all, 0, Qt.AlignmentFlag.AlignLeft)
         lay.addWidget(self.inset_list)
         lay.addLayout(form)
         row = QHBoxLayout()
@@ -701,19 +975,159 @@ class FigureWindow(QMainWindow):
         self._layout_changed()
         return box
 
-    def _export_box(self):
-        box = QGroupBox('내보내기')
-        self.dpi = QSpinBox()
-        self.dpi.setRange(72, 2400)
-        self.dpi.setValue(300)
-        self.dpi.setSuffix(' dpi')
-        btn = QPushButton('Figure 저장… (PNG / TIFF / PDF / SVG)')
-        btn.clicked.connect(self.export)
-        lay = QHBoxLayout(box)
-        lay.addWidget(QLabel('해상도'))
-        lay.addWidget(self.dpi)
-        lay.addWidget(btn, 1)
-        return box
+    # ------------------------------------------------------------------
+    # figures (sidebar)
+    # ------------------------------------------------------------------
+
+    def figure_names(self) -> list[str]:
+        return [name for name, _ in self.figures]
+
+    def add_figure(self, name, spec=None) -> FigureSpec:
+        """A figure in the sidebar (not shown yet)."""
+        if spec is None:
+            spec = FigureSpec()
+            spec.cols[0].text = 'Column 1'
+            self._layout_to(spec)  # a new figure starts with the current layout
+        self.figures.append([name, spec])
+        self.fig_list.addTopLevelItem(QTreeWidgetItem([name]))
+        if len(self.figures) == 1:
+            self._select_item(0)
+        return spec
+
+    def _free_name(self, base='Figure') -> str:
+        n = len(self.figures) + 1
+        while f'{base} {n}' in self.figure_names():
+            n += 1
+        return f'{base} {n}'
+
+    def new_figure(self, name=None) -> FigureSpec:
+        spec = self.add_figure(name or self._free_name())
+        self.show_figure(len(self.figures) - 1)
+        return spec
+
+    def duplicate_figure(self) -> FigureSpec:
+        name, spec = self.figures[self.current_figure()]
+        copy = FigureSpec()
+        copy_spec(spec, copy, self.items())
+        self.add_figure(f'{name} (복제)', copy)
+        self.show_figure(len(self.figures) - 1)
+        return copy
+
+    def current_figure(self) -> int:
+        return next((k for k, (_n, s) in enumerate(self.figures) if s is self.spec), 0)
+
+    def rename_figure(self, index=None, name=None):
+        k = self.current_figure() if index is None else index
+        if name is None:
+            name, ok = QInputDialog.getText(self, 'Figure 이름', '이름:', text=self.figures[k][0])
+            if not ok:
+                return
+        if name.strip():
+            self.figures[k][0] = name.strip()
+            self.fig_list.topLevelItem(k).setText(0, name.strip())
+
+    def remove_figure(self, index=None):
+        k = self.current_figure() if index is None else index
+        if len(self.figures) <= 1:
+            return
+        self.figures.pop(k)
+        self.fig_list.takeTopLevelItem(k)
+        self.show_figure(min(k, len(self.figures) - 1))
+
+    def _confirm_remove_figure(self, index):
+        name = self.figures[index][0]
+        if theme.confirm_destructive(self, 'Figure 삭제', f'‘{name}’을 삭제할까요?', '삭제',
+                                     '그 Figure의 칸과 확대 영역이 모두 지워집니다.'):
+            self.remove_figure(index)
+
+    def clear_figures(self):
+        """Every figure gone but one empty (projects replace them)."""
+        self.figures = []
+        self.fig_list.clear()
+        self.spec = FigureSpec()
+        self.spec.cols[0].text = 'Column 1'
+        self.add_figure('Figure 1', self.spec)
+
+    def _select_item(self, k):
+        it = self.fig_list.topLevelItem(k)
+        if it is not None and self.fig_list.currentItem() is not it:
+            self.fig_list.blockSignals(True)
+            self.fig_list.setCurrentItem(it)
+            it.setSelected(True)
+            self.fig_list.blockSignals(False)
+
+    def show_figure(self, k):
+        """Make figure k the one edited and previewed."""
+        k = max(0, min(k, len(self.figures) - 1))
+        self.spec = self.figures[k][1]
+        self._select_item(k)
+        self.setWindowTitle(f'Figure 만들기 · {self.figures[k][0]} - Cytosol Viewer')
+        self._layout_from_spec()
+        self.rebuild_table()
+        self.table.setCurrentCell(0, 0)
+        self._cell_selected()
+
+    def _figure_picked(self, cur, _prev):
+        if cur is None:
+            return
+        k = self.fig_list.indexOfTopLevelItem(cur)
+        if 0 <= k < len(self.figures) and self.figures[k][1] is not self.spec:
+            self.show_figure(k)
+
+    def _figure_menu(self, pos):
+        it = self.fig_list.itemAt(pos)
+        m = QMenu(self)
+        m.addAction('새 Figure', lambda: self.new_figure())
+        if it is not None:
+            k = self.fig_list.indexOfTopLevelItem(it)
+            self._figure_picked(it, None)
+            m.addAction('복제', self.duplicate_figure)
+            m.addAction('이름 바꾸기…', lambda: self.rename_figure(k))
+            m.addAction('이 Figure 저장…', self.export)
+            m.addSeparator()  # destructive item last, set apart
+            m.addAction('Figure 삭제…', lambda: self._confirm_remove_figure(k)
+                        ).setEnabled(len(self.figures) > 1)
+        m.exec(self.fig_list.viewport().mapToGlobal(pos))
+
+    def _layout_to(self, spec):
+        """The layout card's values into another spec (a new figure)."""
+        cur, self.spec = self.spec, spec
+        try:
+            self._layout_changed()
+        finally:
+            self.spec = cur
+
+    def _layout_from_spec(self):
+        """The layout card shows the current figure's values."""
+        s = self.spec
+        vals = dict(background=s.background, border=s.border, cell_in=s.cell_in,
+                    aspect=s.aspect, gap_in=s.gap_in, font_family=s.font_family,
+                    font_pt=s.font_pt, bold=s.bold, scale_bar=s.scale_bar, scale_um=s.scale_um,
+                    scale_position=s.scale_position, scale_label=s.scale_label,
+                    caption=s.caption, inset_scale_bar=s.inset_scale_bar,
+                    inset_scale_um=s.inset_scale_um)
+        self._loading = True
+        try:
+            (self.bg_black if vals['background'] == 'black' else self.bg_white).setChecked(True)
+            self.border.setChecked(vals['border'])
+            self.cell_in.setValue(vals['cell_in'])
+            self.aspect.setValue(vals['aspect'] or 0)
+            self.gap.setValue(vals['gap_in'])
+            if self.font.findText(vals['font_family']) >= 0:
+                self.font.setCurrentText(vals['font_family'])
+            self.font_pt.setValue(vals['font_pt'])
+            self.bold.setChecked(vals['bold'])
+            self.sb.setChecked(vals['scale_bar'])
+            self.sb_um.setValue(vals['scale_um'] or 0)
+            self.sb_pos.setCurrentText(vals['scale_position'])
+            self.sb_label.setChecked(vals['scale_label'])
+            self.caption.setChecked(vals['caption'])
+            self.inset_sb.setChecked(vals['inset_scale_bar'])
+            self.inset_um.setValue(vals['inset_scale_um'] or 0)
+        finally:
+            self._loading = False
+        self._layout_changed()
+
 
     # ------------------------------------------------------------------
     # table
@@ -736,24 +1150,43 @@ class FigureWindow(QMainWindow):
         s = self.spec
         s.prune_level_links()
         r0, c0 = self.current_rc()
-        self.table.blockSignals(True)
-        self.table.setRowCount(s.nrows)
-        self.table.setColumnCount(s.ncols)
+        t = self.table
+        t.blockSignals(True)
+        # one more row / column: the ＋ that adds a row / column
+        t.setRowCount(s.nrows + 1)
+        t.setColumnCount(s.ncols + 1)
         for i, lab in enumerate(s.cols):
             h = QTableWidgetItem(lab.text or ' ')
             if lab.color:
                 h.setForeground(_qcolor(lab.color))
-            self.table.setHorizontalHeaderItem(i, h)
+            t.setHorizontalHeaderItem(i, h)
         for i, lab in enumerate(s.rows):
             h = QTableWidgetItem(lab.text or ' ')
             if lab.color:
                 h.setForeground(_qcolor(lab.color))
-            self.table.setVerticalHeaderItem(i, h)
+            t.setVerticalHeaderItem(i, h)
+        plus_c = QTableWidgetItem('')
+        plus_c.setToolTip('열 추가')
+        t.setHorizontalHeaderItem(s.ncols, plus_c)
+        plus_r = QTableWidgetItem('')
+        plus_r.setToolTip('행 추가')
+        t.setVerticalHeaderItem(s.nrows, plus_r)
+        for c in range(s.ncols):
+            t.setColumnWidth(c, t.horizontalHeader().defaultSectionSize())
         for r in range(s.nrows):
-            for c in range(s.ncols):
-                self._refresh_cell(r, c)
-        self.table.setCurrentCell(min(r0, s.nrows - 1), min(c0, s.ncols - 1))
-        self.table.blockSignals(False)
+            t.setRowHeight(r, t.verticalHeader().defaultSectionSize())
+        t.setColumnWidth(s.ncols, PLUS_W)
+        t.setRowHeight(s.nrows, PLUS_H)
+        for r in range(s.nrows + 1):
+            for c in range(s.ncols + 1):
+                if r < s.nrows and c < s.ncols:
+                    self._refresh_cell(r, c)
+                else:
+                    it = QTableWidgetItem('')
+                    it.setFlags(Qt.ItemFlag.NoItemFlags)
+                    t.setItem(r, c, it)
+        t.setCurrentCell(min(r0, s.nrows - 1), min(c0, s.ncols - 1))
+        t.blockSignals(False)
         self._cell_selected()
         self.schedule()
 
@@ -781,6 +1214,44 @@ class FigureWindow(QMainWindow):
             self.spec.add_col(c + 1)
             self.rebuild_table()
             self.table.setCurrentCell(r, c + 1)
+
+    def add_at_end(self, kind):
+        """The ＋ after the last column / below the last row."""
+        r, c = self.current_rc()
+        if kind == 'row':
+            self.spec.add_row()
+            self.rebuild_table()
+            self.table.setCurrentCell(self.spec.nrows - 1, c)
+        else:
+            self.spec.add_col()
+            self.rebuild_table()
+            self.table.setCurrentCell(r, self.spec.ncols - 1)
+
+    def select_label(self, kind, index):
+        r, c = self.current_rc()
+        if kind == 'row':
+            self.table.setCurrentCell(index, c)
+        else:
+            self.table.setCurrentCell(r, index)
+
+    def move_label(self, kind, index, insert_at):
+        """Row / column `index` moved to the boundary `insert_at` (0 = before
+        the first, n = after the last): a dragged row / column title."""
+        n = self.spec.nrows if kind == 'row' else self.spec.ncols
+        if not (0 <= index < n) or insert_at in (index, index + 1):
+            return
+        dest = insert_at if insert_at < index else insert_at - 1
+        step = 1 if dest > index else -1
+        k = index
+        while k != dest:
+            (self.spec.move_row if kind == 'row' else self.spec.move_col)(k, step)
+            k += step
+        r, c = self.current_rc()
+        self.rebuild_table()
+        if kind == 'row':
+            self.table.setCurrentCell(dest, c)
+        else:
+            self.table.setCurrentCell(r, dest)
 
     def _confirm_remove(self, kind, index=None):
         if index is None:
@@ -949,7 +1420,7 @@ class FigureWindow(QMainWindow):
         self.statusBar().showMessage(f'칸 {len(cells)}개에 이미지를 넣었습니다.', 3000)
 
     def edit_label(self, kind, index):
-        if index < 0:
+        if index < 0 or index >= (self.spec.nrows if kind == 'row' else self.spec.ncols):
             return
         labels = self.spec.rows if kind == 'row' else self.spec.cols
         lab = labels[index]
@@ -959,7 +1430,7 @@ class FigureWindow(QMainWindow):
             self.rebuild_table()
 
     def _header_menu(self, kind, index, header, pos):
-        if index < 0:
+        if index < 0 or index >= (self.spec.nrows if kind == 'row' else self.spec.ncols):
             return
         menu = QMenu(self)
         menu.addAction('이름/색상 수정…', lambda: self.edit_label(kind, index))
@@ -967,12 +1438,20 @@ class FigureWindow(QMainWindow):
             menu.addAction('위에 행 삽입', lambda: (self.spec.add_row(index), self.rebuild_table()))
             menu.addAction('아래에 행 삽입',
                            lambda: (self.spec.add_row(index + 1), self.rebuild_table()))
+            menu.addAction('위로 옮기기', lambda: self.move_label('row', index, index - 1)
+                           ).setEnabled(index > 0)
+            menu.addAction('아래로 옮기기', lambda: self.move_label('row', index, index + 2)
+                           ).setEnabled(index < self.spec.nrows - 1)
             menu.addSeparator()  # destructive item last, set apart
             menu.addAction('행 삭제…', lambda: self._confirm_remove('row', index))
         else:
             menu.addAction('왼쪽에 열 삽입', lambda: (self.spec.add_col(index), self.rebuild_table()))
             menu.addAction('오른쪽에 열 삽입',
                            lambda: (self.spec.add_col(index + 1), self.rebuild_table()))
+            menu.addAction('왼쪽으로 옮기기', lambda: self.move_label('col', index, index - 1)
+                           ).setEnabled(index > 0)
+            menu.addAction('오른쪽으로 옮기기', lambda: self.move_label('col', index, index + 2)
+                           ).setEnabled(index < self.spec.ncols - 1)
             menu.addSeparator()
             menu.addAction('열 삭제…', lambda: self._confirm_remove('col', index))
         menu.exec(header.mapToGlobal(pos))
@@ -984,7 +1463,7 @@ class FigureWindow(QMainWindow):
     def refresh_sources(self):
         """Re-read the main window's image list (called when the window is shown)."""
         items = self.items()
-        for row in self.spec.cells:
+        for row in (row for _n, spec in self.figures for row in spec.cells):
             for k, cell in enumerate(row):
                 if cell.item is not None and cell.item not in items:
                     row[k] = FigureCell()
@@ -1854,6 +2333,8 @@ class FigureWindow(QMainWindow):
             self._layout_changed()
 
     def _layout_changed(self, *_):
+        if getattr(self, '_loading', False):
+            return
         s = self.spec
         s.background = 'black' if self.bg_black.isChecked() else 'white'
         s.border = self.border.isChecked()
@@ -1906,7 +2387,9 @@ class FigureWindow(QMainWindow):
             self.refresh_from_main()
 
     def export(self):
-        path, flt = QFileDialog.getSaveFileName(self, 'Figure 저장', 'figure.png',
+        name = self.figures[self.current_figure()][0]
+        default = f'{_safe(name)}{self.fmt.currentData()}'
+        path, flt = QFileDialog.getSaveFileName(self, 'Figure 저장', default,
                                                 ';;'.join(EXPORT_FILTERS))
         if not path:
             return
@@ -1919,6 +2402,54 @@ class FigureWindow(QMainWindow):
             QMessageBox.warning(self, '저장 실패', str(exc))
             return
         self.statusBar().showMessage(f'저장: {path}')
+
+    def export_all(self, folder=None) -> list[Path]:
+        """Every figure of the sidebar into one folder (format of the toolbar)."""
+        if folder is None:
+            folder = QFileDialog.getExistingDirectory(self, '모든 Figure 저장할 폴더')
+            if not folder:
+                return []
+        folder, ext = Path(folder), self.fmt.currentData()
+        done, used, failed = [], set(), []
+        for name, spec in self.figures:
+            stem = _safe(name)
+            k = 2
+            while stem in used:
+                stem, k = f'{_safe(name)}_{k}', k + 1
+            used.add(stem)
+            path = folder / f'{stem}{ext}'
+            try:
+                save_figure(spec, path, self.dpi.value())
+                done.append(path)
+            except Exception as exc:
+                traceback.print_exc()
+                failed.append(f'{name}: {exc}')
+        if failed:
+            QMessageBox.warning(self, '저장 실패', '\n'.join(failed))
+        self.statusBar().showMessage(f'Figure {len(done)}개 저장: {folder}')
+        return done
+
+
+def _safe(name: str) -> str:
+    import re  # noqa: PLC0415
+
+    return re.sub(r'[\\/:*?"<>|\s]+', '_', name).strip('_') or 'figure'
+
+
+def copy_spec(src, dst, items):
+    """dst becomes a copy of src (cells keep pointing at the same images)."""
+    import io  # noqa: PLC0415
+
+    from .project import figure_dict, figure_from  # noqa: PLC0415
+
+    files = {}
+    d = figure_dict(src, items, files)
+    blobs = {}
+    for k, arr in files.items():
+        buf = io.BytesIO()
+        np.save(buf, arr)
+        blobs[k] = buf.getvalue()
+    figure_from(dst, d, items, blobs.__getitem__)
 
 
 def _image_ext():

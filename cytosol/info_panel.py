@@ -167,18 +167,7 @@ class InfoPanel(QWidget):
     def save_raw(self):
         if self.item is None:
             return
-        meta = self.item.image.metadata or {}
-        xml = meta.get('xml')
-        if isinstance(xml, str):
-            ext, text = 'xml', xml
-        elif isinstance(xml, dict):  # OIR: several XML documents
-            ext, text = 'xml', '\n\n'.join(f'<!-- block {k} -->\n{v}' for k, v in xml.items())
-        else:
-            import json
-
-            ext = 'json'
-            text = json.dumps({k: v for k, v in meta.items() if k != 'bleach_rois'},
-                              ensure_ascii=False, indent=1, default=str)
+        ext, text = raw_metadata(self.item)
         path, _ = QFileDialog.getSaveFileName(self, '원본 메타데이터 저장',
                                               f'{self._stem()}_metadata.{ext}', f'*.{ext}')
         if not path:
@@ -187,3 +176,18 @@ class InfoPanel(QWidget):
             Path(path).write_text(text, encoding='utf-8')
         except Exception as exc:
             QMessageBox.warning(self, '저장 실패', str(exc))
+
+
+def raw_metadata(item) -> tuple[str, str]:
+    """(extension, text) of an image's original metadata: the XML (CZI, OIR)
+    or the reader's attributes as JSON."""
+    meta = item.image.metadata or {}
+    xml = meta.get('xml')
+    if isinstance(xml, str):
+        return 'xml', xml
+    if isinstance(xml, dict):  # OIR: several XML documents
+        return 'xml', '\n\n'.join(f'<!-- block {k} -->\n{v}' for k, v in xml.items())
+    import json
+
+    return 'json', json.dumps({k: v for k, v in meta.items() if k != 'bleach_rois'},
+                              ensure_ascii=False, indent=1, default=str)

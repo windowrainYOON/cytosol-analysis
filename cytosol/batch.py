@@ -511,7 +511,8 @@ class BatchResults(QDialog):
                 ('이미지 열기', self.open_selected, '선택한 이미지를 열어 고칩니다.'),
                 ('다시 측정 (수정 반영)', self.remeasure, '검출은 다시 하지 않고 측정만 다시 합니다.'),
                 ('전체 다시 실행…', win.batch_dialog, '분석과 그룹을 다시 골라 처음부터 실행합니다.'),
-                ('결과 저장 (폴더)…', win.save_batch_results, '일괄 분석 결과와 설정만 저장합니다.')):
+                ('내보내기…', lambda: win.export_dialog('batch'),
+                 '일괄 분석 결과와 설정을 파일 › 내보내기 창에서 저장합니다.')):
             b = QPushButton(text)
             b.setToolTip(tip)
             b.clicked.connect(lambda _=False, fn=fn: fn())

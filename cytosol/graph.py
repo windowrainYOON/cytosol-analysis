@@ -115,6 +115,11 @@ class Table:
         return [[_text(v) for v in r] for r in self.rows]
 
 
+def safe_name(name: str) -> str:
+    """A file-name part from a graph / table name."""
+    return re.sub(r'[\\/:*?"<>|\s]+', '_', str(name)).strip('_') or 'graph'
+
+
 def write_csv(path, table: Table, rows=None) -> int:
     """UTF-8 with BOM (Excel), like the other CSVs of the program."""
     path = Path(path)
@@ -840,7 +845,10 @@ def draw(fig, spec: GraphSpec, tables) -> dict:
     else:
         for i, s in enumerate(spec.series):
             if s.visible:
+                before = set(ax.get_children())
                 xticks = _draw_xy(ax, s, i, tabs, handles, spec.x.scale, spec.y.scale) or xticks
+                for a in set(ax.get_children()) - before:  # the window picks a series by its artists
+                    a.set_gid(f'series:{i}')
         if xticks:
             ax.set_xticks(range(len(xticks)))
             ax.set_xticklabels(xticks)

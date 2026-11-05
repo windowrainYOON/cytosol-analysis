@@ -30,6 +30,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .crops import polys_of
+
 FORMAT = 'cytosol-viewer-project'
 VERSION = 1
 EXT = '.cyproj'
@@ -236,6 +238,8 @@ def image_entry(it, base: Path) -> dict:
         't': it.t,
         'luts': [lut.to_dict() for lut in it.luts],
         'crops': [list(map(int, c)) for c in it.crops],
+        'crop_polys': [None if q is None else [list(map(float, xy)) for xy in q]
+                       for q in polys_of(it)],
         'group': it.group,
         'profile_line': list(it.profile_line) if it.profile_line is not None else None,
         'roi_roles': dict(it.roi_roles),
@@ -266,7 +270,7 @@ def resolve_image(entry: dict, base: Path, search_dirs=()) -> Path | None:
 # ---------------------------------------------------------------------------
 
 
-def figure_dict(spec, items, files: dict) -> dict:
+def figure_dict(spec, items, files: dict, prefix: str = 'figure') -> dict:
     """The figure table; external images go to files[name] = array."""
     index = {id(it): i for i, it in enumerate(items)}
     cells = []
@@ -283,7 +287,7 @@ def figure_dict(spec, items, files: dict) -> dict:
                  'level_from': {str(k): spec.find_level_source(v)
                                 for k, v in cell.level_from.items()}}
             if cell.rgb is not None:
-                d['rgb'] = f'figure/{r}_{c}.npy'
+                d['rgb'] = f'{prefix}/{r}_{c}.npy'
                 files[d['rgb']] = np.asarray(cell.rgb, np.float32)
             if cell.zoom_src is not None:
                 pos = spec.find(cell.zoom_src)

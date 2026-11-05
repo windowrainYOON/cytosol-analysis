@@ -100,9 +100,9 @@ def _only_buttons(lay) -> list[QWidget] | None:
     return widgets
 
 
-def _to_flow(lay) -> FlowLayout | None:
+def _to_flow(lay, min_n=3) -> FlowLayout | None:
     widgets = _only_buttons(lay)
-    if not widgets or len(widgets) < 3:
+    if not widgets or len(widgets) < min_n:
         return None
     if isinstance(lay, QGridLayout):  # keep the grid's reading order
         pos = {}
@@ -111,7 +111,7 @@ def _to_flow(lay) -> FlowLayout | None:
             pos[w] = (r, c)
         widgets.sort(key=pos.get)
     flow = FlowLayout(spacing=max(lay.spacing(), 4))
-    if all(isinstance(w, QCheckBox) for w in widgets):
+    if len(widgets) >= 3 and all(isinstance(w, QCheckBox) for w in widgets):
         # a row of three or more options picked together: multi-select chips
         from . import theme  # noqa: PLC0415
 
@@ -126,34 +126,35 @@ def _to_flow(lay) -> FlowLayout | None:
     return flow
 
 
-def reflow(root: QWidget):
+def reflow(root: QWidget, min_n: int = 3):
     """Make the panel `root` (built already) fit narrow widths: rows of three
-    or more buttons / check boxes become flow layouts, form rows may wrap."""
+    (min_n) or more buttons / check boxes become flow layouts, form rows may
+    wrap."""
     for w in [root] + root.findChildren(QWidget):
         lay = w.layout()
         if lay is None or w.property('hig_no_reflow'):
             continue  # e.g. an icon-button capsule: one toolbar group, never wrapped
         if isinstance(lay, (QHBoxLayout, QGridLayout)):
-            flow = _to_flow(lay)
+            flow = _to_flow(lay, min_n)
             if flow is not None:  # the widget's own layout: swap it
                 margins = lay.contentsMargins()
                 shiboken6.delete(lay)
                 flow.setContentsMargins(margins)
                 w.setLayout(flow)
                 continue
-        _reflow_layout(lay, w)
+        _reflow_layout(lay, w, min_n)
 
 
-def _reflow_layout(lay, owner):
+def _reflow_layout(lay, owner, min_n=3):
     if isinstance(lay, QFormLayout):
         lay.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         subs = [lay.itemAt(i).layout() for i in range(lay.count())]
         for sub in subs:
             if sub is None:
                 continue
-            flow = _to_flow(sub) if isinstance(sub, (QHBoxLayout, QGridLayout)) else None
+            flow = _to_flow(sub, min_n) if isinstance(sub, (QHBoxLayout, QGridLayout)) else None
             if flow is None:
-                _reflow_layout(sub, owner)
+                _reflow_layout(sub, owner, min_n)
                 continue
             row, role = lay.getLayoutPosition(sub)
             lay.takeAt(lay.indexOf(sub))
@@ -165,11 +166,11 @@ def _reflow_layout(lay, owner):
         if sub is None:
             continue
         if isinstance(sub, (QHBoxLayout, QGridLayout)) and isinstance(lay, QBoxLayout):
-            flow = _to_flow(sub)
+            flow = _to_flow(sub, min_n)
             if flow is not None:
                 stretch = lay.stretch(i)
                 lay.takeAt(i)
                 sub.setParent(None)
                 lay.insertLayout(i, flow, stretch)
                 continue
-        _reflow_layout(sub, owner)
+        _reflow_layout(sub, owner, min_n)

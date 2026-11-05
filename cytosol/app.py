@@ -43,7 +43,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QListWidget,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -52,9 +51,6 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSlider,
     QSpinBox,
-    QSplitter,
-    QTabBar,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -63,27 +59,23 @@ from . import glass, hig_widgets, theme
 from .lut import (
     ImageItem,
     apply_lut_to_all,
-    export_item,
-    item_folder,
     item_stem,
     load_preset,
     save_preset,
-    unique_stems,
 )
 from . import batch
 from .batch import BatchDialog, BatchResults, BatchState
-from .coloc_panel import ColocPanel, write_coloc_csv
-from .intensity import is_contour_file, is_particle_file, is_region_file, write_rows
-from .groups import GROUP_FILE, apply_groups, auto_groups, read_groups, suggest_name, write_groups
+from .coloc_panel import ColocPanel
+from .intensity import is_contour_file, is_particle_file, is_region_file
+from .groups import GROUP_FILE, apply_groups, auto_groups, read_groups, suggest_name
 from .flow import reflow
-from . import frap
 from .frap import is_frap_file, load_rois as load_frap_rois
 from .frap_panel import FrapPanel
 from .image_tree import ImageTree
 from .intensity_panel import IntensityPanel
 from .imageid import ROI_EXT, match_roi, plan_pairing
-from .crops import is_crop_file, load_crop_rois, save_crop_rois
-from .imageinfo import is_bleach_file, load_bleach_rois, summarize
+from .crops import bbox, is_crop_file, load_crop_polys, polys_of, load_crop_rois
+from .imageinfo import is_bleach_file, load_bleach_rois
 from .info_panel import InfoPanel
 from .marker_panel import MarkerPanel
 from .lineprofile import read_line_roi
@@ -91,7 +83,7 @@ from .prefetch import TimeCache
 from .profile_panel import ProfilePanel
 from .movie import RGB_FORMATS, wants_mp4
 from .particle_panel import ParticlePanel
-from .roi_panel import RoiPanel, write_csv
+from .roi_panel import RoiPanel
 from .stack import StackView, export_projection, export_rotation
 from .stack_panel import StackPanel
 from .settings import PreferencesDialog, view_settings
@@ -221,6 +213,10 @@ class Canvas(QGraphicsView):
     cropDrawn = Signal(float, float, float, float)
     cropMoved = Signal(int, int, int)  # index, dx, dy (image pixels)
     cropPicked = Signal(int)
+    cropMenu = Signal(int, object)  # crop index (-1: none) under a right-click, global QPoint
+    cropResized = Signal(int, int, int, int, int)  # index, x0, y0, x1, y1 (수정)
+    cropPointsChanged = Signal(int, object)  # index, [(x, y), …] (점 편집)
+    cropEditEnded = Signal()
     zoomDone = Signal()
     rotateStarted = Signal()
     rotateDragged = Signal(str, float)  # axis 'Y' / 'X', screen pixels from the press
@@ -282,6 +278,12 @@ class Canvas(QGraphicsView):
         self._crop_sel = None
         self._crop_shapes = {}  # index -> (rect item, text item, text origin)
         self._crop_drag = None  # [index, press scene pos, moved]
+        self._crop_pts = []  # outline points of each crop shown (rectangle corners or polygon)
+        self._crop_edit = None  # 'resize' / 'points': handles on the selected crop
+        self._handles = []  # (handle number, scene point, item)
+        self._edit_drag = None  # [handle, start scene pos, start rect / points]
+        self._ctx = None  # right press: (crop index, view pos, global pos)
+        self.crop_menu_enabled = False
         # FRAP ROIs shown (dragging one moves it): name -> (outline xy, items)
         self._frap = {}
         self._frap_drag = None  # [name, press scene pos, dx, dy]
@@ -367,23 +369,34 @@ class Canvas(QGraphicsView):
             self.fitInView(self.pix, Qt.AspectRatioMode.KeepAspectRatio)
             self._fitted = True
 
-    def show_crops(self, crops, selected=None):
-        """Draw every crop region with its number; highlight the selected one."""
+    def show_crops(self, crops, selected=None, shapes=None, edit=None):
+        """Draw every crop region with its number; highlight the selected one.
+        shapes: per crop its polygon points or None (the rectangle); edit:
+        'resize' (8 handles) or 'points' (a handle per vertex) on the
+        selected crop."""
         for it in self._region_items:
             self.scene().removeItem(it)
         self._region_items = []
+        self._handles = []
         self._crops = list(crops)
         self._crop_sel = selected
         self._crop_shapes = {}
         self._crop_drag = None
+        self._crop_edit = edit if selected is not None and selected < len(crops) else None
         self.rect_item.hide()
+        shapes = list(shapes or [])
+        self._crop_pts = []
         for k, (x0, y0, x1, y1) in enumerate(crops):
+            q = shapes[k] if k < len(shapes) else None
+            pts = [tuple(map(float, xy)) for xy in q] if q is not None else \
+                [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+            self._crop_pts.append(pts)
             sel = k == selected
             pen = QPen(QColor(255, 220, 0) if sel else QColor(0, 220, 255))
             pen.setCosmetic(True)
             pen.setWidth(3 if sel else 2)
             pen.setStyle(Qt.PenStyle.SolidLine if sel else Qt.PenStyle.DashLine)
-            r = QGraphicsRectItem(QRectF(x0, y0, x1 - x0, y1 - y0))
+            r = QGraphicsPathItem(polygon_path(np.asarray(pts, float)))
             r.setPen(pen)
             r.setZValue(10)
             t = QGraphicsSimpleTextItem(str(k + 1))
@@ -399,6 +412,155 @@ class Canvas(QGraphicsView):
             for it in (r, t):
                 self.scene().addItem(it)
                 self._region_items.append(it)
+        self._draw_handles()
+
+    # ---- crop 수정 / 점 편집 handles ----
+
+    def _handle_points(self):
+        k, mode = self._crop_sel, self._crop_edit
+        if mode is None or k is None or k >= len(self._crops):
+            return []
+        if mode == 'points':
+            return [QPointF(x, y) for x, y in self._crop_pts[k]]
+        x0, y0, x1, y1 = self._crops[k]
+        xm, ym = (x0 + x1) / 2, (y0 + y1) / 2
+        # corners tl, tr, br, bl, then edges t, r, b, l
+        return [QPointF(x0, y0), QPointF(x1, y0), QPointF(x1, y1), QPointF(x0, y1),
+                QPointF(xm, y0), QPointF(x1, ym), QPointF(xm, y1), QPointF(x0, ym)]
+
+    def _draw_handles(self):
+        for _, _, item in self._handles:
+            self.scene().removeItem(item)
+        self._handles = []
+        round_ = self._crop_edit == 'points'
+        for i, p in enumerate(self._handle_points()):
+            item = QGraphicsRectItem(QRectF(-4.5, -4.5, 9, 9))
+            item.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIgnoresTransformations)
+            pen = QPen(QColor(255, 220, 0))
+            pen.setCosmetic(True)
+            pen.setWidthF(1.5)
+            item.setPen(pen)
+            item.setBrush(QColor(30, 30, 30) if round_ else QColor(255, 255, 255))
+            item.setPos(p)
+            item.setZValue(12)
+            self.scene().addItem(item)
+            self._handles.append((i, p, item))
+
+    def _handle_at(self, view_pos):
+        for i, p, _ in self._handles:
+            v = self.mapFromScene(p)
+            if abs(v.x() - view_pos.x()) <= 7 and abs(v.y() - view_pos.y()) <= 7:
+                return i
+        return None
+
+    def _edge_at(self, view_pos):
+        """(segment index, scene point) of the selected polygon's edge under the cursor."""
+        k = self._crop_sel
+        pts = self._crop_pts[k]
+        best = None
+        for i in range(len(pts)):
+            a = self.mapFromScene(QPointF(*pts[i]))
+            b = self.mapFromScene(QPointF(*pts[(i + 1) % len(pts)]))
+            ax, ay, bx, by = a.x(), a.y(), b.x(), b.y()
+            dx, dy = bx - ax, by - ay
+            L = dx * dx + dy * dy
+            t = 0.0 if L == 0 else max(0.0, min(1.0, ((view_pos.x() - ax) * dx + (view_pos.y() - ay) * dy) / L))
+            d = float(np.hypot(ax + t * dx - view_pos.x(), ay + t * dy - view_pos.y()))
+            if d <= 6 and (best is None or d < best[0]):
+                x0, y0 = pts[i]
+                x1, y1 = pts[(i + 1) % len(pts)]
+                best = (d, i, (x0 + t * (x1 - x0), y0 + t * (y1 - y0)))
+        return None if best is None else best[1:]
+
+    def _edit_preview(self, rect=None, pts=None):
+        """Redraw the selected crop while its handles are dragged."""
+        k = self._crop_sel
+        if rect is not None:
+            x0, y0, x1, y1 = rect
+            pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)] if self._edit_drag[3] is None else \
+                self._scaled(k, rect)
+            self._crops[k] = rect
+        self._crop_pts[k] = pts
+        r, t, _ = self._crop_shapes[k]
+        r.setPath(polygon_path(np.asarray(pts, float)))
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        t.setPos(min(xs) + 2, min(ys) + 2)
+        if rect is None:
+            self._crops[k] = (min(xs), min(ys), max(xs), max(ys))
+        self._draw_handles()
+
+    def _scaled(self, k, rect):
+        ox0, oy0, ox1, oy1 = self._edit_drag[2]
+        sx = (rect[2] - rect[0]) / max(ox1 - ox0, 1e-6)
+        sy = (rect[3] - rect[1]) / max(oy1 - oy0, 1e-6)
+        return [(rect[0] + (x - ox0) * sx, rect[1] + (y - oy0) * sy) for x, y in self._edit_drag[3]]
+
+    def _edit_press(self, event, pos):
+        """Left press while a crop is being edited; True when it was used."""
+        k = self._crop_sel
+        vp = event.position()
+        h = self._handle_at(vp)
+        alt = event.modifiers() & Qt.KeyboardModifier.AltModifier
+        if self._crop_edit == 'points':
+            pts = list(self._crop_pts[k])
+            if h is not None and alt:  # Option/Alt+click: delete the point
+                if len(pts) > 3:
+                    pts.pop(h)
+                    self.cropPointsChanged.emit(k, pts)
+                return True
+            if h is None:
+                edge = self._edge_at(vp)
+                if edge is not None:  # a click on an edge adds a point there
+                    i, xy = edge
+                    pts.insert(i + 1, xy)
+                    self._crop_pts[k] = pts
+                    self._edit_drag = [i + 1, pos, None, None]
+                    self._edit_preview(pts=pts)
+                    return True
+        if h is not None:
+            pts = self._crop_pts[k]
+            rect_like = self._crop_edit == 'resize' and len(pts) == 4 and \
+                {pts[0], pts[2]} == {(self._crops[k][0], self._crops[k][1]), (self._crops[k][2], self._crops[k][3])}
+            self._edit_drag = [h, pos, tuple(self._crops[k]), None if rect_like else list(pts)]
+            return True
+        return False
+
+    def _edit_move(self, pos):
+        h, _, rect0, pts0 = self._edit_drag
+        k = self._crop_sel
+        if self._crop_edit == 'points':
+            pts = list(self._crop_pts[k])
+            pts[h] = (pos.x(), pos.y())
+            self._edit_preview(pts=pts)
+            return
+        x0, y0, x1, y1 = rect0
+        px, py = pos.x(), pos.y()
+        if h in (0, 3, 7):
+            x0 = px
+        if h in (1, 2, 5):
+            x1 = px
+        if h in (0, 1, 4):
+            y0 = py
+        if h in (2, 3, 6):
+            y1 = py
+        x0, x1 = sorted((x0, x1))
+        y0, y1 = sorted((y0, y1))
+        self._edit_preview(rect=(x0, y0, x1, y1))
+
+    def _edit_release(self):
+        k = self._crop_sel
+        self._edit_drag = None
+        if self._crop_edit == 'points':
+            self.cropPointsChanged.emit(k, list(self._crop_pts[k]))
+        else:
+            x0, y0, x1, y1 = self._crops[k]
+            self.cropResized.emit(k, round(x0), round(y0), round(x1), round(y1))
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Escape, Qt.Key.Key_Return, Qt.Key.Key_Enter) and self._crop_edit:
+            self.cropEditEnded.emit()
+            return
+        super().keyPressEvent(event)
 
     def show_cells(self, shapes, selected=0):
         """shapes: (label, cell_xy, nucleus_xy or None, status, (cx, cy)) per cell;
@@ -596,7 +758,12 @@ class Canvas(QGraphicsView):
             order.insert(0, self._crop_sel)
         for k in order:
             x0, y0, x1, y1 = self._crops[k]
-            if x0 <= pos.x() <= x1 and y0 <= pos.y() <= y1:
+            if not (x0 <= pos.x() <= x1 and y0 <= pos.y() <= y1):
+                continue
+            pts = self._crop_pts[k] if k < len(self._crop_pts) else None
+            if pts is None or len(pts) == 4 and pts[0] == (x0, y0) and pts[2] == (x1, y1):
+                return k
+            if polygon_path(np.asarray(pts, float)).contains(pos):
                 return k
         return None
 
@@ -662,6 +829,10 @@ class Canvas(QGraphicsView):
             self._zoom_drag = (p, self.transform().m11() or 1.0, self.mapToScene(p))
             self.viewport().setCursor(Qt.CursorShape.SizeVerCursor)
             return
+        self._ctx = None
+        if btn == Qt.MouseButton.RightButton and self.crop_menu_enabled and not self.view3d:
+            k = self._crop_at(self.mapToScene(event.position().toPoint())) if self._crops else None
+            self._ctx = (-1 if k is None else k, event.position(), event.globalPosition().toPoint())
         if btn == Qt.MouseButton.RightButton and self.view3d:
             self._rot = (event.position(), None)
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
@@ -685,6 +856,12 @@ class Canvas(QGraphicsView):
             self.zoom_item.setRect(QRectF(pos, pos))
             self.zoom_item.show()
             return
+        if self._crop_edit and btn == Qt.MouseButton.LeftButton:
+            if self._edit_press(event, pos):
+                return
+            if self._crop_at(pos) != self._crop_sel:  # a click outside ends the editing
+                self.cropEditEnded.emit()
+                return
         if self.crop_mode and btn == Qt.MouseButton.LeftButton:
             k = self._crop_at(pos)
             if k is not None and not self.crop_size:  # inside a region: move it
@@ -792,6 +969,19 @@ class Canvas(QGraphicsView):
             p = self.mapToScene(event.position().toPoint())
             self.zoom_item.setRect(QRectF(self._zoom_origin, p).normalized())
             return
+        if self._edit_drag is not None:
+            self._edit_move(self.mapToScene(event.position().toPoint()))
+            return
+        if self._crop_edit and not event.buttons():
+            h = self._handle_at(event.position())
+            if h is not None:
+                shapes = [Qt.CursorShape.SizeFDiagCursor, Qt.CursorShape.SizeBDiagCursor,
+                          Qt.CursorShape.SizeFDiagCursor, Qt.CursorShape.SizeBDiagCursor,
+                          Qt.CursorShape.SizeVerCursor, Qt.CursorShape.SizeHorCursor,
+                          Qt.CursorShape.SizeVerCursor, Qt.CursorShape.SizeHorCursor]
+                self.viewport().setCursor(Qt.CursorShape.PointingHandCursor if self._crop_edit == 'points'
+                                          else shapes[h])
+                return
         if self._frap_drag is not None:
             name, start, _, _ = self._frap_drag
             p = self.mapToScene(event.position().toPoint())
@@ -867,6 +1057,18 @@ class Canvas(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
+        ctx, self._ctx = self._ctx, None
+        if ctx is not None and event.button() == Qt.MouseButton.RightButton:
+            if (event.position() - ctx[1]).manhattanLength() < 4:  # a click: the crop menu
+                if self._scrub is not None:
+                    self.scrubEnded.emit()
+                self._scrub = self._pan_from = None
+                self._apply_mode()
+                self.cropMenu.emit(ctx[0], ctx[2])
+                return
+        if self._edit_drag is not None:
+            self._edit_release()
+            return
         if self._zoom_drag is not None:
             self._zoom_drag = None
             self._apply_mode()
@@ -1319,6 +1521,16 @@ class MainWindow(QMainWindow):
         self.canvas.cropDrawn.connect(self._crop_drawn)
         self.canvas.cropMoved.connect(self._crop_moved)
         self.canvas.cropPicked.connect(self._crop_picked)
+        self.canvas.cropMenu.connect(self._crop_menu)
+        self.canvas.cropResized.connect(self._crop_resized)
+        self.canvas.cropPointsChanged.connect(self._crop_points)
+        self.canvas.cropEditEnded.connect(lambda: self.edit_crop(None))
+        self._crop_edit = None  # 'resize' / 'points' while the selected crop is edited
+        self._crop_clip = None  # copied crop outline: [(x, y), …] (이 ROI 복사)
+        for seq, fn in ((QKeySequence.StandardKey.Copy, self.copy_crop),
+                        (QKeySequence.StandardKey.Paste, self.paste_crop)):
+            sc = QShortcut(QKeySequence(seq), self.canvas, activated=fn)
+            sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self.canvas.wheel_handler = self._wheel_t
         for key, f in (('[', 1 / ZOOM_KEY_STEP), (']', ZOOM_KEY_STEP)):
             QShortcut(QKeySequence(key), self, activated=lambda f=f: self.canvas.zoom_by(f))
@@ -1580,9 +1792,8 @@ class MainWindow(QMainWindow):
         self.setProperty('hig_glass', glass.prepare(self))
 
         self.figure_win = None
-        self.graph_wins = {}  # graph source key -> GraphWindow (그래프 편집 창)
-        self.graph_specs = {}  # key -> GraphSpec dict from a project, for windows not opened yet
-        self._graph_buttons()
+        self.graph_win = None  # the 그래프 편집 창 (one window, several graphs)
+        self.graph_specs = {}  # key -> GraphSpec dict from a project, for graphs not opened yet
         self.log_win = None
         self.batch = BatchState()  # 일괄 분석: steps, groups, results per image
         self.batch_win = None
@@ -1642,40 +1853,31 @@ class MainWindow(QMainWindow):
         act(m, '프로젝트 저장', self.save_project, QKeySequence.StandardKey.Save)
         act(m, '프로젝트 다른 이름으로 저장…', lambda: self.save_project(ask=True), 'Ctrl+Shift+S')
         m.addSeparator()
+        act(m, '내보내기…', lambda: self.export_dialog(), 'Ctrl+E',
+            '모든 내보내기를 한 창에서: 이미지 TIFF / MP4, Crop 영역 이미지와 ROI, 세포 · 입자 ROI, 측정 CSV, '
+            'Coloc 2, 라인 프로파일, FRAP, 스택 투영, 그래프, 이미지 정보, 일괄 분석 결과, 프로젝트 파일.')
+        m.addSeparator()
         act(m, '일괄 분석 실행…', self.batch_dialog, 'Ctrl+B',
             '그룹을 고르고 수행할 분석(세포질 ROI, 입자, 강도 측정, Coloc 2, FRAP …)을 체크해 '
             '그 그룹의 모든 이미지에 한 번에 실행합니다.')
         act(m, '일괄 분석 결과 보기…', self.show_batch_results, 'Ctrl+Shift+B',
             '이미지별 결과를 보고, 이미지를 열어 ROI를 고친 뒤 다시 측정합니다.')
-        act(m, '일괄 분석 결과 저장 (폴더)…', self.save_batch_results,
-            tip='일괄 분석에서 고른 분석의 결과만 (고친 내용 반영, 이미지별 폴더 + 전체 CSV + '
-                'batch_summary.csv + batch_settings.json) 저장합니다.')
         act(m, '일괄 분석 설정 저장…', self.save_batch_settings,
             tip='고른 분석·그룹과 그 분석들의 탭 설정을 JSON 파일로 저장합니다 (다른 이미지셋에 다시 쓰기).')
         act(m, '일괄 분석 설정 불러오기…', self.load_batch_settings_dialog)
         m.addSeparator()
-        act(m, '모든 분석 결과 통합 저장 (이미지별 폴더)…', self.export_everything, 'Ctrl+Shift+E',
-            '이미지마다 폴더를 하나씩 만들어 그 이미지의 TIFF, Crop·세포·입자·논리 영역 ROI, '
-            '측정값 CSV, 이미지 정보, Coloc 2 결과를 모두 넣고, 프로젝트 파일도 함께 저장합니다.')
-        m.addAction(self.opt_per_image)
-        m.addAction(self.opt_with_roi)
-        m.addSeparator()
         act(m, '작업 기록 보기…', self.open_log, 'Ctrl+Shift+L')
-        act(m, '작업 기록 저장 (CSV)…', self.save_log_csv)
         s = act(m, 'Preferences…', self.open_settings, QKeySequence.StandardKey.Preferences)
         s.setMenuRole(QAction.MenuRole.PreferencesRole)
         m.addSeparator()
         q = act(m, '종료', self.close, QKeySequence.StandardKey.Quit)
         q.setMenuRole(QAction.MenuRole.QuitRole)
 
-        rp, pp, ip, cp = self.roi_panel, self.particle_panel, self.intensity_panel, self.coloc_panel
-
-        # every feature menu sits under Tool (Tool › FRAP 측정 › …)
+        # every feature menu sits under Tool (Tool › FRAP 측정 › …); its saves
+        # are in 파일 › 내보내기 (owner request 2026-11-05), its loads stay here
         self.tool_menu = tools = mb.addMenu('Tool')
 
         sub = tools.addMenu('LUT')
-        act(sub, '이미지 내보내기 (TIFF / MP4)…', self.export_images_dialog, 'Ctrl+E')
-        sub.addSeparator()
         act(sub, 'LUT 프리셋 저장…', self.save_preset,
             tip='현재 이미지의 채널 LUT를 JSON 파일로 저장합니다.')
         load_action(sub, 'LUT 프리셋 불러오기…', 'lut')
@@ -1685,102 +1887,40 @@ class MainWindow(QMainWindow):
             tip='scale bar, 시간 표시, bleach ROI 표시 설정을 JSON 파일로 저장합니다.')
         load_action(sub, '마커 설정 불러오기…', 'marker')
 
-        sub = tools.addMenu('Crop')
-        self.crop_draw_act = QAction('Crop 그리기 · 옮기기 (캔버스의 Crop 아이콘)', self, checkable=True)
+        # Crop (owner request 2026-11-05: no Tool › Crop menu): the canvas Crop
+        # icon, the crop rows of the sidebar and the crop right-click menu
+        self.crop_draw_act = QAction('Crop 그리기 · 옮기기', self, checkable=True)
         self.crop_draw_act.toggled.connect(self.crop_btn.setChecked)
         self.crop_btn.toggled.connect(self.crop_draw_act.setChecked)
-        sub.addAction(self.crop_draw_act)
-        sub.addAction(self.show_crop_act)
-        act(sub, '같은 크기 이미지에 Crop 복사', self.crop_to_all,
-            tip='이 이미지의 Crop 영역들을 크기가 같은 다른 이미지에 복사합니다. '
-                '복사한 뒤 각 이미지에서 영역 안을 드래그하면 옮겨집니다.')
-        sub.addSeparator()
-        act(sub, 'Crop 영역 ROI 저장 (현재 이미지)…', self.save_crops_current)
-        act(sub, 'Crop 영역 ROI 저장 (모든 이미지, 폴더)…', self.save_crops_all)
-        load_action(sub, 'Crop 영역 ROI 불러오기…', 'crop')
-        sub.addSeparator()
-        a = act(sub, '이 이미지의 Crop 모두 삭제…', self.confirm_clear_crops)
-        a.setProperty('hig_destructive', True)
 
         sub = tools.addMenu('세포질 ROI')
         tab_action(sub, 'roi_tab')
-        for a in (rp.save_cell, rp.save_nuc, rp.save_cyto):
-            sub.addAction(a)
-        act(sub, 'ROI 저장 (현재 이미지)…', rp.save_current,
-            tip='.zip: ImageJ RoiSet 하나로, .roi: ROI마다 .roi 파일 하나씩')
-        act(sub, '모든 이미지 ROI 저장 (폴더)…', rp.save_all)
         load_action(sub, 'ROI 불러오기…', 'cell')
-        sub.addSeparator()
-        self._measure_menu(sub, rp.measure)
-        self._graph_action(sub, 'roi')
-        sub.addSeparator()
-        bp = rp.bands
-        act(sub, '등거리 띠 CSV 저장 (현재 이미지)…', bp.bands_measure.save_current)
-        act(sub, '등거리 띠: 모든 이미지 측정 + 저장 (폴더)…', bp.bands_measure.save_all,
-            tip=bp.bands_measure.save_tip)
-        act(sub, '등거리 띠 그래프 저장 (PNG / PDF / SVG / TIFF)…', bp.save_plot)
-        self._graph_action(sub, 'bands')
 
         sub = tools.addMenu('입자 ROI')
         tab_action(sub, 'particle_tab')
-        act(sub, '입자 ROI 저장 (현재 이미지)…', pp.save_particles_current)
         load_action(sub, '입자 ROI 불러오기…', 'particle')
-        sub.addSeparator()
-        self._measure_menu(sub, pp.measure)
-        self._graph_action(sub, 'particle')
 
         sub = tools.addMenu('강도 측정')
         tab_action(sub, 'intensity_tab')
-        self._measure_menu(sub, ip.measure)
-        sub.addSeparator()
-        self._graph_action(sub, 'intensity')
 
         sub = tools.addMenu('Coloc 2')
         tab_action(sub, 'coloc_tab')
-        act(sub, 'CSV 저장 (현재 이미지)…', cp.save_csv,
-            tip='현재 이미지의 결과 (ROI마다 한 행, 열 이름은 Coloc 2와 같음)')
-        act(sub, '모든 이미지 CSV 저장 (폴더)…', cp.save_all)
-        act(sub, '그래프 저장…', cp.save_plot)
-        act(sub, 'PDF 리포트 저장…', cp.save_pdf,
-            tip='선택한 ROI의 히스토그램과 모든 값 (Coloc 2의 PDF와 같은 내용)')
-        self._graph_action(sub, 'coloc')
 
         sub = tools.addMenu('라인 프로파일')
         tab_action(sub, 'profile_tab')
-        act(sub, 'CSV 저장…', self.profile_panel.save_csv)
-        act(sub, '그래프 저장 (PNG / PDF / SVG / TIFF)…', self.profile_panel.save_plot)
         load_action(sub, '선 ROI 불러오기…', 'line')
-        self._graph_action(sub, 'profile')
 
-        fp = self.frap_panel
         sub = tools.addMenu('FRAP 측정')
         tab_action(sub, 'frap_tab')
-        act(sub, '요약 저장: 모든 이미지·그룹 CSV + 그래프 (폴더)…', fp.save_all, tip=(
-            'bleach 기록이 있는 모든 이미지를 측정해 frap_summary.csv (이미지·그룹별 mobile fraction, '
-            't½, k, plateau, 최종 회복률 …), frap_group_curves.csv, frap_groups.png/.pdf '
-            '(그룹 평균 ± 에러바), frap_summary.png와 이미지별 곡선 CSV·그래프·ROI를 한 번에 저장합니다.'))
-        act(sub, 'CSV 저장 (현재 이미지)…', fp.save_csv)
-        act(sub, '그래프 저장 (PNG / PDF / SVG / TIFF)…', fp.save_plot,
-            tip='탭에 보이는 그래프 (현재 이미지 또는 그룹 평균)')
-        sub.addSeparator()
-        act(sub, 'FRAP ROI 저장 (현재 이미지)…', fp.save_rois_current)
         load_action(sub, 'FRAP ROI 불러오기…', 'frap')
-        sub.addSeparator()
-        self._graph_action(sub, 'frap')
 
         sub = tools.addMenu('스택')
         tab_action(sub, 'stack_tab')
-        act(sub, '현재 투영 저장 (TIFF / MP4)…', lambda: self.stack_export_dialog('current'))
-        act(sub, '3D 회전 시리즈 저장 (TIFF 스택 / MP4)…', lambda: self.stack_export_dialog('rotation'))
-
-        sub = tools.addMenu('이미지 정보')
-        act(sub, 'CSV 저장…', self.info_panel.save_csv)
-        act(sub, '원본 메타데이터 저장…', self.info_panel.save_raw,
-            tip='파일에 들어 있는 메타데이터 전체(CZI/OIR XML, TCF 속성)를 그대로 저장합니다.')
-
-        sub = tools.addMenu('Figure')
-        act(sub, 'Figure 창 열기…', self.open_figure, 'Ctrl+Shift+F',
-            'LUT/crop을 적용한 이미지로 행·열 표 형태의 figure 만들기 (저장은 Figure 창 안에서)')
+        for sub in tools.findChildren(QMenu):  # no trailing separator after the tab item
+            acts = sub.actions()
+            if acts and acts[-1].isSeparator():
+                sub.removeAction(acts[-1])
 
         # View: open / close each feature tab (same state as Tool › … 탭 열기)
         self.view_menu = view = mb.addMenu('View')
@@ -1796,12 +1936,20 @@ class MainWindow(QMainWindow):
         act(view, '모든 기능 탭 열기', lambda: [self.show_tab(n, focus=False) for n in self.tab_pages])
         act(view, '모든 기능 탭 닫기', lambda: [self.hide_tab(n) for n in self.tab_pages],
             tip='LUT와 이미지 정보 탭은 항상 열려 있습니다.')
-        view.addSeparator()
-        act(view, '현재 탭의 그래프 편집 창', self.open_graph_current, 'Ctrl+G',
+
+        # 그래프 and Figure next to View (owner request 2026-11-05)
+        self.graph_menu = g = mb.addMenu('그래프')
+        act(g, '현재 탭의 그래프 편집 창', self.open_graph_current, 'Ctrl+G',
             '오른쪽에 보이는 탭의 그래프를 그래프 편집 창에서 엽니다.')
-        self.graph_menu = view.addMenu('그래프 편집 창')
-        self.graph_menu.aboutToShow.connect(self._fill_graph_menu)
-        act(view, 'Figure 창', self.open_figure)
+        g.addSeparator()
+        self._graph_end = g.addSeparator()
+        act(g, '새 그래프 (빈 창)…', self.open_blank_graph,
+            tip='빈 그래프를 만들어 아무 분석 결과나 CSV를 가져와 그립니다.')
+        self._graph_dyn = []
+        g.aboutToShow.connect(self._fill_graph_menu)
+        self.figure_menu = f = mb.addMenu('Figure')
+        act(f, 'Figure 창 열기…', self.open_figure, 'Ctrl+Shift+F',
+            'LUT / Crop을 적용한 이미지로 행·열 표 형태의 figure를 만듭니다 (저장은 Figure 창 위쪽).')
 
     # ---- graph editor windows (그래프 편집 창) -------------------------------------
 
@@ -1833,55 +1981,42 @@ class MainWindow(QMainWindow):
                      'FRAP 측정 탭에서 시간축이 있는 이미지를 먼저 측정하세요.'),
         }
 
-    def _graph_action(self, menu, key):
-        title = self.graph_sources()[key][0]
-        self._act(menu, f'그래프 편집 창 ({title})…', lambda: self.open_graph(key),
-                  tip='그래프를 새 창에서 열어 그래프 종류, x·y 열, 색·굵기·글꼴·축·범례·글자 상자를 고치고 '
-                      '그래프와 데이터를 내보냅니다.')
+    def graph_window(self):
+        """The one 그래프 편집 창 (created when first needed)."""
+        from .graph_window import GraphWindow
 
-    def _graph_buttons(self):
-        """A ‘그래프 편집 창…’ button under each tab's graph / result table."""
-        ip, cp = self.intensity_panel, self.coloc_panel
-        spots = [(self.profile_panel.plot, 'profile'), (self.frap_panel.plot, 'frap'),
-                 (self.roi_panel.bands.plot, 'bands'), (cp.plot, 'coloc'), (self.roi_panel.measure.table, 'roi'),
-                 (self.particle_panel.measure.table, 'particle'), (ip.measure.table, 'intensity')]
-        for w, key in spots:
-            lay = w.parentWidget().layout() if w.parentWidget() is not None else None
-            if lay is None:
-                continue
-            b = QPushButton('그래프 편집 창…')
-            b.setToolTip('이 그래프(결과 표)를 새 창에서 열어 모양을 고치고 그래프와 데이터를 내보냅니다.')
-            b.clicked.connect(lambda _=False, k=key: self.open_graph(k))
-            lay.insertWidget(lay.indexOf(w) + 1, b)
+        if self.graph_win is None:
+            self.graph_win = GraphWindow(self)
+        return self.graph_win
+
+    def graph_docs(self) -> list:
+        """Every graph of the graph window (for 파일 › 내보내기)."""
+        return list(self.graph_win.docs) if self.graph_win is not None else []
+
+    def _show_graphs(self, gw):
+        gw.show()
+        gw.raise_()
+        gw.activateWindow()
 
     def open_blank_graph(self, key=None, show=True):
-        """An empty graph window, filled from 데이터 › 다른 분석 결과 / CSV."""
-        from . import graph as G
-        from .graph_window import GraphWindow
-
-        if key is None:
-            n = 1
-            while f'free{n}' in self.graph_wins:
-                n += 1
-            key = f'free{n}'
-        title = f'새 그래프 {key[4:]}'
-        w = GraphWindow(self, key, title, lambda: None)
-        self.graph_wins[key] = w
-        w.set_data(G.GraphData(title, [], G.GraphSpec(title='')))
+        """A new empty graph, filled from a data chip / 데이터 › CSV."""
+        gw = self.graph_window()
+        gw.new_doc(key)
         if show:
-            w.show()
-            w.raise_()
-        return w
+            self._show_graphs(gw)
+        return gw
 
     def open_graph(self, key):
-        from .graph_window import GraphWindow
-
+        """The graph of a tool (graph_sources key) in the graph window: an
+        existing graph of that key is brought up to date, else one is added."""
+        gw = self.graph_window()
+        doc = gw.doc_for(key)
         if key.startswith('free'):
-            w = self.graph_wins.get(key)
-            if w is not None:
-                w.show()
-                w.raise_()
-            return w
+            if doc is None:
+                return None
+            gw.show_doc(doc)
+            self._show_graphs(gw)
+            return gw
         title, tab, fn, hint = self.graph_sources()[key]
         try:
             data = fn()
@@ -1892,44 +2027,44 @@ class MainWindow(QMainWindow):
         if data is None:
             QMessageBox.information(self, '그래프 편집 창', hint)
             return None
-        w = self.graph_wins.get(key)
-        if w is None:
-            w = GraphWindow(self, key, title, fn)
-            self.graph_wins[key] = w
-            w.set_data(data)
+        if doc is None:
+            doc = gw.add_doc(key, title, fn, source=key)
+            gw.show_doc(doc)
+            gw.set_data(data)
             saved = self.graph_specs.pop(key, None)
             if saved:
-                w.use_spec(saved)
+                gw.use_spec(saved)
         else:
-            w.set_data(data, keep_spec=True)
-        w.show()
-        w.raise_()
-        w.activateWindow()
+            gw.show_doc(doc)
+            gw.set_data(data, keep_spec=True)
+        gw.refresh_chips()
+        self._show_graphs(gw)
         self.statusBar().showMessage(f'그래프 편집 창: {data.title}', 5000)
-        return w
+        return gw
 
     def open_graph_current(self):
         srcs = self.graph_sources()
         for key, (_, tab, _, _) in srcs.items():
             if self.tab_current(tab):
                 return self.open_graph(key)
-        QMessageBox.information(self, '그래프 편집 창', '그래프가 있는 탭(세포질 ROI, 입자 ROI, 강도 측정, '
-                                'Coloc 2, 라인 프로파일, FRAP 측정)을 오른쪽에 여세요.')
-        return None
+        gw = self.graph_window()
+        if not gw.docs:
+            gw.new_doc()
+        self._show_graphs(gw)
+        return gw
 
     def _fill_graph_menu(self):
+        """The tools' graphs between the fixed items of the 그래프 menu."""
         m = self.graph_menu
-        m.clear()
+        for a in self._graph_dyn:
+            m.removeAction(a)
+        self._graph_dyn = []
+        open_ = {d.key for d in self.graph_docs()}
         for key, (title, *_rest) in self.graph_sources().items():
-            w = self.graph_wins.get(key)
-            mark = ' (열림)' if w is not None and w.isVisible() else ''
-            m.addAction(f'{title}{mark}', lambda k=key: self.open_graph(k))
-        m.addSeparator()
-        m.addAction('새 그래프 (빈 창, 아무 분석 결과나 CSV를 가져와 그리기)…', self.open_blank_graph)
-
-    def _measure_menu(self, menu, box):
-        self._act(menu, '측정 CSV 저장 (현재 이미지)…', box.save_current)
-        self._act(menu, '모든 이미지 측정 + 저장 (폴더)…', box.save_all, tip=box.save_tip)
+            a = QAction(f'{title}{" (열림)" if key in open_ else ""}', m)
+            a.triggered.connect(lambda _=False, k=key: self.open_graph(k))
+            m.insertAction(self._graph_end, a)
+            self._graph_dyn.append(a)
 
     def _fill_recent(self):
         self.recent_menu.clear()
@@ -2082,21 +2217,10 @@ class MainWindow(QMainWindow):
         if not self._maybe_save():
             event.ignore()
             return
-        for w in (self.figure_win, self.log_win, *self.graph_wins.values()):
+        for w in (self.figure_win, self.log_win, self.graph_win):
             if w is not None:
                 w.close()
         super().closeEvent(event)
-
-    def save_log_csv(self):
-        if not self.worklog.entries:
-            QMessageBox.information(self, '작업 기록', '아직 기록이 없습니다.')
-            return
-        base = self.project_path.with_name(f'{self.project_path.stem}_log.csv') \
-            if self.project_path else Path('work_log.csv')
-        path, _ = QFileDialog.getSaveFileName(self, '작업 기록 저장', str(base), 'CSV (*.csv)')
-        if path:
-            n = self.worklog.write_csv(path)
-            self.statusBar().showMessage(f'작업 기록 {n}줄 저장: {path}', 8000)
 
     # ---- loading (파일 → 불러오기) -----------------------------------------------
 
@@ -2214,98 +2338,13 @@ class MainWindow(QMainWindow):
 
     # ---- export dialogs --------------------------------------------------------
 
-    def _options_dialog(self, title, widgets, ok_text='저장…') -> bool:
-        """Show option widgets (kept for the next time) in a dialog."""
-        from PySide6.QtWidgets import QDialog, QDialogButtonBox
+    def export_dialog(self, kind=None):
+        """파일 › 내보내기… (owner request 2026-11-05): every export in one window."""
+        from .export_dialog import ExportDialog
 
-        dlg = QDialog(self)
-        dlg.setWindowTitle(title)
-        lay = QVBoxLayout(dlg)
-        for w in widgets:
-            lay.addWidget(w)
-            w.show()
-        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
-                               | QDialogButtonBox.StandardButton.Cancel)
-        box.button(QDialogButtonBox.StandardButton.Ok).setText(ok_text)
-        box.accepted.connect(dlg.accept)
-        box.rejected.connect(dlg.reject)
-        lay.addWidget(box)
-        ok = dlg.exec() == QDialog.DialogCode.Accepted
-        for w in widgets:
-            w.hide()
-            w.setParent(None)
+        dlg = ExportDialog(self, kind)
+        dlg.exec()
         dlg.deleteLater()
-        return ok
-
-    def export_images_dialog(self):
-        if not self.items:
-            QMessageBox.information(self, '내보내기', '먼저 이미지를 불러오세요.')
-            return
-        from PySide6.QtWidgets import QButtonGroup, QRadioButton
-
-        scope = QGroupBox('저장할 이미지')
-        sl = QHBoxLayout(scope)
-        cur = QRadioButton('현재 이미지만')
-        every = QRadioButton(f'모든 이미지 ({len(self.items)}개)')
-        every.setChecked(True)
-        grp = QButtonGroup(scope)
-        grp.addButton(cur)
-        grp.addButton(every)
-        sl.addWidget(cur)
-        sl.addWidget(every)
-        per = QCheckBox('이미지별 폴더에 나눠 저장')
-        per.setChecked(self.opt_per_image.isChecked())
-        per.setToolTip(self.opt_per_image.toolTip())
-        if not self._options_dialog('이미지 내보내기', [scope, self.exp_box, per]):
-            return
-        self.opt_per_image.setChecked(per.isChecked())
-        if cur.isChecked():
-            self.export_current()
-        else:
-            self.export_all()
-
-    def stack_export_dialog(self, kind):
-        if self.current is None:
-            QMessageBox.information(self, '스택 투영', '먼저 이미지를 고르세요.')
-            return
-        if kind == 'rotation' and not self.stack_panel.mode_3d.isChecked():
-            QMessageBox.information(self, '3D 회전 시리즈',
-                                    '스택 탭에서 3D projection을 켠 뒤 저장하세요 (스택 → 스택 탭 열기).')
-            self.show_tab('stack_tab')
-            return
-        box = self.stack_panel.save_box
-        if self._options_dialog('스택 투영 저장', [box]):
-            self.save_projection(kind)
-
-    # ---- crop ROI files -----------------------------------------------------
-
-    def save_crops_current(self):
-        it = self.current
-        if it is None or not it.crops:
-            QMessageBox.information(self, 'Crop 영역 ROI', '저장할 Crop 영역이 없습니다.')
-            return
-        default = str(it.path.with_name(f'{item_stem(it)}_crops.zip'))
-        path, _ = QFileDialog.getSaveFileName(self, 'Crop 영역 ROI 저장', default,
-                                              'ImageJ RoiSet (*.zip)')
-        if path:
-            f = save_crop_rois(path, it.crops, it.id_properties())
-            self.statusBar().showMessage(f'Crop 영역 {len(it.crops)}개 저장: {f}')
-
-    def save_crops_all(self):
-        items = [it for it in self.items if it.crops]
-        if not items:
-            QMessageBox.information(self, 'Crop 영역 ROI', '저장할 Crop 영역이 없습니다.')
-            return
-        out = QFileDialog.getExistingDirectory(self, 'Crop 영역 ROI를 저장할 폴더')
-        if not out:
-            return
-        per = self.opt_per_image.isChecked()
-        stems = unique_stems(items)
-        for it in items:
-            folder = Path(out) / item_folder(it) if per else Path(out)
-            stem = item_stem(it) if per else stems[id(it)]
-            save_crop_rois(folder / f'{stem}_crops.zip', it.crops, it.id_properties())
-        self.statusBar().showMessage(f'이미지 {len(items)}개의 Crop 영역 ROI 저장: {out}')
 
     # ---- project files --------------------------------------------------------
 
@@ -2397,9 +2436,14 @@ class MainWindow(QMainWindow):
                                    ('particle', self.particle_panel.measure),
                                    ('intensity', self.intensity_panel.measure))}
             if self.figure_win is not None:
-                data['figure'] = figure_dict(self.figure_win.spec, self.items, files)
-                data['figure_widgets'] = widget_state(self.figure_win)
-            data['graphs'] = dict(self.graph_specs) | {k: w.state() for k, w in self.graph_wins.items()}
+                fw = self.figure_win
+                data['figure'] = figure_dict(fw.spec, self.items, files)  # older versions
+                data['figures'] = [{'name': name, 'figure': figure_dict(
+                    spec, self.items, files, f'figures/{k}')}
+                    for k, (name, spec) in enumerate(fw.figures)]
+                data['figure_current'] = fw.current_figure()
+                data['figure_widgets'] = widget_state(fw)
+            data['graphs'] = dict(self.graph_specs) | (self.graph_win.states() if self.graph_win else {})
             data['log'] = self.worklog.entries
             data['batch'] = self.batch.to_dict()
             write_project(path, data, files)
@@ -2420,10 +2464,10 @@ class MainWindow(QMainWindow):
             self.figure_win.close()
             self.figure_win.deleteLater()
             self.figure_win = None
-        for w in self.graph_wins.values():
-            w.close()
-            w.deleteLater()
-        self.graph_wins = {}
+        if self.graph_win is not None:
+            self.graph_win.close()
+            self.graph_win.deleteLater()
+            self.graph_win = None
         self.graph_specs = {}
         if self.items:
             self.file_list.selectAll()
@@ -2463,12 +2507,20 @@ class MainWindow(QMainWindow):
         # graph editor settings: used when that graph window opens (open ones take them as style)
         graphs = data.get('graphs') or {}
         if isinstance(graphs, dict):
+            docs = {d.key: d for d in self.graph_docs()}
             for key, spec in graphs.items():
-                if key.startswith('free') and key not in self.graph_wins and isinstance(spec, dict):
-                    self.open_blank_graph(key, show=False).use_spec(spec)
-                elif key in self.graph_wins:
-                    self.graph_wins[key].use_spec(spec)
-                elif isinstance(spec, dict):
+                if not isinstance(spec, dict):
+                    continue
+                if key.startswith('free') and key not in docs:
+                    gw = self.open_blank_graph(key, show=False)
+                    gw.use_spec(spec)
+                    if spec.get('_title'):
+                        gw.doc.title = str(spec['_title'])
+                        gw._doc_item(gw.doc).setText(0, gw.doc.title)
+                elif key in docs:
+                    self.graph_win.show_doc(docs[key])
+                    self.graph_win.use_spec(spec)
+                else:
                     self.graph_specs[key] = spec
 
     def open_project_dialog(self, path) -> bool:
@@ -2587,7 +2639,7 @@ class MainWindow(QMainWindow):
             self.right_tabs.setCurrentWidget(self.tab_pages[tab][0])
         elif isinstance(tab, int) and 0 <= tab < self.right_tabs.count():
             self.right_tabs.setCurrentIndex(tab)
-        if data.get('figure') and self.items:
+        if (data.get('figure') or data.get('figures')) and self.items:
             self._restore_figure(data, loaded, files)
         for box in self._measure_boxes():
             box._fill_table()
@@ -2611,7 +2663,11 @@ class MainWindow(QMainWindow):
         luts = e.get('luts') or []
         if len(luts) == len(it.channels):
             it.luts = [ChannelLUT.from_dict(d) for d in luts]
-        it.crops = [c for c in (it.clip_region(*r) for r in e.get('crops', [])) if c]
+        it.crops, it.crop_polys = [], []
+        polys = e.get('crop_polys') or []
+        for k, r in enumerate(e.get('crops', [])):
+            if it.add_crop(*r) is not None and k < len(polys) and polys[k]:
+                it.set_crop_poly(len(it.crops) - 1, polys[k])
         it.group = e.get('group', '')
         line = e.get('profile_line')
         it.profile_line = tuple(line) if line else None
@@ -2636,15 +2692,23 @@ class MainWindow(QMainWindow):
         restore_item_files(it, e.get('files') or {}, files, tmp, notes)
 
     def _restore_figure(self, data, loaded, files):
+        from .figure import FigureSpec
         from .figure_window import FigureWindow
         from .project import figure_from, restore_widgets
 
         try:
-            self.figure_win = FigureWindow(self)
-            restore_widgets(self.figure_win, data.get('figure_widgets') or {})
-            figure_from(self.figure_win.spec, data['figure'], loaded, files.__getitem__)
-            self.figure_win.refresh_sources()
-            self.figure_win.rebuild_table()
+            fw = self.figure_win = FigureWindow(self)
+            restore_widgets(fw, data.get('figure_widgets') or {})
+            figs = data.get('figures') or [{'name': 'Figure 1', 'figure': data['figure']}]
+            fw.figures, fw.spec = [], None
+            fw.fig_list.clear()
+            for f in figs:
+                spec = FigureSpec()
+                figure_from(spec, f['figure'], loaded, files.__getitem__)
+                fw.add_figure(f.get('name') or f'Figure {len(fw.figures) + 1}', spec)
+            fw.spec = fw.figures[0][1]
+            fw.refresh_sources()
+            fw.show_figure(min(int(data.get('figure_current') or 0), len(fw.figures) - 1))
         except Exception:
             traceback.print_exc()
 
@@ -2697,9 +2761,12 @@ class MainWindow(QMainWindow):
             link()
             return 0
         if is_crop_file(f):  # crop regions saved with the exports
-            crops = [c for c in (it.clip_region(*r) for r in load_crop_rois(f)) if c]
-            if crops and (replace or not it.crops):
-                it.crops = crops
+            rects, polys = load_crop_rois(f), load_crop_polys(f)
+            if rects and (replace or not it.crops):
+                it.crops, it.crop_polys = [], []
+                for r, q in zip(rects, polys):
+                    if it.add_crop(*r) is not None and q:
+                        it.set_crop_poly(len(it.crops) - 1, q)
             link()
             return 0
         if is_region_file(f) or is_contour_file(f):
@@ -2963,7 +3030,13 @@ class MainWindow(QMainWindow):
 
         if item is not None and item.data(0, CROP) is not None:  # a crop row
             m.addAction(self.show_crop_act)
+            m.addAction('이 ROI 복사', self.copy_crop)
+            a = m.addAction('복사한 ROI 붙여넣기', self.paste_crop)
+            a.setEnabled(self._crop_clip is not None)
             m.addAction('같은 크기 이미지에 Crop 복사', self.crop_to_all)
+            m.addSeparator()
+            m.addAction('수정 (크기 조절)', lambda: (self.crop_btn.setChecked(True), self.edit_crop('resize')))
+            m.addAction('점 편집', lambda: (self.crop_btn.setChecked(True), self.edit_crop('points')))
             m.addSeparator()
             act = m.addAction('Crop 삭제…', lambda: self._confirm(
                 'Crop 삭제', f'Crop {(self._crop_sel or 0) + 1}을 삭제할까요?', '삭제', self.delete_crop))
@@ -3026,7 +3099,8 @@ class MainWindow(QMainWindow):
             self.frap_panel.forget(removed)
             removed.image.release()
             if self.figure_win is not None:
-                self.figure_win.spec.forget_item(removed)
+                for _name, spec in self.figure_win.figures:
+                    spec.forget_item(removed)
         self.file_list.clearSelection()
         self.file_list.rebuild(self.items)
         self.file_list.blockSignals(False)
@@ -3465,10 +3539,13 @@ class MainWindow(QMainWindow):
             view.refresh_3d()
         self.update_preview()
 
-    def save_projection(self, kind):
+    def save_projection(self, kind, stem=None, ask=True, movie=False):
+        """Write the current projection (kind 'rotation': the 3D rotation
+        series); stem given (파일 › 내보내기): no file dialog, files
+        <stem>_<projection>.tif / .mp4. Returns the files written."""
         it = self.current
         if it is None:
-            return
+            return []
         view = self._stack_view(it)
         self.stack_panel.read(region=it.crops[self._selected_crop()]
                               if self._selected_crop() is not None else None)
@@ -3477,14 +3554,17 @@ class MainWindow(QMainWindow):
                else f'3d_{st.method_3d}_{st.axis}{st.angle:.0f}')
         if kind == 'rotation':
             tag = f'3d_{st.method_3d}_{st.axis}rotation'
-        default = str(it.path.with_name(f'{item_stem(it)}_{tag}.tif'))
-        path, flt = QFileDialog.getSaveFileName(self, '투영 저장', default,
-                                                'TIFF (*.tif);;MP4 동영상 (*.mp4)')
-        if not path:
-            return
-        movie = path.lower().endswith('.mp4') or ('mp4' in flt.lower()
-                                                  and not path.lower().endswith('.tif'))
-        stem = path[:-4] if path.lower().endswith(('.tif', '.mp4')) else path
+        if stem is None:
+            default = str(it.path.with_name(f'{item_stem(it)}_{tag}.tif'))
+            path, flt = QFileDialog.getSaveFileName(self, '투영 저장', default,
+                                                    'TIFF (*.tif);;MP4 동영상 (*.mp4)')
+            if not path:
+                return []
+            movie = path.lower().endswith('.mp4') or ('mp4' in flt.lower()
+                                                      and not path.lower().endswith('.tif'))
+            stem = path[:-4] if path.lower().endswith(('.tif', '.mp4')) else path
+        else:
+            stem = f'{stem}_{tag}'
         fps = self.stack_panel.fps.value() if movie else None
         full = self.stack_panel.save_full.isChecked()
         if kind == 'rotation':
@@ -3515,13 +3595,17 @@ class MainWindow(QMainWindow):
                                           movie_fps=fps)
         except Exception as exc:
             traceback.print_exc()
+            if not ask:
+                raise
             QMessageBox.warning(self, '저장 실패', str(exc))
-            return
+            return []
         finally:
             QApplication.restoreOverrideCursor()
             prog.setValue(n)
-        QMessageBox.information(self, '저장 완료', '\n'.join(files) or '저장한 파일이 없습니다.')
+        if ask:
+            QMessageBox.information(self, '저장 완료', '\n'.join(files) or '저장한 파일이 없습니다.')
         self.update_preview()
+        return files
 
     # ---- preview --------------------------------------------------------
 
@@ -3555,7 +3639,12 @@ class MainWindow(QMainWindow):
         if refit and not only:
             self.canvas.fit()
         # crop regions only while the Crop icon is on (owner request 2026-11-04)
-        self.canvas.show_crops(it.crops if self.crop_btn.isChecked() and not only else [], sel)
+        on = self.crop_btn.isChecked() and not only
+        self.canvas.crop_menu_enabled = on
+        if not on:
+            self._crop_edit = None
+        self.canvas.show_crops(it.crops if on else [], sel, polys_of(it) if on else None,
+                               self._crop_edit if sel is not None else None)
         self.roi_panel.draw_overlay(hidden=only)
         self._draw_profile_line()
         self.draw_frap()
@@ -3653,6 +3742,88 @@ class MainWindow(QMainWindow):
             self._refresh_crop_list(select=k, current=True)
             self.update_preview(refit=self.show_crop_btn.isChecked())
 
+    # ---- crop right-click menu (owner request 2026-11-05) ----
+
+    def _crop_menu(self, k, gpos):
+        it = self.current
+        if it is None:
+            return
+        if k >= 0 and k != self._crop_sel:
+            self._refresh_crop_list(select=k, current=True)
+            self.update_preview()
+        m = QMenu(self)
+        if k >= 0:
+            a = m.addAction('이 ROI 복사', self.copy_crop)
+            a.setShortcut(QKeySequence(QKeySequence.StandardKey.Copy))
+        a = m.addAction('복사한 ROI 붙여넣기', self.paste_crop)
+        a.setShortcut(QKeySequence(QKeySequence.StandardKey.Paste))
+        a.setEnabled(self._crop_clip is not None)
+        if k >= 0:
+            m.addSeparator()
+            a = m.addAction('수정 (크기 조절)', lambda: self.edit_crop('resize'))
+            a.setCheckable(True)
+            a.setChecked(self._crop_edit == 'resize')
+            a = m.addAction('점 편집', lambda: self.edit_crop('points'))
+            a.setCheckable(True)
+            a.setChecked(self._crop_edit == 'points')
+            m.addSeparator()
+            m.addAction('삭제…', lambda: self._confirm('Crop 삭제', f'Crop {k + 1}을 삭제할까요?', '삭제',
+                                                     self.delete_crop))
+        m.exec(gpos)
+
+    def copy_crop(self):
+        k = self._selected_crop()
+        if k is None:
+            return
+        self._crop_clip = self.current.crop_shape(k)
+        self.statusBar().showMessage(f'Crop {k + 1} ROI 복사', 3000)
+
+    def paste_crop(self):
+        it = self.current
+        if it is None or self._crop_clip is None:
+            return
+        pts = self._crop_clip
+        rect = len(pts) == 4 and pts[0][1] == pts[1][1] and pts[1][0] == pts[2][0] \
+            and pts[2][1] == pts[3][1] and pts[3][0] == pts[0][0]
+        region = it.add_crop(*bbox(pts)) if rect else it.add_crop_poly(pts)
+        if region is None:
+            self.statusBar().showMessage('붙여넣을 수 없습니다: 영역이 이미지 밖에 있습니다.', 4000)
+            return
+        if not self.crop_btn.isChecked():
+            self.crop_btn.setChecked(True)
+        self._refresh_crop_list(current=True)
+        self.statusBar().showMessage(f'Crop {len(it.crops)} 붙여넣기')
+        self.update_preview()
+
+    def edit_crop(self, mode):
+        """'resize' (수정: 8 handles), 'points' (점 편집) or None (done)."""
+        self._crop_edit = mode if self._selected_crop() is not None else None
+        if mode == 'points':
+            self.statusBar().showMessage('점 편집: 점을 끌어 옮기고, 선 위를 클릭해 점을 넣고, '
+                                         'Option(Alt)+클릭으로 점을 지웁니다. Esc로 마칩니다.', 8000)
+        elif mode == 'resize':
+            self.statusBar().showMessage('수정: 모서리와 변의 손잡이를 끌어 크기를 바꿉니다. Esc로 마칩니다.', 6000)
+        self.canvas.setFocus()
+        self.update_preview()
+
+    def _crop_resized(self, k, x0, y0, x1, y1):
+        it = self.current
+        if it is None or k >= len(it.crops):
+            return
+        x0, y0, x1, y1 = it.resize_crop(k, (x0, y0, x1, y1))
+        self._refresh_crop_list(select=k, current=True)
+        self.statusBar().showMessage(f'Crop {k + 1} 크기: {x1 - x0} × {y1 - y0} px')
+        self.update_preview()
+
+    def _crop_points(self, k, pts):
+        it = self.current
+        if it is None or k >= len(it.crops):
+            return
+        it.set_crop_poly(k, pts)
+        self._refresh_crop_list(select=k, current=True)
+        self.statusBar().showMessage(f'Crop {k + 1} 점 편집: 점 {len(polys_of(it)[k])}개')
+        self.update_preview()
+
     def _crop_row_picked(self, row, k):
         """A crop row in the sidebar: its image (already current) and the crop."""
         if self.current is not self.items[row]:
@@ -3675,13 +3846,14 @@ class MainWindow(QMainWindow):
         sel = self._selected_crop()
         if sel is None:
             return
-        self.current.crops.pop(sel)
+        self.current.remove_crop(sel)
         self._refresh_crop_list(select=min(sel, len(self.current.crops) - 1))
         self.update_preview(refit=True)
 
     def clear_crops(self):
         if self.current is not None:
             self.current.crops.clear()
+            self.current.crop_polys = []
             self._refresh_crop_list()
             self.update_preview(refit=True)
 
@@ -3694,6 +3866,7 @@ class MainWindow(QMainWindow):
         for other in self.items:
             if other is not it and other.image.shape[-2:] == shape:
                 other.crops = list(it.crops)
+                other.crop_polys = [None if q is None else list(q) for q in polys_of(it)]
                 n += 1
         self.file_list.rebuild(self.items)
         self.statusBar().showMessage(f'Crop 영역 {len(it.crops)}개를 이미지 {n}개에 복사했습니다.')
@@ -3746,13 +3919,6 @@ class MainWindow(QMainWindow):
 
     # ---- export ---------------------------------------------------------
 
-    def export_current(self):
-        if self.current is not None:
-            self._export([self.current])
-
-    def export_all(self):
-        self._export(self.items)
-
     def _export_kwargs(self):
         return dict(
             full=self.exp_full.isChecked(),
@@ -3767,41 +3933,6 @@ class MainWindow(QMainWindow):
             fps=self.exp_fps.value(),
             outline=self.markers.outline_style(export=True),
         )
-
-    def _export(self, items):
-        if not items:
-            return
-        out = QFileDialog.getExistingDirectory(self, '저장할 폴더 선택')
-        if not out:
-            return
-        kwargs = self._export_kwargs()
-        per_image = self.opt_per_image.isChecked()
-        stems = unique_stems(items)
-        prog = QProgressDialog('저장 중…', '취소', 0, len(items), self)
-        prog.setWindowModality(Qt.WindowModality.WindowModal)
-        files, errors = [], []
-        for i, it in enumerate(items):
-            if prog.wasCanceled():
-                break
-            prog.setLabelText(f'저장 중: {it.label}')
-            prog.setValue(i)
-            QApplication.processEvents()
-            try:
-                if per_image:
-                    files += export_item(it, Path(out) / item_folder(it), **kwargs)
-                else:
-                    files += export_item(it, Path(out), stem=stems[id(it)], **kwargs)
-            except Exception as exc:
-                errors.append(f'{it.label}: {exc}')
-                traceback.print_exc()
-            it.image.release()
-        prog.setValue(len(items))
-        write_groups(Path(out) / GROUP_FILE, items)
-        self.statusBar().showMessage(f'이미지 내보내기: 이미지 {len(items)}개, 파일 {len(files)}개 → {out}')
-        msg = f'파일 {len(files)}개를 저장했습니다.\n{out}'
-        if errors:
-            msg += '\n\n실패:\n' + '\n'.join(errors)
-        QMessageBox.information(self, '저장 완료', msg)
 
     # ---- 일괄 분석 ----------------------------------------------------------------
 
@@ -3901,94 +4032,6 @@ class MainWindow(QMainWindow):
     def _measure_boxes(self):
         return [self.roi_panel.measure, self.particle_panel.measure, self.intensity_panel.measure,
                 self.roi_panel.bands.bands_measure]
-
-    def export_everything(self):
-        """Save every image's TIFFs, ROIs and measurements into its own folder."""
-        items = self.items
-        if not items:
-            return
-        out = QFileDialog.getExistingDirectory(self, '저장할 폴더 선택')
-        if not out:
-            return
-        kwargs = self._export_kwargs()
-        prog = QProgressDialog('저장 중…', '취소', 0, len(items), self)
-        prog.setWindowModality(Qt.WindowModality.WindowModal)
-        n_done, n_files, rows, errors, coloc, intensity = 0, 0, [], [], [], {}
-        frap_curves = {}  # group -> FRAP curves of the images measured in the FRAP tab
-        for i, it in enumerate(items):
-            if prog.wasCanceled():
-                break
-            prog.setLabelText(f'저장 중: {it.label}')
-            prog.setValue(i)
-            QApplication.processEvents()
-            folder = Path(out) / item_folder(it)
-            try:
-                n_files += len(export_item(it, folder, **kwargs))
-                has_cells = it.cells is not None and len(it.cells)
-                if has_cells:
-                    item_rows = self.roi_panel.save_item(it, folder)
-                    write_csv(folder / f'{item_stem(it)}_cell_rois.csv', item_rows)
-                    rows += item_rows
-                for box in self._measure_boxes():
-                    if box.has_rois(it):  # particles may cover the whole image
-                        item_int = box.measure_item(it)
-                        box.save_item(it, folder, item_int, companions=False)
-                        intensity.setdefault(box.suffix, []).extend(item_int)
-                pcells = self.particle_panel.cells_for(it)
-                p = self.particle_panel.particles_for(it) if pcells is not None and len(pcells) else None
-                if p is not None and p.mask.any():
-                    self.particle_panel.save_particle_files(
-                        it, folder / f'{item_stem(it)}_particles.zip', pcells, p)
-                if has_cells:
-                    self.intensity_panel._region_file(it, folder / item_stem(it))
-                write_csv_rows(folder / f'{item_stem(it)}_info.csv', summarize(it).rows_csv())
-                if it.coloc:
-                    write_coloc_csv(folder / f'{item_stem(it)}_coloc2.csv', it.coloc)
-                    coloc += it.coloc
-                if it.frap is not None and it.nt > 1:
-                    curve = self.frap_panel.curve_for(it, progress=False)
-                    if curve is not None:
-                        frap.write_curve_csv(folder / f'{item_stem(it)}_frap.csv', curve)
-                        frap.save_rois(folder / f'{item_stem(it)}_frap_rois.zip', it.frap.rois,
-                                       it.id_properties())
-                        frap_curves.setdefault(curve.group, []).append(curve)
-                    if it is not self.current:
-                        self.frap_panel.forget(it)
-                n_done += 1
-            except Exception as exc:
-                errors.append(f'{it.label}: {exc}')
-                traceback.print_exc()
-            it.image.release()
-        prog.setValue(len(items))
-        write_csv(Path(out) / 'cell_rois.csv', rows)
-        write_coloc_csv(Path(out) / 'coloc2.csv', coloc)
-        boxes = {box.suffix: box for box in self._measure_boxes()}
-        for suffix, int_rows in intensity.items():
-            write_rows(Path(out) / f'{suffix}.csv', int_rows)
-            boxes[suffix].write_summaries(out, int_rows)
-        write_groups(Path(out) / GROUP_FILE, items)
-        if frap_curves:
-            gs = [frap.group_curve(g, c) for g, c in frap_curves.items()]
-            frap.write_summary_csv(Path(out) / 'frap_summary.csv',
-                                   [c for g in gs for c in g.members], gs)
-            frap.write_group_curves_csv(Path(out) / 'frap_group_curves.csv', gs,
-                                        self.frap_panel.error.currentData())
-            self.frap_panel.write_formulas(Path(out) / 'frap_formulas.txt', [c for g in gs for c in g.members])
-            self.frap_panel.write_plot(Path(out) / 'frap_groups.png', groups=gs)
-            frap.save_summary_figure(Path(out) / 'frap_summary.png', gs,
-                                     self.frap_panel.error.currentData())
-        try:
-            self.write_project_to(Path(out) / 'project.cyproj')
-        except Exception as exc:
-            traceback.print_exc()
-            errors.append(f'project.cyproj: {exc}')
-        self.statusBar().showMessage(f'모든 분석 결과 통합 저장: 이미지 {n_done}개 → {out}')
-        msg = f'이미지 {n_done}개를 이미지별 폴더에 저장했습니다 (파일 {n_files}개'
-        msg += f', ROI 측정 {len(rows)}행).' if rows else ').'
-        msg += f'\n{out}'
-        if errors:
-            msg += '\n\n실패:\n' + '\n'.join(errors)
-        QMessageBox.information(self, '저장 완료', msg)
 
 
 def main(argv=None):

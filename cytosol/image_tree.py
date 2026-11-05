@@ -108,7 +108,7 @@ class WrapDelegate(QStyledItemDelegate):
                              Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, line)
             y += fm.lineSpacing()
         removable = index.data(ROW) is not None or index.data(CROP) is not None
-        if removable and (selected or option.state & QStyle.StateFlag.State_MouseOver):
+        if removable and hasattr(view, 'trash_rect') and (selected or option.state & QStyle.StateFlag.State_MouseOver):
             from . import hig_widgets  # noqa: PLC0415
 
             token = 'on-accent' if active else 'label-secondary'

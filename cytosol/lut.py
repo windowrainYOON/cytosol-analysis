@@ -74,6 +74,7 @@ class ImageItem:
     # crop regions as (x0, y0, x1, y1) in pixels, exclusive end; each one is
     # exported as its own image
     crops: list[tuple[int, int, int, int]] = field(default_factory=list)
+    crop_polys: list = field(default_factory=list)  # per crop: [(x, y), …] of 점 편집, or None
     # cell ROIs (cytosol.cellroi.CellRois) and the channel roles used for them:
     # {'nuc': channel index or None, 'bg': channel index}
     cells: object = None
@@ -283,17 +284,82 @@ class ImageItem:
         """Add a crop region; returns it, or None if too small."""
         region = self.clip_region(x0, y0, x1, y1)
         if region is not None:
+            from .crops import polys_of
+
+            polys = polys_of(self)
             self.crops.append(region)
+            self.crop_polys = polys + [None]
+        return region
+
+    def add_crop_poly(self, points):
+        """Add a crop with a polygon outline (pasted from another image)."""
+        from .crops import bbox
+
+        region = self.add_crop(*bbox(points))
+        if region is not None:
+            self.set_crop_poly(len(self.crops) - 1, points)
         return region
 
     def move_crop(self, index, dx, dy):
         """Shift crop ``index`` by (dx, dy) pixels, same size, kept inside the image."""
+        from .crops import polys_of
+
         x0, y0, x1, y1 = self.crops[index]
         h, w = self.image.shape[-2:]
         dx = int(np.clip(round(dx), -x0, w - x1))
         dy = int(np.clip(round(dy), -y0, h - y1))
         self.crops[index] = (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
+        polys = polys_of(self)
+        if polys[index] is not None:
+            polys[index] = [(x + dx, y + dy) for x, y in polys[index]]
         return self.crops[index]
+
+    def resize_crop(self, index, rect):
+        """New rectangle for crop ``index`` (수정); its polygon is scaled along."""
+        from .crops import polys_of
+
+        new = self.clip_region(*rect)
+        if new is None:
+            return self.crops[index]
+        old = self.crops[index]
+        polys = polys_of(self)
+        if polys[index] is not None:
+            sx = (new[2] - new[0]) / max(old[2] - old[0], 1)
+            sy = (new[3] - new[1]) / max(old[3] - old[1], 1)
+            polys[index] = [(new[0] + (x - old[0]) * sx, new[1] + (y - old[1]) * sy)
+                            for x, y in polys[index]]
+        self.crops[index] = new
+        return new
+
+    def set_crop_poly(self, index, points):
+        """Outline of crop ``index`` (점 편집); its rectangle becomes the bounding box."""
+        from .crops import bbox, polys_of
+
+        h, w = self.image.shape[-2:]
+        pts = [(float(np.clip(x, 0, w)), float(np.clip(y, 0, h))) for x, y in points]
+        if len(pts) < 3:
+            return self.crops[index]
+        polys = polys_of(self)
+        region = self.clip_region(*bbox(pts))
+        if region is None:
+            return self.crops[index]
+        polys[index] = pts
+        self.crops[index] = region
+        return region
+
+    def remove_crop(self, index):
+        from .crops import polys_of
+
+        polys = polys_of(self)
+        self.crops.pop(index)
+        polys.pop(index)
+
+    def crop_shape(self, index):
+        """Polygon points of crop ``index`` (its rectangle's corners when plain)."""
+        from .crops import polys_of, rect_points
+
+        p = polys_of(self)[index]
+        return list(p) if p is not None else rect_points(self.crops[index])
 
 
 def match_channel(item: ImageItem, name: str, index: int, like: ImageItem | None = None):
@@ -419,6 +485,8 @@ def export_item(
     fps: float = 10.0,
     outline: OutlineStyle | None = None,
     bleach_file: bool = True,
+    crop_list: list | None = None,
+    crop_rois: bool = True,
 ) -> list[str]:
     """Write TIFFs for one image; returns the written paths.
 
@@ -442,6 +510,8 @@ def export_item(
     outline: how the file's bleach regions are burned into the RGB outputs
     (None or disabled: not drawn). bleach_file: also write the bleach
     regions as ImageJ ROIs, <name>_bleach_rois.zip.
+    crop_list: [(number, region)] of the crops to write (default every crop
+    of the image); crop_rois: also write <name>_crops.zip.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -452,16 +522,25 @@ def export_item(
     if full:
         regions.append(('full', None))
     if crops:
-        regions += [(f'crop{k}', r) for k, r in enumerate(item.crops, 1)]
+        chosen = list(enumerate(item.crops, 1)) if crop_list is None else crop_list
+        regions += [(f'crop{k}', r) for k, r in chosen]
     times = list(range(item.nt)) if all_times and item.nt > 1 else [item.t]
+    masks = {}  # crops with a polygon outline: the outside is written as 0
+    if crops:
+        from .crops import poly_mask, polys_of
+
+        polys = polys_of(item)
+        for k, r in chosen:
+            if 0 < k <= len(polys) and polys[k - 1] is not None:
+                masks[str(out_dir / f'{stem}_crop{k}')] = poly_mask(polys[k - 1], r)
     written = _export_regions(item, [(r, out_dir / f'{stem}_{tag}') for tag, r in regions],
                               composite, per_channel, raw_stack, scale, time, times,
-                              rgb_format, fps, outline)
-    if crops and item.crops:
-        from .crops import save_crop_rois
+                              rgb_format, fps, outline, masks)
+    if crops and crop_rois and item.crops:
+        from .crops import polys_of, save_crop_rois
 
         written.append(save_crop_rois(out_dir / f'{stem}_crops.zip', item.crops,
-                                      item.id_properties()))
+                                      item.id_properties(), polys_of(item)))
     if bleach_file and item.bleach_rois:
         from .imageinfo import save_bleach_rois
 
@@ -471,7 +550,8 @@ def export_item(
 
 
 def _export_regions(item, regions, composite, per_channel, raw_stack,
-                    scale, time, times, rgb_format='tif', fps=10.0, outline=None) -> list[str]:
+                    scale, time, times, rgb_format='tif', fps=10.0, outline=None,
+                    masks=None) -> list[str]:
     """Write every output of every region in one pass over the timepoints.
 
     Loading a timepoint (and, for TCF, aligning HT and FL) is the slow part,
@@ -493,40 +573,54 @@ def _export_regions(item, regions, composite, per_channel, raw_stack,
     # (path, region, channels or None) -> list of uint8 frames
     rgb_jobs = []
     raw_jobs = []  # (path, region, memmap)
+    masks = masks or {}
+
+    def masked(a, base):
+        # outside a polygon crop = 0 (a: ..., Y, X[, rgb])
+        m = masks.get(str(base))
+        if m is None:
+            return a
+        a = np.array(a, copy=True)
+        if a.ndim == 3 and a.shape[-1] in (3, 4) and a.shape[:2] == m.shape:
+            a[~m] = 0
+        elif a.shape[-2:] == m.shape:
+            a[..., ~m] = 0
+        return a
+
     for region, base in regions:
         if composite:
-            rgb_jobs.append((Path(f'{base}_composite.tif'), region, None, []))
+            rgb_jobs.append((Path(f'{base}_composite.tif'), region, None, [], base))
         if per_channel:
             for i, name in enumerate(item.channels):
-                rgb_jobs.append((Path(f'{base}_C{i}_{_safe(name)}.tif'), region, [i], []))
+                rgb_jobs.append((Path(f'{base}_C{i}_{_safe(name)}.tif'), region, [i], [], base))
     written = []
     start_t = item.t
     try:
         for k, t in enumerate(times):
             item.set_t(t)
-            for path, region, chans, frames in rgb_jobs:
-                rgb = item.decorate(item.composite(region, channels=chans), scale, time, t,
+            for path, region, chans, frames, base in rgb_jobs:
+                rgb = item.decorate(masked(item.composite(region, channels=chans), base), scale, time, t,
                                     outline, region)
                 frames.append((np.clip(rgb, 0, 1) * 255).astype(np.uint8))
             if raw_stack:
                 if k == 0:
                     raw_jobs = [(Path(f'{base}_raw.tif'), region,
                                  _open_raw(item, region, Path(f'{base}_raw.tif'), len(times) if series else 0,
-                                           res, meta_common, interval))
+                                           res, meta_common, interval), base)
                                 for region, base in regions]
-                for _, region, mm in raw_jobs:
-                    stack = item.region_stack(region)  # C, Z, Y, X
+                for _, region, mm, base in raw_jobs:
+                    stack = masked(item.region_stack(region), base)  # C, Z, Y, X
                     (mm[k] if series else mm)[:] = np.moveaxis(stack, 0, 1)
     finally:
         item.set_t(start_t)
-        for path, _, mm in raw_jobs:
+        for path, _, mm, _b in raw_jobs:
             mm.flush()
             del mm
-    raw_jobs = [(path, region) for path, region, _ in raw_jobs]
+    raw_jobs = [(path, region) for path, region, _, _b in raw_jobs]
 
     from .movie import wants_mp4, wants_tif, write_mp4
 
-    for path, region, chans, frames in rgb_jobs:
+    for path, region, chans, frames, _b in rgb_jobs:
         if series and wants_mp4(rgb_format):
             written.append(write_mp4(path.with_suffix('.mp4'), frames, fps))
             if not wants_tif(rgb_format):

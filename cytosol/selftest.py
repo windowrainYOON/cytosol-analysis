@@ -278,6 +278,11 @@ def run(out_dir) -> int:
             danger = [b for b in win.findChildren(QPushButton) if b.property('hig_destructive')]
             from PySide6.QtGui import QAction as _QA
             danger_acts = [a for a in win.findChildren(_QA) if a.property('hig_destructive')]
+            if win.items:  # the image list's context menu ends with the red remove
+                win.file_list.select_rows([0]) if hasattr(win.file_list, 'select_rows') else None
+                lm = win.list_menu(win.file_list.topLevelItem(0))
+                danger_acts += [a for a in lm.actions() if a.property('hig_destructive')]
+                lm.deleteLater()
             if not danger_acts or any(  # (no destructive push button left since the Crop tab went)
                     b.palette().color(QPalette.ColorRole.ButtonText).name() != red for b in danger):
                 raise AssertionError(f'destructive buttons: {[b.text() for b in danger]}')
@@ -1233,9 +1238,10 @@ def run(out_dir) -> int:
         # Tool next to 파일 holds one submenu per feature; the markers sit fixed in the LUT tab
         menus = [a.text() for a in win.menuBar().actions()]
         tools = [a.text() for a in win.tool_menu.actions() if a.menu()]
-        want = ['LUT', '마커', 'Crop', '세포질 ROI', '입자 ROI', '강도 측정', 'Coloc 2',
-                '라인 프로파일', 'FRAP 측정', '스택', '이미지 정보', 'Figure']
-        if menus != ['파일', 'Tool', 'View'] or tools != want or 'marker_tab' in win.tab_pages:
+        want = ['LUT', '마커', '세포질 ROI', '입자 ROI', '강도 측정', 'Coloc 2',
+                '라인 프로파일', 'FRAP 측정', '스택']
+        if menus != ['파일', 'Tool', 'View', '그래프', 'Figure'] or tools != want \
+                or 'marker_tab' in win.tab_pages:
             raise AssertionError(f'menus: {menus} / Tool: {tools}')
         frap_items = [a.text() for a in next(a.menu() for a in win.tool_menu.actions()
                                              if a.text() == 'FRAP 측정').actions()]
@@ -2380,30 +2386,162 @@ def run(out_dir) -> int:
             raise AssertionError('blank window import')
         key = bw.key
         st = bw.state()
-        bw.close()
-        win.graph_wins.pop(key)
+        tables0, nseries0 = set(bw.tables()), len(bw.spec.series)
+        gw = win.graph_win  # one window: every graph is a document in its sidebar
+        if gw is not ow or gw.doc_for('frap') is None or gw.doc_for(key) is None:
+            raise AssertionError('graphs not documents of one window')
+        gw.remove_doc(gw.doc_for(key))
         win._apply_project_settings({'graphs': {key: st}})
-        rw = win.graph_wins.get(key)
-        if rw is None or set(rw.tables()) != set(bw.tables()) or len(rw.spec.series) != len(bw.spec.series):
-            raise AssertionError('blank graph window not restored')
-        ow.close()
-        win.graph_wins.pop('frap', None)
+        rd = gw.doc_for(key)
+        if rd is None or set(rd.tables()) != tables0 or len(rd.spec.series) != nseries0:
+            raise AssertionError('blank graph not restored')
+        # one source chip per tool; tools without results are greyed out
+        chips = getattr(gw, 'chips', None)
+        if chips:
+            dis = [c for c in chips.values() if not c.isEnabled()]
+            if dis and not dis[0].toolTip():
+                raise AssertionError('disabled source chip without a hint')
+        gw.remove_doc(gw.doc_for('frap'))
         # graph settings are saved in the project and used when the window opens again
         from .project import read_project
         fw = win.open_graph('frap')  # the tab shows the recovery curve again
         fw.spec.title = 'saved in project'
         proj = gdir / 'graph.cyproj'
         win.write_project_to(proj)
-        win.graph_wins.pop('frap').close()
+        gw.remove_doc(gw.doc_for('frap'))
         win._apply_project_settings(read_project(proj)[0])
         fw = win.open_graph('frap')
         if fw.spec.title != 'saved in project':
             raise AssertionError('graph settings not restored from the project')
-        for w in list(win.graph_wins.values()):
-            w.close()
+        gw.close()
         win.set_dirty(False)
         win.close()
         return f'{len(files) + 1} files, {len(G.CHARTS)} chart types'
+
+    def export_crop_figure_step():
+        """v0.59: 파일 › 내보내기 (one window for every export), crop ROI
+        copy / paste / 수정 / 점 편집 (polygon crops), the Figure window's
+        figures sidebar and table editing (＋, ×, dragged titles)."""
+        from PySide6.QtCore import QPoint, QPointF
+        from PySide6.QtWidgets import QApplication
+
+        from .app import MainWindow
+        from .crops import polys_of
+        from .export_dialog import ExportDialog
+        app = QApplication.instance() or QApplication([sys.argv[0]])
+        win = MainWindow()
+        for _ in range(2):
+            win._add_item(_synthetic_item())
+        win.file_list.setCurrentRow(0)
+        app.processEvents()
+        it = win.current
+        # crops: a rectangle, a polygon (bbox = its rectangle), copy / paste
+        it.crops.clear()
+        it.crop_polys = []
+        it.add_crop(2, 2, 22, 18)
+        poly = [(30, 5), (50, 8), (44, 30)]
+        it.add_crop_poly(poly)
+        if tuple(it.crops[1]) != (30, 5, 50, 30) or polys_of(it)[1] is None:
+            raise AssertionError(f'polygon crop bbox {it.crops[1]}')
+        win._refresh_crop_list(select=1, current=True)
+        win._crop_sel = 1
+        win.copy_crop()
+        win.paste_crop()
+        if len(it.crops) != 3 or polys_of(it)[2] != polys_of(it)[1]:
+            raise AssertionError('crop paste')
+        win._crop_sel = 2
+        win.edit_crop('points')
+        if win.canvas.crop_menu_enabled is False or len(win.canvas._handle_points()) != 3:
+            raise AssertionError(f'점 편집 handles {len(win.canvas._handle_points())}')
+        win._crop_points(2, [(30, 5), (50, 8), (52, 20), (44, 30)])
+        if len(polys_of(it)[2]) != 4 or it.crops[2][2] != 52:
+            raise AssertionError(f'점 편집 {polys_of(it)[2]} {it.crops[2]}')
+        win._crop_sel = 0
+        win.edit_crop('resize')
+        if len(win.canvas._handle_points()) != 8:
+            raise AssertionError('수정: 8 handles')
+        win._crop_resized(0, 2, 2, 26, 20)
+        if tuple(it.crops[0]) != (2, 2, 26, 20):
+            raise AssertionError(f'crop resize {it.crops[0]}')
+        win.edit_crop(None)
+        # menus: 그래프 and Figure at the top, no export items left in Tool
+        menus = [a.text() for a in win.menuBar().actions()]
+        tool_items = [a.text() for m in (a.menu() for a in win.tool_menu.actions() if a.menu())
+                      for a in m.actions()]
+        if menus != ['파일', 'Tool', 'View', '그래프', 'Figure'] or any(
+                '내보내기' in t or '그래프 편집 창' in t for t in tool_items):
+            raise AssertionError(f'menus {menus} / Tool items {tool_items}')
+        # the export window: images, crops (polygon outside = 0), ROIs, info, project
+        dlg = ExportDialog(win)
+        exp = out / 'export_window'
+        dlg.dest.setText(str(exp))
+        dlg.target.setCurrentIndex(dlg.target.findData('all'))
+        for k, row in dlg.items.items():
+            row.setCheckState(0, Qt.CheckState.Checked if k in ('image', 'crop', 'info', 'project')
+                              else Qt.CheckState.Unchecked)
+        dlg.per_image.setChecked(True)
+        res = dlg.run(ask=False)
+        dlg.deleteLater()
+        names = [Path(f).name for f in res.files]
+        if res.errors or not res.files or not any('crop' in n for n in names) \
+                or not any(n.endswith('.cyproj') for n in names):
+            raise AssertionError(f'export window: {names} {res.errors}')
+        import tifffile
+        crop_tifs = sorted(p for p in exp.rglob('*crop3*.tif') if 'raw' in p.name or True)
+        if crop_tifs:
+            arr = tifffile.imread(crop_tifs[0])
+            if arr.reshape(-1, *arr.shape[-2:])[0][-1, 0] != 0 if arr.ndim >= 2 else False:
+                raise AssertionError('polygon crop outside not 0')
+        # Figure window: several figures, table ＋ / × / dragged titles
+        win.open_figure()
+        fw = win.figure_win
+        fw.src_combo.setCurrentIndex(1)
+        app.processEvents()
+        fw.fill_row()
+        nc = fw.spec.ncols
+        if fw.table.columnCount() != nc + 1 or fw.table.rowCount() != fw.spec.nrows + 1:
+            raise AssertionError('no ＋ row / column')
+        fw.add_at_end('row')
+        fw.add_at_end('col')
+        if fw.spec.nrows != 2 or fw.spec.ncols != nc + 1:
+            raise AssertionError('＋ did not add a row / column')
+        h = fw.table.horizontalHeader()
+        if h._on_x(h.x_center(0).toPoint()) != 0:
+            raise AssertionError('× beside the column title')
+        fw.spec.rows[1].text = 'second'
+        fw.move_label('row', 1, 0)
+        if fw.spec.rows[0].text != 'second':
+            raise AssertionError('dragged row title did not move the row')
+        fw._remove('col', nc)
+        if fw.spec.ncols != nc:
+            raise AssertionError('column not removed')
+        first = fw.spec
+        fw.rename_figure(0, 'A')
+        dup = fw.duplicate_figure()
+        if fw.spec is not dup or dup.nrows != first.nrows or dup.cells[1][0].item is not first.cells[1][0].item:
+            raise AssertionError('Figure duplicate')
+        fw.new_figure('C')
+        if fw.figure_names() != ['A', 'A (복제)', 'C'] or fw.spec.nrows != 1:
+            raise AssertionError(f'figures {fw.figure_names()}')
+        fw.show_figure(0)
+        if fw.spec is not first or fw.table.rowCount() != first.nrows + 1:
+            raise AssertionError('switching figures')
+        saved = fw.export_all(out / 'figures')
+        if len(saved) != 3 or not all(p.stat().st_size for p in saved):
+            raise AssertionError(f'모든 Figure 저장 {saved}')
+        proj = out / 'figures.cyproj'
+        win.write_project_to(proj)
+        from .project import read_project
+        data = read_project(proj)[0]
+        if [f['name'] for f in data.get('figures', [])] != ['A', 'A (복제)', 'C']:
+            raise AssertionError('figures not in the project')
+        fw.remove_figure(2)
+        if fw.figure_names() != ['A', 'A (복제)']:
+            raise AssertionError('Figure remove')
+        fw.close()
+        win.set_dirty(False)
+        win.close()
+        return f'{len(res.files)} files exported, 3 figures'
 
     step('readers import', readers)
     step('HDF5 non-ASCII path', hdf5_unicode_path)
@@ -2428,6 +2566,7 @@ def run(out_dir) -> int:
     step('main window', window)
     step('preferences', preferences_step)
     step('design system', design_system)
+    step('export window, crops, figures', export_crop_figure_step)
 
     text = '\n'.join(log) + f'\n\n{"PASSED" if ok else "FAILED"}\n'
     (out / 'selftest.log').write_text(text, encoding='utf-8')
