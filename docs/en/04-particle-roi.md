@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/04-particle-roi.md)
 
-Open or close this tab with **Tool › 입자 ROI › 입자 ROI 탭 열기** (Open 입자 ROI tab) in the menu bar. This tab's saves and loads are in the same **입자 ROI** menu.
+Open or close this tab with **Tool › 입자 ROI › 입자 ROI 탭 열기** (Open 입자 ROI tab) in the menu bar. Results are saved from **파일 › 내보내기…** ([Export window](17-export.md)); loads are in the same **입자 ROI** menu.
 
 This tab finds particles (bright spots, puncta, condensates) in one channel
 inside each cell from the [세포질 ROI tab](03-cytosol-roi.md), or in the whole
@@ -68,6 +68,8 @@ exactly the ImageJ Analyze Particles values.
   coefficient and the [강도 측정 tab](09-intensity.md)'s logic regions.
 
 ### Several images
+
+> Since v0.59 the saves below are picked in **파일 › 내보내기…** (Export), kind **입자 ROI**, instead of a menu ([Export window](17-export.md)). The files written are the same.
 
 - **이 설정을 모든 이미지에 적용** (Apply these settings to all images): the
   same channel (by name) and method for every image.

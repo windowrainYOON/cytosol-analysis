@@ -160,19 +160,22 @@ of the icons at the top right of the canvas, handles them.
 3. Each region is listed in the left sidebar under its image, e.g.
    **Crop 1 77×77**. Picking a row selects that crop (yellow on the canvas);
    the triangle before the image name folds the rows away.
-4. Delete: the trash glyph at the end of the row, the `Delete` key, or
-   right-click › **Crop 삭제…** (Delete crop). The context menu and **Tool ›
-   Crop** also have **이 이미지의 Crop 모두 삭제…** (Delete all crops of this
-   image, red). The confirmation alert's default button is **취소** (Cancel).
-5. **선택한 Crop만 보기** (Show selected crop only; context menu, **Tool ›
-   Crop**) previews one region. **같은 크기 이미지에 Crop 복사** (Copy crops to
-   images of the same size) copies this image's crops to every other image
-   with the same size; move them per image afterwards by dragging.
-6. Saving: image exports write every crop separately (`<name>_crop1_*`) and
-   the regions themselves as ImageJ rectangles, `<name>_crops.zip`.
-   **Crop › Crop 영역 ROI 저장** (Save crop ROIs) saves only the regions.
-   Loading that file with **Crop › Crop 영역 ROI 불러오기…** (or
-   **파일 › 불러오기**) brings the crops back.
+4. **Right-click a crop row or a crop on the canvas** for:
+   - **이 ROI 복사** (copy, `⌘C` / `Ctrl+C`) and **붙여넣기** (paste, `⌘V` / `Ctrl+V`: a new
+     crop of the same place and shape),
+   - **수정** (edit): drag the 8 handles on the corners and sides to resize,
+   - **점 편집** (edit points): drag a vertex, click an edge to add a point,
+     `Option(⌥)`/`Alt`+click a point to delete it (polygon crop); `Esc` or a click
+     elsewhere ends it,
+   - **선택한 Crop만 보기** (show selected crop only), **같은 크기 이미지에 Crop 복사**
+     (copy crops to images of the same size),
+   - last, in red, **삭제…** (delete) and **이 이미지의 Crop 모두 삭제…** (delete all crops of
+     this image); the alert's default button is **취소** (Cancel).
+   The trash glyph at the end of the row and the `Delete` key delete too.
+5. Saving: **파일 › 내보내기…**, kind **Crop 영역**, writes an image per crop
+   (`<name>_crop1_*`) and the ImageJ ROIs `<name>_crops.zip` ([Export window](17-export.md)).
+   A crop reshaped with 점 편집 is cut as its bounding rectangle with the outside set to 0.
+   Loading `_crops.zip` with **파일 › 불러오기** brings the crops back.
 
 ## Image ID
 

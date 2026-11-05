@@ -145,6 +145,8 @@ post-bleach frame). "pre" is the pre-bleach value (1 when normalized).
 
 From the **Tool › FRAP 측정** menu:
 
+> Since v0.59 the saves below are picked in **파일 › 내보내기…** (Export), kind **FRAP**, instead of a menu ([Export window](17-export.md)). The files written are the same.
+
 - **요약 저장: 모든 이미지·그룹 CSV + 그래프 (폴더)…** (save summary: all images
   and groups): measures every image with a time axis and writes at once
   - `frap_summary.csv`: one row per image (the numbers above), per group mean /
@@ -168,7 +170,7 @@ From the **Tool › FRAP 측정** menu:
   (`frap_bleach`, `frap_control`, `frap_background`); loaded ROIs stay where
   they are.
 
-**파일 › 모든 분석 결과 통합 저장** (save all results) writes `<name>_frap.csv`
+**파일 › 내보내기…** (save all results) writes `<name>_frap.csv`
 and `_frap_rois.zip` for every image measured in the FRAP tab and
 `frap_summary.csv`, `frap_group_curves.csv`, `frap_groups.png`,
 `frap_summary.png` for the set. FRAP ROIs and settings are also kept in the

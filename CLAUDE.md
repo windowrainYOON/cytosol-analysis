@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.58.0)
+## Window structure (v0.59.0)
 
 - **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
   v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
@@ -59,8 +59,16 @@ owner writes in Korean, so reply in Korean.
     crops drawn on the canvas, drag outside a region draws one, inside moves
     it (`Canvas.crop_mode`), stays on after drawing; off = crops not drawn.
     The selected crop is `MainWindow._crop_sel` (sidebar row or canvas
-    click); '선택한 Crop만 보기' etc. are in Tool › Crop and the crop row's
-    context menu.
+    click); since v0.59 there is no Tool › Crop: the context menu of a crop
+    row or a crop on the canvas (`MainWindow._crop_menu`, `Canvas.crop_menu_enabled`)
+    has 이 ROI 복사 / 붙여넣기 (`copy_crop` / `paste_crop`, ⌘C / ⌘V,
+    `_crop_clip`), 수정 (8 handles) and 점 편집 (drag a vertex, click an edge
+    = new point, Option+click = delete) via `edit_crop('resize' | 'points')`
+    (`Canvas._edit_press/_move/_release`, signals → `_crop_resized`,
+    `_crop_points`), 선택한 Crop만 보기, Crop 복사, red 삭제… last.
+    Polygon crops: `ImageItem.crop_polys` (None = plain rectangle,
+    `crops.polys_of`), `item.crops[k]` stays the bounding box; exported as
+    that box with the outside 0.
   - Zoom: `Cmd`/`Ctrl` + left-drag up/down (`ZOOM_DRAG_RATE` × sensitivity),
     `]` in / `[` out (`ZOOM_KEY_STEP`), `Shift`+drag rectangle zoom.
   - Mouse wheel (no modifier): moves T on time series (`MainWindow._wheel_t`),
@@ -77,8 +85,10 @@ owner writes in Korean, so reply in Korean.
   `show_tab`, `hide_tab`, `tab_open`, `tab_current`; no Crop tab since v0.58). Panels ask
   `win.tab_current('<name>')` to know whether they are the visible tab
   (don't compare `right_tabs.currentIndex()` to fixed numbers).
-- **Menus** (`MainWindow._build_menus`): 파일, then Tool with the feature menus,
-  then View (`view_menu`, v0.43): one check item per feature tab
+- **Menus** (`MainWindow._build_menus`): 파일, Tool with the feature menus,
+  View, 그래프 (`graph_menu`, filled on show by `_fill_graph_menu`: 현재 탭의
+  그래프 편집 창 ⌘G, one item per graph source with results, 새 그래프) and
+  Figure (Figure 창 열기… ⇧⌘F) (v0.59). View (`view_menu`, v0.43): one check item per feature tab
   (`view_actions`, kept in step with `tool_actions` by `_check_tab_actions`)
   plus 모든 기능 탭 열기 / 닫기:
   - **Preferences…** (`settings.PreferencesDialog`, owner request 2026-11-04,
@@ -90,9 +100,8 @@ owner writes in Korean, so reply in Korean.
     `new_project`. The self-test uses its own ini store (`use_store`).
   - **파일**: 새 프로젝트, 불러오기 (자동 인식) / (폴더), 최근 프로젝트,
     프로젝트에서 설정(파이프라인)만 불러오기, 프로젝트 저장 / 다른 이름으로,
-    일괄 분석 실행 / 결과 보기 / 결과 저장 / 설정 저장·불러오기, 모든 분석 결과
-    통합 저장, the shared options `opt_per_image` and `opt_with_roi`, 작업 기록
-    보기 / 저장, 설정, 종료. Opening a project from 불러오기 / 최근 프로젝트 goes
+    **내보내기…** (⌘E), 일괄 분석 실행 / 결과 보기 / 설정 저장·불러오기, 작업 기록
+    보기, 설정, 종료. Opening a project from 불러오기 / 최근 프로젝트 goes
     through `open_project_dialog` (전체 or 설정만 → `open_project(path,
     settings_only=True)`, which only runs `_apply_project_settings`).
   - **일괄 분석** (`batch.py`, v0.38, owner request 2026-10-28): `BatchDialog`
@@ -108,20 +117,26 @@ owner writes in Korean, so reply in Korean.
     `save_results`.
   - **Tool** (`MainWindow.tool_menu`, owner request 2026-10-30, v0.41): one
     submenu per feature, e.g. Tool › FRAP 측정 › FRAP ROI 불러오기…:
-    **LUT** (이미지 내보내기, LUT 프리셋 저장/불러오기),
+    **LUT** (LUT 프리셋 저장/불러오기),
     **마커** (설정 저장/불러오기, JSON with `format: cytosol-viewer-markers`),
-    **Crop**, **세포질 ROI**, **입자 ROI**, **강도 측정**, **Coloc 2**,
-    **라인 프로파일**, **FRAP 측정**, **스택**, **이미지 정보**, **Figure**. Each holds its tab
-    action, its saves and its loads (`import_kind_dialog(kind)`, kinds in
+    **세포질 ROI**, **입자 ROI**, **강도 측정**, **Coloc 2**,
+    **라인 프로파일**, **FRAP 측정**, **스택**. Each holds its tab
+    action and its loads (`import_kind_dialog(kind)`, kinds in
     `IMPORT_KINDS`; it only pre-filters the file chooser, `import_paths`
     still detects by content).
-  - **그래프 편집 창** (owner request 2026-10-30, v0.46): every feature graph
-    opens in its own window (`MainWindow.open_graph(key)`, sources in
-    `MainWindow.graph_sources()` → `graph_sources.py`): a ‘그래프 편집 창…’
-    button under each tab's graph / measurement table (`_graph_buttons`),
-    Tool › feature › 그래프 편집 창 (`_graph_action`), View › 현재 탭의 그래프
-    편집 창 (`Ctrl+G`) and View › 그래프 편집 창 › …. It opens with the
-    tab's graph; a new feature graph gets a `graph_sources` function and an
+  - **그래프 편집 창** (owner request 2026-10-30, v0.46; one window since
+    v0.59): every graph is a `GraphDoc` in the sidebar of the one
+    `MainWindow.graph_win` (`GraphWindow`: sidebar | canvas box with one
+    source chip per tool (disabled + tool tip without results), graph, data
+    table | inspector `ChipTabs` 종류 / 값 / 모양 / 컴포넌트, the first three
+    split into 선택한 요소 (`_sel_section`, follows the clicked artist) and
+    전체 그래프). `GraphWindow` attributes (`spec`, `key`, `tables()`…)
+    delegate to the current doc. `MainWindow.open_graph(key)` /
+    `open_blank_graph()` return the window with that doc shown, sources in
+    `MainWindow.graph_sources()` → `graph_sources.py`; opened from the 그래프
+    menu only (no buttons under tab graphs). Saved via the export window
+    (kind `graph`). Features not built yet (기준선, 피팅 곡선, 유의성, 보조
+    y축) stay hidden. It opens with the tab's graph; a new feature graph gets a `graph_sources` function and an
     entry in `graph_sources()`. Every new graph option belongs in
     `GraphSpec` / `Series` (saved and loaded with it). Since v0.47 every
     object on the graph (plot area, title, axis labels, text boxes, legend)
@@ -129,14 +144,18 @@ owner writes in Korean, so reply in Korean.
     and the window's 데이터 menu imports any other analysis
     (`graph_sources(all_data=True)`) or a CSV; results with no tab graph
     (e.g. 일괄 분석) only need an `all_data` entry.
-  - Rule from the owner (2026-10-26, v0.25): every feature gets its own
-    menu (since v0.41 a submenu of **Tool**, next to 파일) with its own save
-    and load items; a new feature's menu goes under Tool (`tools.addMenu`); only bulk saving
-    (통합 저장), projects and auto-detecting load stay in 파일. Panels keep no
-    save/load buttons; they expose methods (`save_current`, `save_all`,
-    `save_csv`, ...) that the menus call. Option widgets that belong to a
-    save (image export options `exp_box`, stack `save_box`) are shown in a
-    dialog (`_options_dialog`). The Figure window keeps its own save buttons.
+  - Rule from the owner (2026-10-26, v0.25; changed 2026-11-05, v0.59):
+    every feature gets its own menu under **Tool** (`tools.addMenu`) with
+    its tab item and its loads. Every save goes through **파일 › 내보내기…**
+    (`export_dialog.ExportDialog`: toolbar 대상 / 저장 위치 / prominent
+    내보내기, 이미지별 폴더 check box, kinds list with check boxes and on/total
+    counts, settings cards; choices in `view_settings.defaults('export')`;
+    `exporter.run(win, items, out, opts)` writes the files with the panels'
+    own methods). A new feature's outputs get a `KINDS` entry and a branch
+    in `exporter.run`. Only LUT presets, marker settings and batch settings
+    are still saved from their menus. Panels keep no save buttons. The
+    Figure window keeps its own saves (toolbar: 새 Figure, 복제 | 해상도,
+    형식, 모든 Figure 저장…, Figure 저장… ⌘S).
 - **세포질 ROI tab** (`roi_panel.py`): the **ROI 검출** box has sub-tabs
   **자동** (`segment_cells`) and **수동 (threshold)** (`threshold_cells`),
   two pages of `mode_tabs` (`_ModePages`: QStackedWidget API, as tall as the
@@ -292,7 +311,8 @@ per-widget style sheets.
 | `frap.py`, `frap_panel.py` | FRAP 측정 tab: bleach / control / background ROIs (`FrapState` per image in `ImageItem.frap`, auto placement, dragged on the canvas via `Canvas.show_frap` / `frapMoved`), (B−BG)/(C−BG) curves, ImageJ-equal ROI masks, exponential recovery fit, drift correction (ROIs follow each frame's movement, `track_drift`), group means, summary CSV / figures |
 | `stack.py`, `stack_panel.py` | Z projections (2D) and 3D rotation views |
 | `marker_panel.py` | Scale bar, time stamp, bleach ROI display |
-| `figure.py`, `figure_window.py` | Figure window (image table, insets, scale bars, per-cell / per-inset brightness, PNG/TIFF/PDF/SVG; drag and drop: `FigureTable` + `FigureWindow.drop_on` / `move_cell` / `place`, `move_whole` 행/열 전체 옮기기) |
+| `figure.py`, `figure_window.py` | Figure window (image table, insets, scale bars, per-cell / per-inset brightness, PNG/TIFF/PDF/SVG; drag and drop: `FigureTable` + `FigureWindow.drop_on` / `move_cell` / `place`, `move_whole` 행/열 전체 옮기기). v0.59: regions sidebar (`fig_list`, `FigureWindow.figures` = [[name, FigureSpec]], `new_figure` / `duplicate_figure` (`copy_spec`) / `show_figure` / `remove_figure`, `export_all`) | canvas box (table + preview) | inspector of fixed width (`INSPECTOR_W`, `flow.reflow(right, min_n=2)`, never clipped); table: one extra ＋ row / column (`add_at_end`), `FigureHeader` (hover red × beside the title, title drag with a blue line = `move_label`); projects keep `figures` (+ `figure` for older versions) |
+| `export_dialog.py`, `exporter.py` | 파일 › 내보내기 window (`KINDS`, `ExportDialog.run(ask=)`) and the writer (`exporter.run` → `Result(files, errors, skipped)`) |
 | `graph.py`, `graph_window.py`, `graph_sources.py` | 그래프 편집 창: `GraphSpec` (every graph setting, JSON `format: cytosol-viewer-graph`) drawn by `graph.draw` from result `Table`s; `GraphWindow` (graph + settings top 70 %, data table bottom 30 %, drag text boxes / legend); `graph_sources` turns each tab's graph into `GraphData` |
 | `groups.py`, `image_tree.py` | Image groups and the grouped image list |
 | `flow.py` | `FlowLayout` and `reflow` (panel rows that follow the pane width) |
@@ -440,3 +460,4 @@ not affected.
 | dev branch | 0.57.0 | Owner request: Figure window drag and drop (cells dragged onto other cells to move, Option/Alt = copy; images dragged from the main image list (`ImageTree` drag, `image_tree.ROWS_MIME`) or files from Finder / Explorer fill cells from the drop target on, rows added as needed; PNG / JPEG / RGB TIFF as pictures, microscopy files opened in the main list first); 행/열 전체 옮기기 check box (off: ▲▼◀▶ and drags move only the selected cell, not every channel of the row) |
 | dev branch | 0.58.0 | Owner request, after mockups: canvas and inspector float as rounded boxes on the sidebar layer (no shade); wide-capsule switch knobs; no hairlines between grouped rows; **검출 자동화** in 세포질 ROI / 입자 ROI (one switch, detail values behind 세부 설정…, edited values marked · 수정됨 with reset, per-value 자동 switches gone, 검출 방식 a pop-up, split/merge on and frame cells 제외 by default); Crop tab removed: Crop icon on the canvas toolbar (draw / move / show while on), crops as rows under their image in the sidebar |
 | dev branch | 0.58.1 | Owner request: one colour per region with Liquid Glass on: the canvas view takes the glass colour once the glass is attached (`theme.refresh_regions`; it had kept the opaque `region-canvas` picked before), the glass sidebar adds no tint of its own and the title bar draws no surface (`setTitlebarAppearsTransparent_`), so the window top and the sidebar show the same material |
+| dev branch | 0.59.0 | Owner request, after mockups: 파일 › 내보내기… (⌘E) one window for every export (target, destination, 이미지별 폴더, kinds list + settings cards; polygon crops cut as their box with the outside 0), export items removed from the feature menus (Tool › Crop / 이미지 정보 / Figure gone); crop context menu: 이 ROI 복사 / 붙여넣기, 수정 (8 handles), 점 편집 (polygon points), 삭제…; menu bar 파일 · Tool · View · 그래프 · Figure; one graph editor window (graphs in a sidebar, a data chip per tool, inspector tabs 종류 / 값 / 모양 / 컴포넌트 with 선택한 요소 / 전체 그래프, unbuilt features hidden); Figure window with a figures sidebar, the saves on a top toolbar, a fixed-width inspector that never clips, ＋ to add rows / columns, hover × to delete, title drag to move |

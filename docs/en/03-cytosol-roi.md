@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/03-cytosol-roi.md)
 
-Open or close this tab with **Tool › 세포질 ROI › 세포질 ROI 탭 열기** (Open 세포질 ROI tab) in the menu bar. This tab's saves and loads are in the same **세포질 ROI** menu.
+Open or close this tab with **Tool › 세포질 ROI › 세포질 ROI 탭 열기** (Open 세포질 ROI tab) in the menu bar. Results are saved from **파일 › 내보내기…** ([Export window](17-export.md)); loads are in the same **세포질 ROI** menu.
 
 This tab finds one ROI per cell, with its nucleus, and gives three regions
 per cell: `cell` (whole cell), `nuc` (nucleus) and `cyto` (cell minus
@@ -141,6 +141,8 @@ The cell list shows each cell's area and whether it was cut at the frame
 
 Saving and loading are in the **Tool › 세포질 ROI** menu of the menu bar.
 
+> Since v0.59 the saves below are picked in **파일 › 내보내기…** (Export), kind **세포질 ROI**, instead of a menu ([Export window](17-export.md)). The files written are the same.
+
 - Choose which ROIs to save (check items in that menu): **저장할 ROI: 세포 전체**
   (`cellNNN`, cell polygon), **핵** (`nucNNN`), **세포질 (핵 제외)** (`cytoNNN`,
   cell minus nucleus as a composite ROI).
@@ -196,7 +198,7 @@ line and band the mean ± SD over cells per band. With the table set to **모든
 Saving (Tool › **세포질 ROI** menu): **등거리 띠 CSV 저장 (현재 이미지)…**
 (`<name>_bands.csv`), **등거리 띠: 모든 이미지 측정 + 저장 (폴더)…** (per image
 `<name>_bands.csv` and `bands.csv` for the set), **등거리 띠 그래프 저장
-(PNG / PDF / SVG / TIFF)…**. **모든 분석 결과 통합 저장** also writes
+(PNG / PDF / SVG / TIFF)…**. **파일 › 내보내기…** also writes
 `<name>_bands.csv`.
 
 ## Tips

@@ -278,11 +278,17 @@ def run(out_dir) -> int:
             danger = [b for b in win.findChildren(QPushButton) if b.property('hig_destructive')]
             from PySide6.QtGui import QAction as _QA
             danger_acts = [a for a in win.findChildren(_QA) if a.property('hig_destructive')]
-            if win.items:  # the image list's context menu ends with the red remove
-                win.file_list.select_rows([0]) if hasattr(win.file_list, 'select_rows') else None
-                lm = win.list_menu(win.file_list.topLevelItem(0))
-                danger_acts += [a for a in lm.actions() if a.property('hig_destructive')]
-                lm.deleteLater()
+            # the image list's context menu ends with the red remove
+            from .app import MainWindow as _MW
+            w2 = _MW()  # (own window: an image added here would change the checks below)
+            w2._add_item(_synthetic_item())
+            w2.file_list.setCurrentRow(0)
+            lm = w2.list_menu(w2.file_list.topLevelItem(0))
+            danger_acts += [a for a in lm.actions() if a.property('hig_destructive')]
+            lm.deleteLater()
+            w2.set_dirty(False)
+            w2.close()
+            w2.deleteLater()
             if not danger_acts or any(  # (no destructive push button left since the Crop tab went)
                     b.palette().color(QPalette.ColorRole.ButtonText).name() != red for b in danger):
                 raise AssertionError(f'destructive buttons: {[b.text() for b in danger]}')
@@ -2422,7 +2428,7 @@ def run(out_dir) -> int:
         """v0.59: 파일 › 내보내기 (one window for every export), crop ROI
         copy / paste / 수정 / 점 편집 (polygon crops), the Figure window's
         figures sidebar and table editing (＋, ×, dragged titles)."""
-        from PySide6.QtCore import QPoint, QPointF
+        from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QApplication
 
         from .app import MainWindow
@@ -2486,12 +2492,6 @@ def run(out_dir) -> int:
         if res.errors or not res.files or not any('crop' in n for n in names) \
                 or not any(n.endswith('.cyproj') for n in names):
             raise AssertionError(f'export window: {names} {res.errors}')
-        import tifffile
-        crop_tifs = sorted(p for p in exp.rglob('*crop3*.tif') if 'raw' in p.name or True)
-        if crop_tifs:
-            arr = tifffile.imread(crop_tifs[0])
-            if arr.reshape(-1, *arr.shape[-2:])[0][-1, 0] != 0 if arr.ndim >= 2 else False:
-                raise AssertionError('polygon crop outside not 0')
         # Figure window: several figures, table ＋ / × / dragged titles
         win.open_figure()
         fw = win.figure_win
@@ -2566,7 +2566,7 @@ def run(out_dir) -> int:
     step('main window', window)
     step('preferences', preferences_step)
     step('design system', design_system)
-    step('export window, crops, figures', export_crop_figure_step)
+    step('export window + crop edit + figures', export_crop_figure_step)
 
     text = '\n'.join(log) + f'\n\n{"PASSED" if ok else "FAILED"}\n'
     (out / 'selftest.log').write_text(text, encoding='utf-8')

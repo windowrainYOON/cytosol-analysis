@@ -128,6 +128,8 @@ pre는 bleach 전 값(정규화하면 1)입니다.
 
 메뉴 막대의 **Tool › FRAP 측정** 메뉴에서:
 
+> v0.59부터 아래 저장 항목은 메뉴가 아니라 **파일 › 내보내기…**의 **FRAP** 항목에서 고릅니다([내보내기 창](17-export.md)). 저장되는 파일은 같습니다.
+
 - **요약 저장: 모든 이미지·그룹 CSV + 그래프 (폴더)…**: 시간축이 있는 모든 이미지를
   측정해 한 번에 저장합니다.
   - `frap_summary.csv`: 이미지마다 한 행(위 FRAP 수치), 그룹마다 mean / sd / sem 행
@@ -145,7 +147,7 @@ pre는 bleach 전 값(정규화하면 1)입니다.
 - **FRAP ROI 저장 (현재 이미지)…** / **FRAP ROI 불러오기…**: ImageJ ROI
   (`frap_bleach`, `frap_control`, `frap_background`). 불러온 ROI는 그 자리에 고정됩니다.
 
-**파일 › 모든 분석 결과 통합 저장**은 FRAP 탭에서 측정한 이미지마다 `<이름>_frap.csv`와
+**파일 › 내보내기…**은 FRAP 탭에서 측정한 이미지마다 `<이름>_frap.csv`와
 `_frap_rois.zip`을, 전체 폴더에 `frap_summary.csv`, `frap_group_curves.csv`,
 `frap_groups.png`, `frap_summary.png`를 씁니다. FRAP ROI와 설정은 프로젝트 파일에도
 저장됩니다.

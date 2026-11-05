@@ -18,11 +18,11 @@ appears on screen, followed by its meaning in parentheses, e.g.
 - **Right panel**: at first only **LUT**, **마커** (Markers) and **이미지 정보**
   (Image info), switched with capsule buttons; the other tabs are opened with
   the **View** menu (or **… 탭 열기**, Open … tab, in each feature's menu).
-- **Menu bar**: **파일** (File: projects, loading with automatic detection,
-  saving all results, work log, settings), then **Tool** with one submenu per feature
-  (**LUT**, **마커**, **Crop**, **세포질 ROI**, **입자 ROI**, **강도 측정**,
-  **Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**, **이미지 정보**, **Figure**), each with
-  that feature's tab and its saves and loads. See
+- **Menu bar**: **파일** (File: projects, loading with automatic detection, **내보내기…**
+  (Export), batch analysis, work log, settings), **Tool** (one submenu per feature: **LUT**,
+  **마커**, **세포질 ROI**, **입자 ROI**, **강도 측정**, **Coloc 2**, **라인 프로파일**,
+  **FRAP 측정**, **스택**; tab and loads), **View**, **그래프** (graphs) and **Figure**.
+  Everything is saved from the [Export window](17-export.md). See
   [Menus, project files and the work log](13-project-menus.md).
 
 ## Manuals by feature
@@ -32,7 +32,7 @@ appears on screen, followed by its meaning in parentheses, e.g.
 | [Getting started: images, viewing, groups](01-getting-started.md) | Adding files and folders, image list, groups, TCF HT/FL alignment, Z/T navigation, zoom, crops, image ID |
 | [Batch analysis](15-batch.md) | Pick groups and tick analyses to run them all at once, review / fix / measure again, save only the batch results and settings, load only a project's settings |
 | [Menus, project files and the work log](13-project-menus.md) | File menu and feature menus, loading with automatic detection, saving and opening projects, work log, mouse sensitivity |
-| [LUT tab and image export](02-lut-export.md) | Channel display (LUT), batch LUT, presets, TIFF/MP4 export, saving all results |
+| [LUT tab](02-lut-export.md) | Channel display (LUT), batch LUT, presets |
 | [세포질 ROI tab](03-cytosol-roi.md) | Automatic cell/nucleus/cytosol ROI detection, editing, ImageJ ROI files, cell intensity |
 | [입자 ROI tab](04-particle-roi.md) | Particle (spot/condensate) detection, per-cell and per-particle measurements, shape, summaries |
 | [마커 (Markers tab)](05-markers.md) | Scale bar, time stamp, CZI bleach ROIs, saving and loading the settings |
@@ -44,11 +44,12 @@ appears on screen, followed by its meaning in parentheses, e.g.
 | [이미지 정보 tab](10-image-info.md) | Acquisition metadata (lasers, detectors, objective, bleaching) |
 | [Figure window](11-figure.md) | Figure tables with labels, zoom insets, scale bars; PNG/TIFF/PDF/SVG |
 | [Graph editor window](16-graph.md) | A tab's graph in its own window: chart type, x / y columns, colors, widths, fonts, axes, legend, text boxes; export of the graph and its data |
+| [Export window](17-export.md) | File › Export: images, crops, ROIs, tables, graphs, info, batch results and the project saved from one window |
 | [Output files](12-output-files.md) | Every file the program writes, and folder loading |
 
 The 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, FRAP 측정 and 스택 tabs
-are opened from the menu of the same name under **Tool**, which also saves and loads that
-tab's results.
+are opened from the menu of the same name under **Tool** (or **View**). Results are saved
+from **파일 › 내보내기…** ([Export window](17-export.md)).
 
 ## Keyboard and mouse summary
 
@@ -57,11 +58,10 @@ tab's results.
 | Load (projects, images, ROIs, presets; detected automatically) | `Ctrl+O` (macOS `⌘O`), or drag files/folders onto the window |
 | Load a folder (pair images, TIFFs and ROIs by ID) | `Ctrl+Shift+O` |
 | New project / save project / save as | `Ctrl+N` / `Ctrl+S` / `Ctrl+Shift+S` |
-| Image export (TIFF / MP4) | `Ctrl+E` |
-| Save all results (one folder per image) | `Ctrl+Shift+E` |
+| Export (images, crops, ROIs, tables, graphs, project …) | `Ctrl+E` |
 | Batch analysis / batch results | `Ctrl+B` / `Ctrl+Shift+B` |
 | Figure window | `Ctrl+Shift+F`; inside it, save with `Ctrl+S` |
-| Graph editor of the current tab | `Ctrl+G`; inside it, save the image with `Ctrl+S`, reload with `Ctrl+R` |
+| Graph editor of the current tab | `Ctrl+G`; inside it, reload with `Ctrl+R` |
 | Work log | `Ctrl+Shift+L` |
 | Zoom | `Cmd` (Windows `Ctrl`) + drag up/down, `]` in / `[` out; **영역 확대** (zoom to area) or `Shift`+drag a rectangle; **화면 맞춤** (fit) to reset. Sensitivity in **Preferences** |
 | Mouse wheel | Time series: moves through time (one timepoint per notch). Otherwise scrolls the view |

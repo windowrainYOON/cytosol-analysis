@@ -2,22 +2,21 @@
 
 [← Manual index](README.md) · [한국어](../ko/13-project-menus.md)
 
-The menu bar has three menus, **파일** (File), **Tool** and **View**. **Tool** holds one
-submenu per feature: **LUT**, **마커** (Markers), **Crop**, **세포질 ROI**,
-**입자 ROI**, **강도 측정**, **Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**,
-**이미지 정보** and **Figure**. Each feature menu opens that feature's tab and
-holds the saves and loads that belong to it (for example
-**Tool › FRAP 측정 › FRAP ROI 불러오기…**). Projects, loading with automatic detection and saving
-everything at once are in the **파일** menu.
+The menu bar has five menus: **파일** (File), **Tool**, **View**, **그래프** (Graphs) and
+**Figure**. **Tool** holds one submenu per feature: **LUT**, **마커** (Markers), **세포질 ROI**,
+**입자 ROI**, **강도 측정**, **Coloc 2**, **라인 프로파일**, **FRAP 측정** and **스택**. Each
+feature menu opens that feature's tab and holds its loads (for example **Tool › FRAP 측정 ›
+FRAP ROI 불러오기…**). Everything is saved from one window, **파일 › 내보내기…**
+([Export window](17-export.md)). **그래프** opens the [graph editor](16-graph.md) and
+**Figure** the [Figure window](11-figure.md). Crops have no menu: the canvas Crop icon and
+the crop rows' context menu in the sidebar handle them ([Crop regions](01-getting-started.md#crop-regions)).
 
 The right panel starts with only the **LUT** tab (with the marker settings
 fixed at its bottom) and the **이미지 정보** (Image info) tab. Ticking a feature in the **View** menu (**세포질 ROI**, **입자 ROI**,
 **강도 측정**, **Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**) or **… 탭 열기**
 (Open … tab) in a feature menu adds that tab next to them; unticking it or
 pressing the tab's × hides it. **View › 모든 기능 탭 열기 / 닫기** (open / close
-all feature tabs) does it for every feature tab at once. Lower in **View** are
-**현재 탭의 그래프 편집 창** (graph editor of the current tab, `Ctrl+G`), the graph editor
-of each feature ([Graph editor window](16-graph.md)) and the **Figure 창**. Settings and results stay while a tab is
+all feature tabs) does it for every feature tab at once. Settings and results stay while a tab is
 hidden, and the open tabs are saved in the project.
 
 ## File menu
@@ -31,14 +30,10 @@ hidden, and the open tabs are saved in the project.
 | **프로젝트에서 설정(파이프라인)만 불러오기…** (Load settings only) | | Keeps the open images; takes only the tab settings and batch choice of a project or batch settings file ([more](15-batch.md#loading-only-the-settings-pipeline-of-a-project)) |
 | **프로젝트 저장** (Save project) | `Ctrl+S` | Saves all the work as a `.cyproj` file (asks where the first time) |
 | **프로젝트 다른 이름으로 저장…** (Save project as) | `Ctrl+Shift+S` | |
-| **모든 분석 결과 통합 저장 (이미지별 폴더)…** (Save all results) | `Ctrl+Shift+E` | One folder per image with its TIFFs, ROIs and measurement CSVs, and `project.cyproj` at the top |
+| **내보내기…** (Export) | `Ctrl+E` | Pick and save images, crops, ROIs, tables, graphs, image info, batch results and the project in one window ([Export window](17-export.md)) |
 | **일괄 분석 실행…** / **일괄 분석 결과 보기…** (Batch analysis / results) | `Ctrl+B` / `Ctrl+Shift+B` | Tick groups and analyses, run them at once, review and fix per image ([Batch analysis](15-batch.md)) |
-| **일괄 분석 결과 저장 (폴더)…** (Save batch results) | | Only the batch's analyses and settings |
 | **일괄 분석 설정 저장…** / **불러오기…** (Save / load batch settings) | | Analysis and group choice plus the settings of those tabs (JSON) |
-| **이미지별 폴더에 나눠 저장** (check item) | | Every folder save: a subfolder `<name>_<image ID>/` per image |
-| **측정·프로파일 저장 시 ROI와 ROI가 그려진 이미지(.png)도 함께** (check item) | | Next to measurement CSVs and line profiles also `<name>_RoiSet.zip`, `<name>_particles.zip`, `<name>_line.roi`, `<name>_image.png` |
-| **작업 기록 보기…** (Work log) | `Ctrl+Shift+L` | The [work log](#work-log) window |
-| **작업 기록 저장 (CSV)…** (Save work log) | | The whole work log |
+| **작업 기록 보기…** (Work log) | `Ctrl+Shift+L` | The [work log](#work-log) window (its CSV is saved from the export window, **프로젝트 · 작업 기록**) |
 | **Preferences…** (on macOS in the app menu, `⌘,`) | | Loading options, mouse sensitivity, initial values of markers and tabs (see [Preferences](#preferences)) |
 | **종료** (Quit) | `⌘Q` (macOS) | Asks first about unsaved changes |
 
@@ -48,18 +43,18 @@ All of them are under the **Tool** menu.
 
 | Menu | Items |
 |---|---|
-| **LUT** | **이미지 내보내기 (TIFF / MP4)…** (Image export, `Ctrl+E`): an options window (current image only / all images, extent, composite / per-channel RGB, raw stack, time-series format), then the folder ([details](02-lut-export.md#image-export-tiff--mp4)). **LUT 프리셋 저장…** / **LUT 프리셋 불러오기…** (Save / load LUT preset, JSON; loading applies it to every image) |
+| **LUT** | **LUT 프리셋 저장…** / **LUT 프리셋 불러오기…** (Save / load LUT preset, JSON; loading applies it to every image) |
 | **마커** | **마커 설정 저장…** / **마커 설정 불러오기…** (Save / load marker settings: scale bar, time stamp, bleach ROI display; JSON) |
-| **Crop** | **Crop 그리기 · 옮기기** (Draw / move crops, same as the canvas Crop icon), **선택한 Crop만 보기**, **같은 크기 이미지에 Crop 복사**, **Crop 영역 ROI 저장** (current image / all images, `<name>_crops.zip`), **Crop 영역 ROI 불러오기…**, **이 이미지의 Crop 모두 삭제…** |
-| **세포질 ROI** | **세포질 ROI 탭 열기**, which ROIs to save (cell, nucleus, cytosol), **ROI 저장** (current image / all images), **ROI 불러오기…**, measurement CSVs (current image / measure all and save) |
-| **입자 ROI** | **입자 ROI 탭 열기**, **입자 ROI 저장 (현재 이미지)…**, **입자 ROI 불러오기…**, measurement CSVs |
-| **강도 측정** | **강도 측정 탭 열기**, measurement CSVs (current / all images) |
-| **Coloc 2** | **Coloc 2 탭 열기**, CSV (current image), all images' CSVs (folder), plots, PDF report |
-| **라인 프로파일** | **라인 프로파일 탭 열기**, CSV, graph (PNG / PDF / SVG / TIFF), **선 ROI 불러오기…** (load line ROI) |
-| **FRAP 측정** | **FRAP 측정 탭 열기**, **요약 저장: 모든 이미지·그룹 CSV + 그래프 (폴더)…** (save summary), CSV, graph, **FRAP ROI 저장 / 불러오기…** ([FRAP 측정 tab](14-frap.md)) |
-| **스택** | **스택 탭 열기**, save the current projection / 3D rotation series: an options window (full resolution, all timepoints, fps, rotation range), then the file name |
-| **이미지 정보** | CSV, raw metadata (the tab is always open) |
-| **Figure** | **Figure 창 열기…** (`Ctrl+Shift+F`). Saving the figure and inset ROIs stays inside the [Figure window](11-figure.md). |
+| **세포질 ROI** | **세포질 ROI 탭 열기**, **ROI 불러오기…** |
+| **입자 ROI** | **입자 ROI 탭 열기**, **입자 ROI 불러오기…** |
+| **강도 측정** · **Coloc 2** · **스택** | Open the tab |
+| **라인 프로파일** | **라인 프로파일 탭 열기**, **선 ROI 불러오기…** (load line ROI) |
+| **FRAP 측정** | **FRAP 측정 탭 열기**, **FRAP ROI 불러오기…** ([FRAP 측정 tab](14-frap.md)) |
+
+| Menu | Items |
+|---|---|
+| **그래프** | **현재 탭의 그래프 편집 창** (`Ctrl+G`), the graph of each feature with results, **새 그래프 (빈 창)…** |
+| **Figure** | **Figure 창 열기…** (`Ctrl+Shift+F`) |
 
 A feature menu's load shows files of that kind first in the file chooser.
 The chosen file is still recognised by its content, so a file of another

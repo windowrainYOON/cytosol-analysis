@@ -51,7 +51,7 @@ any problems (e.g. images without a matching channel).
 
 | Item | What it does |
 |---|---|
-| **파일 › 일괄 분석 결과 저장 (폴더)…** | Saves only the batch's analyses of the batch's images, measured again so edits are in. Per image a folder `<name>_<image ID>/` (ROIs, particle ROIs, measurement CSVs, Coloc 2 CSV, FRAP curves); at the top the combined CSVs and summaries, `image_groups.csv`, `batch_summary.csv` (the results table) and `batch_settings.json` (analyses, groups, tab settings, run time) |
+| **파일 › 내보내기…** › **일괄 분석 결과** (Export) | Saves only the batch's analyses of the batch's images, measured again so edits are in. Per image a folder `<name>_<image ID>/` (ROIs, particle ROIs, measurement CSVs, Coloc 2 CSV, FRAP curves); at the top the combined CSVs and summaries, `image_groups.csv`, `batch_summary.csv` (the results table) and `batch_settings.json` (analyses, groups, tab settings, run time) |
 | **파일 › 일괄 분석 설정 저장…** | Saves the chosen analyses and groups and the settings of the tabs they use as JSON (`format: cytosol-viewer-batch`), to run the same pipeline on another image set |
 | **파일 › 일괄 분석 설정 불러오기…** | Loads such a file (or a `batch_settings.json`) and restores the tab settings and the analysis choice. **불러오기 (자동 인식)** recognises it too |
 

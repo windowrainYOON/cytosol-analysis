@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/06-stack.md)
 
-Open or close this tab with **Tool › 스택 › 스택 탭 열기** (Open 스택 tab) in the menu bar. This tab's saves and loads are in the same **스택** menu.
+Open or close this tab with **Tool › 스택 › 스택 탭 열기** (Open 스택 tab) in the menu bar. Results are saved from **파일 › 내보내기…** ([Export window](17-export.md)); loads are in the same **스택** menu.
 
 While this tab is open, the image area shows its projection instead of a
 single slice. It needs an image with a Z stack; the whole stack is loaded
@@ -52,6 +52,8 @@ timepoint; turning it afterwards only re-projects (about 0.05 s).
 ## 저장 (Saving)
 
 Choose an item in the **Tool › 스택** menu of the menu bar; a window with the options below opens.
+
+> Since v0.59 the saves below are picked in **파일 › 내보내기…** (Export), kind **스택 투영**, instead of a menu ([Export window](17-export.md)). The files written are the same.
 
 - **현재 투영 저장 (TIFF / MP4)…** (Current projection): an RGB image with
   the LUTs and markers plus a float32 ImageJ stack of the projected values.

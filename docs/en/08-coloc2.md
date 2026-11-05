@@ -2,7 +2,7 @@
 
 [← Manual index](README.md) · [한국어](../ko/08-coloc2.md)
 
-Open or close this tab with **Tool › Coloc 2 › Coloc 2 탭 열기** (Open Coloc 2 tab) in the menu bar. This tab's saves and loads are in the same **Coloc 2** menu.
+Open or close this tab with **Tool › Coloc 2 › Coloc 2 탭 열기** (Open Coloc 2 tab) in the menu bar. Results are saved from **파일 › 내보내기…** ([Export window](17-export.md)); loads are in the same **Coloc 2** menu.
 
 Colocalization of two channels in each cell ROI, with the same calculation
 as Fiji's Coloc 2 plugin (its source code ported line by line). Detect or
@@ -44,6 +44,8 @@ and all values, with the plugin's warnings.
 
 In the **Tool › Coloc 2** menu of the menu bar:
 
+> Since v0.59 the saves below are picked in **파일 › 내보내기…** (Export), kind **Coloc 2**, instead of a menu ([Export window](17-export.md)). The files written are the same.
+
 | Menu item | File |
 |---|---|
 | **CSV 저장 (현재 이미지)…** | Current image: one row per ROI, columns named as in Coloc 2 |
@@ -51,7 +53,7 @@ In the **Tool › Coloc 2** menu of the menu bar:
 | **그래프 저장…** | The plots of the selected row |
 | **PDF 리포트 저장…** | Histograms and every value of the selected ROI, like the plugin's PDF |
 
-**모든 분석 결과 통합 저장** (Save all results, `Ctrl+Shift+E`) also writes the Coloc 2 CSVs.
+**파일 › 내보내기…** (Export, `Ctrl+E`) also writes the Coloc 2 CSVs.
 
 ## Agreement with Fiji
 

@@ -2,18 +2,16 @@
 
 [← Manual contents](README.md) · [한국어](../ko/16-graph.md)
 
-Opens a feature tab's graph in its own window, where every part of it can be changed,
-and exports the graph and its data. Like the Figure window, it is a separate window
-(one per feature).
+Opens a feature tab's graph in one window, where every part of it can be changed. All
+graphs gather in this one window's sidebar; they are saved from **파일 › 내보내기…** (File ›
+Export), kind **그래프**.
 
 ## Opening it
 
-- The **그래프 편집 창…** button under each tab's graph (or measurement table)
-- **Tool › (feature) › 그래프 편집 창 (…)…**
-- **View › 현재 탭의 그래프 편집 창** (`Ctrl+G`): the graph of the tab shown on the right
-- **View › 그래프 편집 창 › (feature)**; open windows are marked **(열림)**
-- **View › 그래프 편집 창 › 새 그래프** (new graph): an empty window; bring in any analysis
-  result or a CSV from its **데이터** menu.
+- **그래프 › 현재 탭의 그래프 편집 창** (`Ctrl+G`): the graph of the tab shown on the right
+- **그래프 ›** (feature name): the graph of a feature that has results
+- **그래프 › 새 그래프 (빈 창)…** (new graph): an empty graph; bring in any analysis result or
+  a CSV with the data chips on top or the **데이터** menu.
 
 | Feature | Graph it opens with |
 |---|---|
@@ -29,19 +27,32 @@ settings you changed are kept while the column names stay the same.
 
 ## Layout
 
-- **Top 70 %**: the graph preview on the left (scaled to the saved proportions) and the
-  settings tabs on the right (**그래프**, **데이터 시리즈**, **축**, **글꼴**, **범례·글자**).
-- **Bottom 30 %**: the data. **그래프에 쓰인 데이터** (plotted data, one row per point),
-  for bar / box / … charts **그래프 요약** (n, mean, SD, SEM, median, min, max), and every
-  result table the feature passed (e.g. FRAP group means, per-image curves, fit curves,
-  group summary). **선택한 시리즈만** shows only the series selected in the series tab.
-  Select cells and press `Ctrl+C` (macOS `⌘C`) to copy.
-
-Drag the border between the two parts to resize them.
+- **Sidebar** (left): the graphs of this window, with **새 그래프** (new) and **복제**
+  (duplicate). Double-click = rename; the context menu ends with the red **그래프 삭제…**.
+- **Centre box**:
+  - Top: the **데이터** chips, one per feature (tool); a chip adds that feature's results
+    to the graph shown. Chips of features not analysed yet are greyed out and can't be
+    pressed (the tool tip says what to do first).
+  - Middle: the graph preview (scaled to the saved proportions).
+  - Bottom: the data. **그래프에 쓰인 데이터** (plotted data, one row per point), for bar /
+    box / … charts **그래프 요약** (n, mean, SD, SEM, median, min, max), and every result
+    table the feature passed. Select cells and press `Ctrl+C` (macOS `⌘C`) to copy. Drag
+    the border between graph and table to resize them.
+- **Inspector** (right, fixed width): tabs **종류** (kind) / **값** (values) / **모양** (look) /
+  **컴포넌트** (components). In 종류, 값 and 모양 the upper part is **선택한 요소** (the
+  element clicked on the graph: series, axis, title, legend or text box) and the lower part
+  **전체 그래프** (the whole graph).
+  - **종류**: chart type, aggregation (mean / median), bar / histogram / heat map settings,
+    how the selected series is drawn.
+  - **값**: the series list (x · y · error columns, filters, split), X / Y axes (min, max,
+    tick spacing, unit, value scale), the text of the selected element.
+  - **모양**: size, dpi, background, placement, fonts; colour, width, marker and font of
+    the selected element.
+  - **컴포넌트**: legend, error bars, text boxes.
 
 ## Data from other analyses
 
-The **데이터** (data) menu, or **다른 분석 데이터 +** in the toolbar, adds data to this window.
+The **데이터** chips on top, or the **데이터** (data) menu, add data to the graph shown.
 
 - **다른 분석 결과 가져오기 ›** (import another analysis' result) 세포질 ROI / 입자 ROI /
   강도 측정 tables, distance bands, Coloc 2, line profile, FRAP, 일괄 분석 results: adds that
@@ -138,17 +149,14 @@ labels, tick labels and legend: size, color, bold, italic.
 - Text boxes: text (several lines), size, color, bold, italic, frame, alignment, position
   (axes fraction: 0–1 is inside the axes; outside works too).
 
-## Export
+## Saving
 
-| Menu | What it saves |
-|---|---|
-| **파일 › 그래프 이미지 저장** (`Ctrl+S`) | PNG / TIFF (at the set dpi), PDF / SVG (editable text) |
-| **파일 › 그래프 설정 저장 (JSON)** | Every setting (`format: cytosol-viewer-graph`) |
-| **파일 › 그래프 설정 불러오기 (전체)** / **스타일만 불러오기** | All saved settings, or only the look (fonts, axis style, legend, size, series styles by position) to give another graph the same style |
-| **내보내기 › 그래프에 쓰인 데이터 (CSV)** | Every plotted point (series, x, y, error, n when aggregated) |
-| **내보내기 › 선택한 시리즈의 데이터 (CSV)** | Only the series selected in the series tab |
-| **내보내기 › 그래프 요약 (CSV)** | n, mean, SD, SEM, median, min, max per series and category |
-| **내보내기 › 아래 표 전체 / 선택한 행 (CSV)** | The table shown below (select rows with Shift / Cmd·Ctrl + click) |
-| **내보내기 › 모든 데이터 표 (폴더)** | Every result table of the feature + plotted data + summary, one CSV each |
+Graph images (PNG / TIFF / PDF / SVG), data CSVs and settings JSON are saved from
+**파일 › 내보내기…**, kind **그래프**, picking graphs of the sidebar
+([Export window](17-export.md)). This window's **파일 › 내보내기…** opens that window with
+only **그래프** switched on. **파일 › 그래프 설정 불러오기 (전체)** / **스타일만 불러오기**
+apply saved settings (`format: cytosol-viewer-graph`) to another graph. CSVs are UTF-8 with
+BOM so Excel opens them directly.
 
-CSVs are UTF-8 with BOM so Excel opens them directly.
+Features not built yet (reference lines, added fit curves, significance marks, a second
+y axis) are not shown in the menus.

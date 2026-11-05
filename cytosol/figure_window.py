@@ -2410,6 +2410,7 @@ class FigureWindow(QMainWindow):
             if not folder:
                 return []
         folder, ext = Path(folder), self.fmt.currentData()
+        folder.mkdir(parents=True, exist_ok=True)
         done, used, failed = [], set(), []
         for name, spec in self.figures:
             stem = _safe(name)

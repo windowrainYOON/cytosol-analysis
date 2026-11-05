@@ -23,21 +23,21 @@
 
 | 파일 | 만드는 곳 | ROI 이름 |
 |---|---|---|
-| `<이름>_RoiSet.zip` | 세포질 ROI 탭, 측정 저장, 모든 분석 결과 통합 저장 | `cellNNN`, `nucNNN`, `cytoNNN` |
+| `<이름>_RoiSet.zip` | 세포질 ROI 탭, 측정 저장, 내보내기 창 | `cellNNN`, `nucNNN`, `cytoNNN` |
 | `<이름>_particles.zip` | 입자 ROI 탭 | `partCCC-NN`(픽셀 경계 윤곽, 설정은 속성에) |
 | `<이름>_particles_contour.zip` | 입자 ROI 탭 | `partCCC-NN` 서브픽셀 등강도선 |
 | `<이름>_regions.zip` | 강도 측정 탭 | `rgnCCC-R`, 식은 `region` 속성 |
 | `<이름>_bleach_rois.zip` | 모든 저장(bleach 영역이 있는 CZI) | 타원 또는 다각형 |
 | `<이름>_line.roi` | 라인 프로파일 탭 | 두께가 들어간 직선 |
-| `<이름>_frap_rois.zip` | FRAP 측정 탭, 통합 저장 | `frap_bleach`, `frap_control`, `frap_background` |
-| `<이름>_crops.zip` | 이미지 내보내기, Crop › Crop 영역 ROI 저장, 통합 저장 | `cropN` 사각형(속성 `crop_region`) |
+| `<이름>_frap_rois.zip` | FRAP 측정 탭, 내보내기 창 | `frap_bleach`, `frap_control`, `frap_background` |
+| `<이름>_crops.zip` | 이미지 내보내기, Crop › Crop 영역 ROI 저장, 내보내기 창 | `cropN` 사각형(속성 `crop_region`) |
 | inset `.roi` / `.zip` | Figure 창 | 원본 이미지 좌표의 사각형 |
 
 ## 표 (CSV)
 
 | 이미지마다 | 전체 | 내용 |
 |---|---|---|
-| `<이름>_cell_rois.csv` | `cell_rois.csv` | 세포·핵·세포질 면적(세포질 ROI 탭, 모든 분석 결과 통합 저장) |
+| `<이름>_cell_rois.csv` | `cell_rois.csv` | 세포·핵·세포질 면적(세포질 ROI 탭, 내보내기 창) |
 | `<이름>_cell_intensity.csv` | `cell_intensity.csv` | 세포질 ROI 탭 측정 |
 | `<이름>_particle_intensity.csv` | `particle_intensity.csv` | 입자 ROI 탭, 세포별 |
 | `<이름>_particle_shape.csv` | `particle_shape.csv` | 입자 ROI 탭, 입자마다 |
@@ -45,14 +45,14 @@
 | `<이름>_intensity.csv` | `intensity.csv` | 강도 측정 탭 |
 | `<이름>_coloc2.csv` | `coloc2.csv` | Coloc 2 탭 |
 | `<이름>_frap.csv` | `frap_summary.csv`, `frap_group_curves.csv` | FRAP 측정 탭: 프레임별 곡선, 이미지·그룹별 FRAP 수치, 그룹 평균 곡선 (그래프 `frap_groups.png`, `frap_summary.png`) |
-| `<이름>_info.csv` | — | 이미지 정보 탭(모든 분석 결과 통합 저장) |
+| `<이름>_info.csv` | — | 이미지 정보 탭(내보내기 창) |
 | — | `image_groups.csv` | 이미지, 이미지 ID, 그룹 |
 | 라인 프로파일 `.csv` | — | 거리 + 채널마다 한 열 |
 | — | 작업 기록 `.csv` | 시간, 이미지, 이미지 ID, 내용(파일 › 작업 기록 저장 (CSV)) |
 
 ## 프로젝트 (`.cyproj`)
 
-**파일 › 프로젝트 저장**(`Ctrl+S`)과 **모든 분석 결과 통합 저장**(`project.cyproj`)이
+**파일 › 프로젝트 저장**(`Ctrl+S`)과 **파일 › 내보내기…**(`project.cyproj`)이
 씁니다. 이미지 파일 자체는 넣지 않고 프로젝트 파일 기준 상대 경로(와 절대 경로)만
 저장하며, 세포·입자 ROI, Crop, 그룹, LUT, 탭 설정, 측정 설정, Figure 구성, 작업
 기록이 함께 들어갑니다. 자세한 내용은

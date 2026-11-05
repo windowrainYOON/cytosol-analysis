@@ -54,7 +54,7 @@ you chose. Every TIFF, ROI and CSV carries the image ID (see
 ## Project (`.cyproj`)
 
 Written by **파일 › 프로젝트 저장** (Save project, `Ctrl+S`) and by
-**모든 분석 결과 통합 저장** (`project.cyproj`). The image files themselves are
+**파일 › 내보내기…** (`project.cyproj`). The image files themselves are
 not included, only their paths relative to the project file (and absolute);
 cell and particle ROIs, crops, groups, LUTs, tab settings, measurement
 settings, the figure layout and the work log are stored with them. See

@@ -4,25 +4,42 @@
 
 Lays images out as a table with row and column labels, zoom insets and scale
 bars, ready for a paper figure. Open it with **Figure › Figure 창 열기…** or
-`Ctrl+Shift+F`. Saving the figure and saving/loading inset ROIs use the
-buttons in this window. The figure layout is also saved in the project file.
+`Ctrl+Shift+F`. The figures (all of them) are also saved in the project file.
+
+## Window
+
+- **Sidebar** (left): the figures of this window; make several and pick the one to
+  edit. Double-click = rename; the context menu has **새 Figure** (new), **복제**
+  (duplicate), **이름 바꾸기…** (rename), **이 Figure 저장…** (save this one) and, last
+  in red, **Figure 삭제…** (delete).
+- **Toolbar** on top: **새 Figure**, **복제** | **해상도** (dpi), format (PNG / TIFF / PDF /
+  SVG), **모든 Figure 저장…** (every figure of the sidebar into one folder, named after
+  the figures) and the blue **Figure 저장…** (`⌘S` / `Ctrl+S`, the current figure).
+- **Centre box**: the cell table on top, the preview below (preview dpi, saved size in
+  inches / pixels).
+- **Inspector** (right, fixed width): the **선택한 칸**, **밝기 (이 칸만)**, **확대 영역**
+  and **레이아웃** cards. A narrower window shrinks the centre box; the cards are never
+  cut off.
 
 Cells show the loaded images with their current LUTs; changes made in the
 main window appear when you come back to the figure window.
 
 ## The table
 
-- **행 추가 / 열 추가** (Add row / column), **행 ▲ / 행 ▼ / 열 ◀ / 열 ▶** (Move), and set
-  apart in red **행 삭제… / 열 삭제…** (Delete row / column; confirmed in an
-  alert whose default button is **취소**, Cancel).
-- **Double-click a row or column header** to edit its label (Enter for a new
-  line) and its text color (**색상…**, **기본 색상** = default). Right-click a
-  header for **이름/색상 수정…**, **위에/아래에 행 삽입**, **왼쪽에/오른쪽에 열 삽입**.
-- Click a cell to select it; the panels below act on the selected cell.
-- **행/열 전체 옮기기** (move whole row / column; on by default): when on,
-  ▲▼◀▶ and dragging a cell move the whole row (every channel of that image)
-  or the whole column. When off, only the selected cell trades places with
-  its neighbour (or the cell it is dropped on); the other channel cells stay.
+- **＋**: the ＋ right of the last column adds a column, the ＋ below the last row adds a
+  row (light grey, darker under the mouse).
+- **Delete**: hovering a row or column title shows a red × right beside it; clicking it
+  deletes after an alert whose default button is **취소** (Cancel). There is no × when
+  only one row / column is left.
+- **Move**: drag a row or column title; a blue line shows where it goes.
+- **Double-click a row or column title** to edit its label (Enter for a new line) and its
+  text color (**색상…**, **기본 색상** = default). Right-click a title for
+  **이름/색상 수정…**, **위에/아래에 행 삽입**, **왼쪽에/오른쪽에 열 삽입**, move up / down
+  (left / right) and **행/열 삭제…**.
+- Click a cell to select it; the inspector acts on the selected cell.
+- **칸을 끌면 행/열 전체 옮기기** (in the 선택한 칸 card, on by default): when on, dragging
+  a cell moves the whole row (every channel of that image) or the whole column. When off,
+  only the dragged cell trades places with the cell it is dropped on.
 
 ### Drag and drop
 
@@ -130,8 +147,9 @@ for CH1, while CH2 left at **LUT 탭 (자동)** keeps the LUT tab values.
 | **Inset에도 scale bar** | Scale bars in the insets too (own length) |
 | **상자 색** | Color of the inset boxes |
 
-## 내보내기 (Export)
+## Saving
 
-**해상도** (Resolution, default 300 dpi) and **Figure 저장… (PNG / TIFF / PDF /
-SVG)** (`Ctrl+S`). PNG and TIFF are written at the chosen dpi; PDF and SVG keep
-the text editable. The size in inches and pixels is shown under the preview.
+Set **해상도** (resolution, default 300 dpi) and the format in the toolbar, then
+**Figure 저장…** (`Ctrl+S`) saves the current figure and **모든 Figure 저장…** every figure
+of the sidebar. PNG and TIFF are written at the chosen dpi; PDF and SVG keep the text
+editable. The size in inches and pixels is shown above the preview.
