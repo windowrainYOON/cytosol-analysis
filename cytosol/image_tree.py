@@ -5,7 +5,7 @@ name stays visible at any panel width."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QByteArray, QMimeData, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QPainter, QPalette, QTextLayout, QTextOption
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -17,6 +17,9 @@ from PySide6.QtWidgets import (
 )
 
 ROW = Qt.ItemDataRole.UserRole       # image row, on image items
+# drag format of image rows (comma-separated list positions); the Figure window
+# takes it to place those images in its cells
+ROWS_MIME = 'application/x-cytosol-image-rows'
 GROUP = Qt.ItemDataRole.UserRole + 1  # group name, on folder items
 CROP = Qt.ItemDataRole.UserRole + 2  # crop index, on crop items (under their image)
 
@@ -148,6 +151,29 @@ class ImageTree(QTreeWidget):
         self.currentItemChanged.connect(self._current_changed)
         self.setMouseTracking(True)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        # images can be dragged out (onto the Figure window); the list itself
+        # takes no drops, so files dropped here still reach the main window
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+
+    def mimeTypes(self):
+        return [ROWS_MIME]
+
+    def mimeData(self, items):
+        rows = []
+        for it in items:
+            if it.data(0, ROW) is not None:
+                rows.append(it.data(0, ROW))
+            else:  # a folder: its images
+                rows += [it.child(k).data(0, ROW) for k in range(it.childCount())]
+        rows = list(dict.fromkeys(r for r in rows if r is not None))
+        data = QMimeData()
+        if rows:
+            data.setData(ROWS_MIME, QByteArray(','.join(map(str, rows)).encode()))
+        return data
+
+    def supportedDragActions(self):
+        return Qt.DropAction.CopyAction
 
     def _folded(self, node, folded):
         r = node.data(0, ROW)

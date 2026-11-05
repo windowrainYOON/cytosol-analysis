@@ -6,7 +6,7 @@ import traceback
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QByteArray, QMimeData, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -62,6 +62,8 @@ from .figure import (
 )
 
 THUMB = 110
+CELL_MIME = 'application/x-cytosol-figure-cell'   # "row,col" of a dragged cell
+RGB_EXT = ('.png', '.jpg', '.jpeg', '.bmp')        # always placed as a picture file
 EXPORT_FILTERS = {
     'PNG (*.png)': '.png',
     'TIFF (*.tif)': '.tif',
@@ -223,6 +225,63 @@ class LevelRow(QWidget):
         self._busy = False
 
 
+class FigureTable(QTableWidget):
+    """The figure's cell table with drag and drop: a cell is dragged onto
+    another cell (moved, Option/Alt = copied); image files and images from the
+    main window's list are dropped onto a cell.  The window does the work
+    (`FigureWindow.drop_on`); the table only finds the target cell."""
+
+    def __init__(self, win):
+        super().__init__()
+        self.win = win
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDropIndicatorShown(True)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
+
+    def mimeTypes(self):
+        return [CELL_MIME, 'text/uri-list']
+
+    def mimeData(self, items):
+        data = QMimeData()
+        if items:
+            it = items[0]
+            data.setData(CELL_MIME, QByteArray(f'{it.row()},{it.column()}'.encode()))
+        return data
+
+    def supportedDropActions(self):
+        return Qt.DropAction.MoveAction | Qt.DropAction.CopyAction
+
+    def _target(self, event):
+        idx = self.indexAt(event.position().toPoint())
+        return (idx.row(), idx.column()) if idx.isValid() else None
+
+    def dragEnterEvent(self, event):
+        if self.win.can_drop(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if self.win.can_drop(event.mimeData()) and self._target(event) is not None:
+            super().dragMoveEvent(event)  # auto-scroll + indicator
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        target = self._target(event)
+        if target is None or not self.win.can_drop(event.mimeData()):
+            event.ignore()
+            return
+        copy = bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
+        # handled here (the table's own drop would move QTableWidgetItems)
+        event.setDropAction(Qt.DropAction.CopyAction)
+        event.accept()
+        self.win.drop_on(event.mimeData(), *target, copy=copy)
+
+
 class FigureWindow(QMainWindow):
     def __init__(self, main):
         super().__init__()
@@ -239,7 +298,8 @@ class FigureWindow(QMainWindow):
 
 
         # ---- table ----------------------------------------------------
-        self.table = QTableWidget()
+        self.table = FigureTable(self)
+        self.setAcceptDrops(True)  # dropped elsewhere in the window: the selected cell
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setIconSize(QSize(THUMB, THUMB))
@@ -265,13 +325,21 @@ class FigureWindow(QMainWindow):
             b = QPushButton(text)
             b.clicked.connect(fn)
             tb.addWidget(b)
+        self.move_whole = QCheckBox('행/열 전체 옮기기')
+        self.move_whole.setChecked(True)
+        self.move_whole.setToolTip(
+            '켜면 ▲▼◀▶ 버튼과 칸 끌기가 행 전체(그 이미지의 모든 채널) 또는\n'
+            '열 전체를 옮깁니다. 끄면 선택한 칸 하나만 옆 칸과 자리를 바꿉니다.')
+        tb.addWidget(self.move_whole)
         tb.addSpacing(16)  # destructive actions set apart, red text, confirmed
         for text, kind in (('행 삭제…', 'row'), ('열 삭제…', 'col')):
             b = theme.destructive(QPushButton(text))
             b.clicked.connect(lambda _=False, k=kind: self._confirm_remove(k))
             tb.addWidget(b)
         tb.addStretch()
-        hint = QLabel('행/열 이름: 머리글 더블클릭 (우클릭 = 메뉴)')
+        hint = QLabel('칸 끌기 = 옮기기 (Option/Alt = 복사) · 파일이나 이미지 목록을 칸에 끌어 넣기 · '
+                      '행/열 이름: 머리글 더블클릭')
+        hint.setWordWrap(True)
         theme.secondary(hint)
         tb.addWidget(hint)
         table_box = QWidget()
@@ -733,6 +801,11 @@ class FigureWindow(QMainWindow):
 
     def _move(self, kind, step):
         r, c = self.current_rc()
+        if not self.move_whole.isChecked():  # only this cell trades places
+            r2, c2 = (r + step, c) if kind == 'row' else (r, c + step)
+            if 0 <= r2 < self.spec.nrows and 0 <= c2 < self.spec.ncols:
+                self.move_cell(r, c, r2, c2)
+            return
         if kind == 'row':
             self.spec.move_row(r, step)
             r = max(0, min(self.spec.nrows - 1, r + step))
@@ -741,6 +814,139 @@ class FigureWindow(QMainWindow):
             c = max(0, min(self.spec.ncols - 1, c + step))
         self.rebuild_table()
         self.table.setCurrentCell(r, c)
+
+    # ------------------------------------------------------------------
+    # moving cells, drag and drop
+    # ------------------------------------------------------------------
+
+    def move_cell(self, r, c, r2, c2, copy=False, whole=None):
+        """Cell (r, c) to (r2, c2).  copy: a copy of the cell (no insets) goes
+        there.  whole (default: the 행/열 전체 옮기기 check box): the whole row
+        moves to row r2 and the whole column to column c2, so every channel of
+        the image moves with it; otherwise the two cells trade places."""
+        s = self.spec
+        if (r, c) == (r2, c2):
+            return
+        if copy:
+            s.cells[r2][c2].copy_from(s.cells[r][c], insets=False)
+            for ins in s.cells[r2][c2].insets:
+                s.unlink_inset(ins)
+            s.cells[r2][c2].insets = []
+        elif self.move_whole.isChecked() if whole is None else whole:
+            for _ in range(abs(r2 - r)):
+                s.move_row(r, 1 if r2 > r else -1)
+                r += 1 if r2 > r else -1
+            for _ in range(abs(c2 - c)):
+                s.move_col(c, 1 if c2 > c else -1)
+                c += 1 if c2 > c else -1
+        else:  # zoom-cell links follow the cell objects
+            s.cells[r][c], s.cells[r2][c2] = s.cells[r2][c2], s.cells[r][c]
+        self.rebuild_table()
+        self.table.setCurrentCell(r2, c2)
+
+    def can_drop(self, mime) -> bool:
+        from .image_tree import ROWS_MIME
+
+        if mime.hasFormat(CELL_MIME) or mime.hasFormat(ROWS_MIME):
+            return True
+        return mime.hasUrls() and any(Path(u.toLocalFile()).suffix.lower() in
+                                      RGB_EXT + _image_ext() for u in mime.urls())
+
+    def dragEnterEvent(self, event):
+        if self.can_drop(event.mimeData()) and not event.mimeData().hasFormat(CELL_MIME):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        r, c = self.current_rc()
+        self.drop_on(event.mimeData(), r, c)
+
+    def drop_on(self, mime, r, c, copy=False):
+        from .image_tree import ROWS_MIME
+
+        if mime.hasFormat(CELL_MIME):
+            r0, c0 = (int(v) for v in bytes(mime.data(CELL_MIME)).decode().split(','))
+            if r0 < self.spec.nrows and c0 < self.spec.ncols:
+                self.move_cell(r0, c0, r, c, copy=copy)
+            return
+        if mime.hasFormat(ROWS_MIME):
+            rows = [int(v) for v in bytes(mime.data(ROWS_MIME)).decode().split(',') if v]
+            items = [self.items()[k] for k in rows if 0 <= k < len(self.items())]
+            self.place(r, c, [FigureCell(item=it) for it in items])
+            return
+        if mime.hasUrls():
+            self.drop_files([Path(u.toLocalFile()) for u in mime.urls()], r, c)
+
+    def drop_files(self, paths, r=None, c=None):
+        """Image files into the cells from (r, c) on: PNG / JPEG and RGB TIFFs
+        (e.g. exported LUT / crop images) as pictures, microscopy images
+        (TCF / CZI / OIR / raw TIFF) are opened in the main window's image list
+        first (one already there is reused)."""
+        if r is None:
+            r, c = self.current_rc()
+        cells, failed = [], []
+        for p in paths:
+            ext = p.suffix.lower()
+            if ext not in RGB_EXT + _image_ext():
+                continue
+            try:
+                item = self._item_for(p)
+                if item is not None:
+                    cells.append(FigureCell(item=item))
+                    continue
+                if ext in RGB_EXT or _is_rgb_tiff(p):
+                    rgb, px = load_rgb_file(p)
+                    cells.append(FigureCell(rgb=rgb, rgb_pixel_um=px, name=p.name))
+                    continue
+                before = list(self.items())
+                self.main.add_files([p])
+                new = [it for it in self.items() if it not in before]
+                if new:
+                    cells += [FigureCell(item=it) for it in new]
+                else:
+                    failed.append(p.name)
+            except Exception as exc:
+                traceback.print_exc()
+                failed.append(f'{p.name} ({exc})')
+        self.place(r, c, cells)
+        if failed:
+            QMessageBox.warning(self, 'Figure', '넣지 못한 파일:\n' + '\n'.join(failed))
+
+    def _item_for(self, path):
+        """The main window's image of this file, if it is open there."""
+        try:
+            path = Path(path).resolve()
+        except OSError:
+            return None
+        for it in self.items():
+            try:
+                if Path(it.path).resolve() == path:
+                    return it
+            except (OSError, TypeError):
+                continue
+        return None
+
+    def place(self, r, c, cells):
+        """New cells into (r, c) and the cells after it (left to right, then
+        the next rows); rows are added when the table runs out."""
+        if not cells:
+            return
+        s = self.spec
+        r, c = max(0, min(r, s.nrows - 1)), max(0, min(c, s.ncols - 1))
+        first = (r, c)
+        for new in cells:
+            while r >= s.nrows:
+                s.add_row()
+            old = s.cells[r][c]
+            for ins in old.insets:
+                s.unlink_inset(ins)
+            old.copy_from(new, insets=False)
+            old.insets = []
+            c += 1
+            if c >= s.ncols:
+                r, c = r + 1, 0
+        self.rebuild_table()
+        self.table.setCurrentCell(*first)
+        self.statusBar().showMessage(f'칸 {len(cells)}개에 이미지를 넣었습니다.', 3000)
 
     def edit_label(self, kind, index):
         if index < 0:
@@ -1713,6 +1919,26 @@ class FigureWindow(QMainWindow):
             QMessageBox.warning(self, '저장 실패', str(exc))
             return
         self.statusBar().showMessage(f'저장: {path}')
+
+
+def _image_ext():
+    from .app import SUPPORTED  # noqa: PLC0415 (app imports this module)
+
+    return SUPPORTED
+
+
+def _is_rgb_tiff(path) -> bool:
+    """An RGB picture TIFF (exported image), not a raw multi-channel stack."""
+    if Path(path).suffix.lower() not in ('.tif', '.tiff'):
+        return False
+    import tifffile
+
+    try:
+        with tifffile.TiffFile(path) as tf:
+            page = tf.pages[0]
+            return page.photometric == tifffile.PHOTOMETRIC.RGB
+    except Exception:
+        return False
 
 
 def load_rgb_file(path):

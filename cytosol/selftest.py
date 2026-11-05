@@ -1467,6 +1467,55 @@ def run(out_dir) -> int:
         fw.level_target.setCurrentIndex(0)
         if cell.levels or cell.level_from or ins.levels:
             raise AssertionError('figure levels not back to 자동')
+        # drag and drop: images from the main list / files onto cells, cells moved
+        from PySide6.QtCore import QByteArray, QMimeData, QUrl
+        from .figure_window import CELL_MIME
+        from .image_tree import ROWS_MIME
+        kept = fw.spec
+        fw.spec = FigureSpec()
+        fw.spec.add_col()
+        fw.spec.add_row()
+        fw.rebuild_table()
+        leaves = [win.file_list._leaves[k] for k in range(min(2, len(win.items)))]
+        md = win.file_list.mimeData(leaves)
+        if bytes(md.data(ROWS_MIME)).decode() != ','.join(str(k) for k in range(len(leaves))):
+            raise AssertionError('image list drag data')
+        fw.drop_on(md, 0, 1)  # fills (0, 1) then wraps to (1, 0)
+        a = fw.spec.cells[0][1]
+        if a.item is not win.items[0] or (len(leaves) > 1 and
+                                          fw.spec.cells[1][0].item is not win.items[1]):
+            raise AssertionError('images dropped from the list not placed in order')
+        mc = QMimeData()
+        mc.setData(CELL_MIME, QByteArray(b'0,1'))
+        fw.move_whole.setChecked(False)  # only the cell moves
+        fw.drop_on(mc, 1, 1)
+        if fw.spec.cells[1][1] is not a or fw.spec.cells[0][1].item is not None:
+            raise AssertionError('cell drag did not move only that cell')
+        fw._move('row', -1)  # ▲ with the box off: just this cell
+        if fw.spec.cells[0][1] is not a or fw.spec.cells[1][1].item is not None:
+            raise AssertionError('▲ with 행/열 전체 off moved more than the cell')
+        fw.move_whole.setChecked(True)
+        row0 = list(fw.spec.cells[0])
+        fw.table.setCurrentCell(0, 1)
+        fw._move('row', 1)  # the whole row (all channels) moves
+        if fw.spec.cells[1] != row0:
+            raise AssertionError('▼ with 행/열 전체 on did not move the row')
+        mc.setData(CELL_MIME, QByteArray(b'1,1'))
+        fw.drop_on(mc, 0, 0, copy=True)
+        if fw.spec.cells[0][0].item is not a.item or fw.spec.cells[1][1] is not a:
+            raise AssertionError('Option-drag did not copy the cell')
+        from PIL import Image as PILImage
+        png = out / 'selftest_drop.png'
+        PILImage.fromarray(np.full((12, 16, 3), 200, np.uint8)).save(png)
+        mf = QMimeData()
+        mf.setUrls([QUrl.fromLocalFile(str(png))])
+        if not fw.can_drop(mf):
+            raise AssertionError('figure window refuses a dropped PNG')
+        fw.drop_on(mf, 0, 1)
+        if fw.spec.cells[0][1].rgb is None or fw.spec.cells[0][1].name != png.name:
+            raise AssertionError('dropped PNG not placed in the cell')
+        fw.spec = kept
+        fw.rebuild_table()
         fw.close()
         # every ROI tab measures and follows ROI edits; particles from their own tab
         from .cellroi import segment_cells
