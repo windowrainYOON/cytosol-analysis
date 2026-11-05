@@ -172,8 +172,10 @@ _REGIONS = {
                        'inspector': 'region-box', 'shade': 0.0},
     ('dark', False): {'sidebar': 'region-base', 'canvas': 'region-canvas',
                       'inspector': 'region-box', 'shade': 0.0},
-    ('light', True): {'sidebar': 0.10, 'canvas': 0.55, 'inspector': 0.80, 'shade': 0.0},
-    ('dark', True): {'sidebar': 0.02, 'canvas': 0.06, 'inspector': 0.12, 'shade': 0.0},
+    # glass: the sidebar adds no tint of its own, so it is the very material
+    # the title bar shows (one colour from the window top down, v0.58.1)
+    ('light', True): {'sidebar': 0.0, 'canvas': 0.55, 'inspector': 0.80, 'shade': 0.0},
+    ('dark', True): {'sidebar': 0.0, 'canvas': 0.06, 'inspector': 0.12, 'shade': 0.0},
 }
 
 
@@ -925,8 +927,21 @@ class _Polisher(QObject):
                 from . import glass  # noqa: PLC0415
 
                 glass.attach(obj)
-                _apply_sheet(QApplication.instance())  # see-through panes, or opaque fallback
+                # see-through panes, or opaque fallback; widgets that picked a
+                # region colour before the glass came up (the canvas view)
+                # take the glass one now, so a region shows one colour
+                refresh_regions()
         return False
+
+
+def refresh_regions():
+    app = QApplication.instance()
+    if app is None:
+        return
+    _apply_sheet(app)
+    for w in app.allWidgets():
+        if hasattr(w, 'refresh_theme') and not w.property('hig_icon'):
+            w.refresh_theme()
 
 
 def align_forms(root: QWidget):

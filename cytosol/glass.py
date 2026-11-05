@@ -95,6 +95,9 @@ def attach(window) -> bool:
         else:
             frame.addSubview_positioned_relativeTo_(fx, NSWindowBelow, content)
         ns_window.setOpaque_(False)
+        # the title bar draws no surface of its own: it shows the same
+        # material as the sidebar under it
+        ns_window.setTitlebarAppearsTransparent_(True)
         ns_window.setBackgroundColor_(NSColor.clearColor())
         _active = True
     except Exception:

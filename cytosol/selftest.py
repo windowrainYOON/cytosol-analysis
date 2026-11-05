@@ -449,6 +449,19 @@ def run(out_dir) -> int:
                         raise AssertionError(f'region layers out of order ({sch}, glass {gl}): {lv}')
                     if theme.region_shade(sch, gl):
                         raise AssertionError('sidebar shade on the canvas')
+            # v0.58.1: with glass the sidebar adds no tint (same material as the
+            # title bar) and the canvas view follows the glass once it is on
+            if theme.region_color('sidebar', 'light', True).alpha() != 0:
+                raise AssertionError('sidebar tints the glass')
+            _g = theme._glass_on
+            try:
+                theme._glass_on = lambda: True
+                theme.refresh_regions()
+                if win.canvas.backgroundBrush().color().alpha() != 0:
+                    raise AssertionError('canvas view keeps an opaque colour over the glass')
+            finally:
+                theme._glass_on = _g
+                theme.refresh_regions()
             if 'separator' in sheet.split('/* ---- inset group')[0]:
                 raise AssertionError('a line between the regions')
             for name in ('hig_content', 'hig_inspector'):
