@@ -232,7 +232,8 @@ group start at x 12 via `#hig_page`), so all titles, rows and labels share
 one grid line. Icons: `hig_widgets.ICONS` (24 px stroke glyphs of the design
 system's icon set; drawn in a token colour). Surfaces: window
 `background-secondary`; regions use `theme.region_color` (RegionLayout). Liquid Glass
-(`cytosol/glass.py`, macOS, pyobjc): an `NSVisualEffectView` (sidebar
+(`cytosol/glass.py`, macOS, pyobjc; widgets that cache a region colour need a
+`refresh_theme`, re-run by `theme.refresh_regions` once the glass is attached): an `NSVisualEffectView` (sidebar
 material, behind window) under the Qt view, panes `#hig_sidebar` /
 `#hig_inspector` tinted see-through; opaque when pyobjc is missing or Reduce
 Transparency is on. New widgets get the style automatically; don't add
@@ -436,4 +437,5 @@ not affected.
 | dev branch | 0.55.0 | Owner request + design system (SettingsPane › 자동 / 수동, slider rows): slider values on one row (title – slider – plain number field), one row height per card, single fields 140 wide, every 자동 / 수동 choice a switch (ROI 검출 방식, particle 검출 방식, stack Z 간격, marker / figure / graph special-value autos), only the chosen mode's inputs shown; hairlines full card width |
 | dev branch | 0.56.0 | Owner request: FRAP 측정 tab in settings cards like the others: 측정 ROI card is a form (`_roi_form`: ■ ROI 위치 + 자동 switch, hint under it without a hairline (`theme.hint` sets `hig_hint`), Bleach / Control 지름, Control 자리, threshold slider row), rows that don't apply are hidden (Bleach 지름 for the file's region, 파일 영역 with one region, 추적 방식 / 추적 창 by the drift settings, empty hints); short Control 자리 names |
 | dev branch | 0.58.0 | Owner request, after mockups: canvas and inspector float as rounded boxes on the sidebar layer (no shade); wide-capsule switch knobs; no hairlines between grouped rows; **검출 자동화** in 세포질 ROI / 입자 ROI (one switch, detail values behind 세부 설정…, edited values marked · 수정됨 with reset, per-value 자동 switches gone, 검출 방식 a pop-up, split/merge on and frame cells 제외 by default); Crop tab removed: Crop icon on the canvas toolbar (draw / move / show while on), crops as rows under their image in the sidebar |
+| dev branch | 0.58.1 | Owner request: one colour per region with Liquid Glass on: the canvas view takes the glass colour once the glass is attached (`theme.refresh_regions`; it had kept the opaque `region-canvas` picked before), the glass sidebar adds no tint of its own and the title bar draws no surface (`setTitlebarAppearsTransparent_`), so the window top and the sidebar show the same material |
 | dev branch | 0.57.0 | Owner request: Preferences window (`PreferencesDialog`, app menu `⌘,`): TCF HT + FL alignment moved there from the sidebar, mouse sensitivities, 탭 설정 초기값 (save the window's tab settings as initial values / clear) and 마커 초기값 (marker cards incl. 자동 values), stored in QSettings and applied at start-up and 새 프로젝트; 핵 → 세포막 등거리 띠 moved from 강도 측정 to the bottom of the 세포질 ROI tab (`bands_panel.py`, menu items under Tool › 세포질 ROI, batch step tab, old projects' band settings migrated) |
