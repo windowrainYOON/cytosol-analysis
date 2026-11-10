@@ -44,6 +44,7 @@ appears on screen, followed by its meaning in parentheses, e.g.
 | [이미지 정보 tab](10-image-info.md) | Acquisition metadata (lasers, detectors, objective, bleaching) |
 | [Figure window](11-figure.md) | Figure tables with labels, zoom insets, scale bars; PNG/TIFF/PDF/SVG |
 | [Graph editor window](16-graph.md) | A tab's graph in its own window: chart type, x / y columns, colors, widths, fonts, axes, legend, text boxes; export of the graph and its data |
+| [등거리 띠 tab](18-bands.md) | Distance bands from the nucleus to the cell edge: per-band intensity and particles, graph |
 | [Export window](17-export.md) | File › Export: images, crops, ROIs, tables, graphs, info, batch results and the project saved from one window |
 | [Output files](12-output-files.md) | Every file the program writes, and folder loading |
 

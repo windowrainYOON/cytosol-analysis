@@ -51,10 +51,6 @@ KINDS: dict = {
             ('roi_csv', '측정 CSV', '', True),
             ('roi_png', 'ROI가 그려진 이미지 (.png)', '', False),
         ]),
-        ('등거리 띠', [
-            ('bands_csv', '띠별 측정 CSV', '', False),
-            ('bands_plot', '띠 그래프 (현재 이미지)', '', False),
-        ]),
     ]),
     'particle': ('입자 ROI', [
         ('ROI', [
@@ -69,6 +65,12 @@ KINDS: dict = {
         ('측정', [
             ('intensity_csv', '측정 CSV', '', True),
             ('regions', '논리 영역 ROI (.zip)', '', False),
+        ]),
+    ]),
+    'bands': ('등거리 띠', [
+        ('측정', [
+            ('bands_csv', '띠별 측정 CSV', '', True),
+            ('bands_plot', '띠 그래프 (현재 이미지)', '', True),
         ]),
     ]),
     'coloc': ('Coloc 2', [
@@ -292,9 +294,9 @@ class ExportDialog(QDialog):
             h.setWordWrap(True)
             theme.hint(h)
             lay.addWidget(h)
-        if key in ('profile', 'stack', 'roi'):
+        if key in ('profile', 'stack', 'bands'):
             h = QLabel('그래프 · 라인 프로파일 · 스택 투영은 현재 이미지가 대상에 들어 있을 때 그 이미지의 것을 '
-                       '저장합니다.' if key != 'roi' else '띠 그래프는 현재 이미지의 것을 저장합니다.')
+                       '저장합니다.' if key != 'bands' else '띠 그래프는 현재 이미지의 것을 저장합니다.')
             h.setWordWrap(True)
             theme.hint(h)
             lay.addWidget(h)

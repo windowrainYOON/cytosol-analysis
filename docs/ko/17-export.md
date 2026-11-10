@@ -25,9 +25,10 @@ LUT 프리셋, 마커 설정, 일괄 분석 설정 저장은 예전처럼 Tool /
 |---|---|
 | 이미지 (TIFF / MP4) | 합성 RGB, 채널별 RGB, 원본값 스택(ImageJ). 타임시리즈는 모든 시점 / 현재 시점, TIFF / MP4 / 둘 다, fps, 마커 그리기 |
 | Crop 영역 | Crop 영역마다 이미지(형식은 ‘이미지’를 따름; **모든 영역** 또는 **선택한 영역만**), Crop ROI(`<이름>_crops.zip`). 점 편집으로 모양을 바꾼 영역은 둘러싼 사각형으로 자르고 바깥은 0 |
-| 세포질 ROI | 세포 / 핵 / 세포질 ROI(RoiSet .zip 또는 .roi), 측정 CSV, ROI가 그려진 PNG, 등거리 띠 CSV / 그래프 |
+| 세포질 ROI | 세포 / 핵 / 세포질 ROI(RoiSet .zip 또는 .roi), 측정 CSV, ROI가 그려진 PNG |
 | 입자 ROI | 입자 ROI(.zip), 측정 CSV, 이미지별 · 그룹별 요약 |
 | 강도 측정 | 측정 CSV, 논리 영역 ROI |
+| 등거리 띠 | 띠별 측정 CSV, 띠 그래프 (현재 이미지) |
 | Coloc 2 | 결과 CSV, ROI마다 PDF 리포트 |
 | 라인 프로파일 | 현재 이미지의 선: CSV, 그래프, 선 ROI + 그림 |
 | FRAP | 요약 CSV + 그룹 그래프, 이미지마다 곡선 CSV / 그래프 / ROI |

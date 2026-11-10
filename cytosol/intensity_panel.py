@@ -4,7 +4,7 @@ ImageJ Measure values. The current image's table follows the ROIs, plane and
 particle settings as they change; a button runs the same on every image, and
 both can be saved together with the regions as ImageJ ROIs.
 
-The 핵 → 세포막 등거리 띠 moved to the 세포질 ROI tab (bands_panel.py)."""
+The 핵 → 세포막 등거리 띠 has its own 등거리 띠 tab (bands_panel.py)."""
 
 from __future__ import annotations
 
@@ -78,7 +78,7 @@ class IntensityPanel(QWidget):
     def schedule(self, *_):
         self._timer.start()
         self.measure.schedule()
-        bands = getattr(getattr(self.win, 'roi_panel', None), 'bands', None)
+        bands = getattr(self.win, 'bands_panel', None)
         if bands is not None:
             bands.schedule()
 
@@ -88,7 +88,7 @@ class IntensityPanel(QWidget):
     def overlay_changed(self, hidden=False):
         """Called whenever the ROI overlay is redrawn (edits, plane changes)."""
         self._hidden = hidden
-        bands = getattr(getattr(self.win, 'roi_panel', None), 'bands', None)
+        bands = getattr(self.win, 'bands_panel', None)
         if bands is not None:
             bands._hidden = hidden
         self.schedule()
@@ -131,7 +131,7 @@ class IntensityPanel(QWidget):
         canvas = self.win.canvas
         it = self.win.current
         if not self.visible_tab():
-            return  # the 세포질 ROI tab's distance bands own the overlay then
+            return  # another tab (e.g. 등거리 띠) owns the overlay then
         if self._hidden or it is None or it.cells is None or not len(it.cells) or self.win._stack_on():
             canvas.show_regions([])
             return

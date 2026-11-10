@@ -1735,6 +1735,9 @@ class MainWindow(QMainWindow):
         self.canvas.frapDragging.connect(self.frap_panel.drag_preview)
         self.canvas.frapMoved.connect(self.frap_panel.move_roi)
         self.intensity_panel = IntensityPanel(self)
+        # 핵 → 세포막 등거리 띠: own tab (owner request 2026-11-09; v0.57–0.59 in 세포질 ROI)
+        from .bands_panel import BandsPanel
+        self.bands_panel = BandsPanel(self)
         self.info_panel = InfoPanel()
         # inspector: capsule chips switch the pages (hig_widgets.ChipTabs)
         right = hig_widgets.ChipTabs()
@@ -1751,6 +1754,7 @@ class MainWindow(QMainWindow):
             'roi_tab': (scrolled(self.roi_panel), '세포질 ROI'),
             'particle_tab': (scrolled(self.particle_panel), '입자 ROI'),
             'intensity_tab': (scrolled(self.intensity_panel), '강도 측정'),
+            'bands_tab': (scrolled(self.bands_panel), '등거리 띠'),
             'coloc_tab': (scrolled(self.coloc_panel), 'Coloc 2'),
             'profile_tab': (self.profile_panel, '라인 프로파일'),
             'frap_tab': (scrolled(self.frap_panel), 'FRAP 측정'),
@@ -1904,6 +1908,9 @@ class MainWindow(QMainWindow):
         sub = tools.addMenu('강도 측정')
         tab_action(sub, 'intensity_tab')
 
+        sub = tools.addMenu('등거리 띠')
+        tab_action(sub, 'bands_tab')
+
         sub = tools.addMenu('Coloc 2')
         tab_action(sub, 'coloc_tab')
 
@@ -1971,8 +1978,8 @@ class MainWindow(QMainWindow):
                          '입자 ROI 탭에서 먼저 측정하세요.'),
             'intensity': ('강도 측정', 'intensity_tab', lambda: S.measure(ip.measure, '강도 측정'),
                           '강도 측정 탭에서 먼저 측정하세요.'),
-            'bands': ('등거리 띠', 'roi_tab', lambda: S.bands(rp.bands),
-                      '세포질 ROI 탭에서 등거리 띠를 먼저 측정하세요.'),
+            'bands': ('등거리 띠', 'bands_tab', lambda: S.bands(self.bands_panel),
+                      '등거리 띠 탭에서 먼저 측정하세요.'),
             'coloc': ('Coloc 2', 'coloc_tab', lambda: S.coloc(self.coloc_panel),
                       'Coloc 2 탭에서 먼저 계산하세요.'),
             'profile': ('라인 프로파일', 'profile_tab', lambda: S.profile(self.profile_panel),
@@ -2354,7 +2361,7 @@ class MainWindow(QMainWindow):
             'window': self, 'roi': self.roi_panel, 'roi_measure': self.roi_panel.measure,
             'particle': self.particle_panel, 'particle_measure': self.particle_panel.measure,
             'intensity': self.intensity_panel, 'intensity_measure': self.intensity_panel.measure,
-            'intensity_bands': self.roi_panel.bands.bands_measure, 'bands': self.roi_panel.bands,
+            'intensity_bands': self.bands_panel.bands_measure, 'bands': self.bands_panel,
             'coloc': self.coloc_panel, 'profile': self.profile_panel, 'markers': self.markers,
             'frap': self.frap_panel,
             'stack': self.stack_panel,
@@ -2903,6 +2910,7 @@ class MainWindow(QMainWindow):
             self.file_list.setCurrentRow(0)
         elif self.current is not None:
             self.roi_panel.bind(self.current)
+            self.bands_panel.bind(self.current)
             self.update_preview()
         n_linked = sum(len(it.linked) for it in self.items[n_before:])
         msg = f'이미지 {len(self.items)}개'
@@ -3139,6 +3147,7 @@ class MainWindow(QMainWindow):
             self.info_panel.bind(None)
             self.canvas.show_line(None)
             self.roi_panel.bind(None)
+            self.bands_panel.bind(None)
             self.roi_panel.draw_overlay(hidden=True)
             self.canvas.pix.setPixmap(QPixmap())
         self.statusBar().showMessage(f'이미지 {len(rows)}개를 목록에서 제거했습니다.',
@@ -3172,6 +3181,7 @@ class MainWindow(QMainWindow):
         self._t_preview_label(it.t)
         self._build_panels()
         self.roi_panel.bind(it)
+        self.bands_panel.bind(it)
         self._refresh_crop_list(select=0)
         self.stack_panel.bind(self._stack_view(it))
         self._build_stack_panels()
@@ -4042,7 +4052,7 @@ class MainWindow(QMainWindow):
 
     def _measure_boxes(self):
         return [self.roi_panel.measure, self.particle_panel.measure, self.intensity_panel.measure,
-                self.roi_panel.bands.bands_measure]
+                self.bands_panel.bands_measure]
 
 
 def main(argv=None):

@@ -51,8 +51,8 @@ STEPS = [
      '입자 ROI 탭의 측정 (세포별 또는 입자마다, 요약 포함)'),
     ('intensity', '강도 측정 (논리 영역)', 'intensity_tab',
      '강도 측정 탭의 영역식 (예: cyto - particle)으로 측정합니다.'),
-    ('bands', '핵 → 세포막 등거리 띠', 'roi_tab',
-     '세포질 ROI 탭의 등거리 띠 설정으로 띠마다 측정합니다.'),
+    ('bands', '핵 → 세포막 등거리 띠', 'bands_tab',
+     '등거리 띠 탭의 설정으로 띠마다 측정합니다.'),
     ('coloc', 'Coloc 2', 'coloc_tab', 'Coloc 2 탭에서 고른 두 채널과 ROI 종류로 계산합니다.'),
     ('frap', 'FRAP 측정', 'frap_tab',
      '시간축이 있는 이미지마다 bleach / control / background ROI를 놓고 회복 곡선을 맞춥니다.'),
@@ -110,7 +110,7 @@ def ran_items(win, state) -> list:
 
 def _boxes(win) -> dict:
     return {'roi_measure': win.roi_panel.measure, 'particle_measure': win.particle_panel.measure,
-            'intensity': win.intensity_panel.measure, 'bands': win.roi_panel.bands.bands_measure}
+            'intensity': win.intensity_panel.measure, 'bands': win.bands_panel.bands_measure}
 
 
 def _release(win, it):

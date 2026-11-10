@@ -52,7 +52,7 @@ Files: `<name>_intensity.csv`, `intensity.csv`, and `<name>_regions.zip`
 (one ImageJ ROI per cell and region, `rgnCCC-R`, with the expression in its
 `region` property).
 
-The distance bands from the nucleus to the cell edge moved to the **세포질 ROI** tab in v0.57 ([세포질 ROI tab](03-cytosol-roi.md#6-핵--세포막-등거리-띠-distance-bands-from-the-nucleus-to-the-cell-edge)).
+The distance bands from the nucleus to the cell edge have their own **등거리 띠** tab since v0.60 ([등거리 띠 tab](18-bands.md)).
 
 ## The measurement table
 

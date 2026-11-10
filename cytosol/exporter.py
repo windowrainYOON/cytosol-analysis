@@ -50,7 +50,7 @@ def run(win, items, out, opts, progress=None) -> Result:
     per = opts.get('per_image', True)
     stems = unique_stems(items)
     rp, pp, ip = win.roi_panel, win.particle_panel, win.intensity_panel
-    bands = rp.bands
+    bands = win.bands_panel
     roi_rows, coloc = [], []
     measured = {}  # box suffix -> rows of every image
     fmt = opts.get('graph_format', 'png')
@@ -236,7 +236,7 @@ def _no_time():
 
 
 def _bands_plot(win, folder, stem, fmt):
-    bp = win.roi_panel.bands
+    bp = win.bands_panel
     if not bp.bands_measure._rows_shown()[0]:
         return None
     folder.mkdir(parents=True, exist_ok=True)
