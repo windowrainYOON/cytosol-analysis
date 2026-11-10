@@ -9,59 +9,66 @@ Export), kind **그래프**.
 ## Opening it
 
 - **그래프 › 현재 탭의 그래프 편집 창** (`Ctrl+G`): the graph of the tab shown on the right
-- **그래프 ›** (feature name): the graph of a feature that has results
-- **그래프 › 새 그래프 (빈 창)…** (new graph): an empty graph; bring in any analysis result or
-  a CSV with the data chips on top or the **데이터** menu.
+- **그래프 ›** (feature name): the graph of a feature that has results, as its tab shows it
+- the **새 그래프** (new graph) chips on top of the graph editor: a new graph from an
+  analysis' result, step by step (below).
 
 | Feature | Graph it opens with |
 |---|---|
 | FRAP 측정 | The graph picked in the tab: recovery curve + fit, ROI mean intensities, or group means ± SEM/SD (+ single curves, fits) |
 | 라인 프로파일 | One line per channel (channel colors, channels hidden in the LUT tab left out, 0–1 normalization as set) |
-| 세포질 ROI › distance bands | A gray line per cell + the red mean ± SD band (the x / y picked in the tab) |
+| Distance bands | A gray line per cell + the red mean ± SD band (the x / y picked in the tab) |
 | 세포질 ROI · 입자 ROI · 강도 측정 tables | Bars (mean ± SD, one dot per value) of the first mean column (area for per-particle rows) by group, image, region or ROI |
 | Coloc 2 | The selected ROI's 2D histogram as a heat map (regression line, thresholds); per-ROI Pearson R bars when a result image was shown |
 
-Opening it again, or **다시 불러오기** (reload, `Ctrl+R`), takes the tab's latest results;
-settings you changed are kept while the column names stay the same.
-**처음 그래프로** (reset) returns every setting to the tab's graph.
+Opening it again, or **편집 › 도구의 현재 결과 다시 불러오기** (reload, `Ctrl+R`), takes the
+tab's latest results; settings you changed are kept while the column names stay the same.
+**편집 › 처음 그래프로 되돌리기** (reset) returns every setting to the first graph.
+
+## A new graph, step by step
+
+The **새 그래프** chips on top are one per analysis (cell / particle ROI measurements, 강도
+측정, distance bands, Coloc 2, line profile, FRAP, batch results); the last one, **CSV…**,
+takes a CSV file (first row = column names; comma, semicolon or tab). Chips of features not
+analysed yet are dimmed; their tool tip says what to do first. A chip opens the **새 그래프**
+window, where three steps are set in turn next to a preview:
+
+1. **그래프 종류** (chart kind): XY (lines · points), bars, dot plot, box plot, violin,
+   histogram, heat map. The kind that fits the table is marked **추천** (recommended): category
+   comparisons when it has text columns, XY for two numbers.
+2. **축 배치** (axes): the **data table**, and for the **X axis** and the **Y axis** each
+   **범주 / 값** (category / value) and a column.
+   - **범주** gathers equal values in one place (group, image …); **값** puts numbers on a
+     scale. Text columns can only be categories. Either axis can take any column.
+   - Bars, dot plots, box plots and violins have one category axis. Switching X to 값 swaps the
+     axes: categories go on the vertical axis (a horizontal graph).
+   - The **Y axis takes several columns** (**＋ Y 열 추가**, × at the end of a row removes
+     one); each becomes a series of its own colour.
+   - **색으로 나누기** (colour split): none, **one colour per Y column**, or a text column (one
+     colour per value; the category column itself = one colour per category).
+   - **에러바** (SD / SEM / 95 % CI / none); XY: **같은 x 묶기** (mean / median of equal x).
+3. **그룹** (groups): one row per value of the category column (else of the colour column),
+   with n. Only checked groups are drawn; drag rows to change their order. **모두** / **없음**.
+
+**그래프 만들기** adds the graph to the sidebar. The three steps can be changed any time in the
+inspector's **데이터** tab.
 
 ## Layout
 
-- **Sidebar** (left): the graphs of this window, with **새 그래프** (new) and **복제**
-  (duplicate). Double-click = rename; the context menu ends with the red **그래프 삭제…**.
-- **Centre box**:
-  - Top: the **데이터** chips, one per feature (tool); a chip adds that feature's results
-    to the graph shown. Chips of features not analysed yet are greyed out and can't be
-    pressed (the tool tip says what to do first).
-  - Middle: the graph preview (scaled to the saved proportions).
-  - Bottom: the data. **그래프에 쓰인 데이터** (plotted data, one row per point), for bar /
-    box / … charts **그래프 요약** (n, mean, SD, SEM, median, min, max), and every result
-    table the feature passed. Select cells and press `Ctrl+C` (macOS `⌘C`) to copy. Drag
-    the border between graph and table to resize them.
-- **Inspector** (right, fixed width): tabs **종류** (kind) / **값** (values) / **모양** (look) /
-  **컴포넌트** (components). In 종류, 값 and 모양 the upper part is **선택한 요소** (the
-  element clicked on the graph: series, axis, title, legend or text box) and the lower part
-  **전체 그래프** (the whole graph).
-  - **종류**: chart type, aggregation (mean / median), bar / histogram / heat map settings,
-    how the selected series is drawn.
-  - **값**: the series list (x · y · error columns, filters, split), X / Y axes (min, max,
-    tick spacing, unit, value scale), the text of the selected element.
-  - **모양**: size, dpi, background, placement, fonts; colour, width, marker and font of
-    the selected element.
-  - **컴포넌트**: legend, error bars, text boxes.
-
-## Data from other analyses
-
-The **데이터** chips on top, or the **데이터** (data) menu, add data to the graph shown.
-
-- **다른 분석 결과 가져오기 ›** (import another analysis' result) 세포질 ROI / 입자 ROI /
-  강도 측정 tables, distance bands, Coloc 2, line profile, FRAP, 일괄 분석 results: adds that
-  feature's tables as `feature · table` and one series using them (pick its x / y in the
-  series tab). E.g. a line profile over a FRAP curve, bars of several analyses in one graph.
-- **CSV 파일 불러오기…**: a CSV with column names in its first row (comma, semicolon, tab).
-- **가져온 표 지우기…**: removes an imported table and the series using it.
-
-Imported tables are saved in the project and kept on **다시 불러오기**.
+- **Sidebar** (left): the graphs of this window. Double-click renames; right-click: new
+  graph, duplicate, rename and, last in red, **그래프 삭제…**.
+- **Centre box**: the **새 그래프** chips on top, the graph preview (same proportions as the
+  saved size), and the data table below: **그래프에 쓰인 데이터** (one row per point drawn),
+  **그래프 요약** for bars / boxes (n, mean, SD, SEM, median, min, max), and every result
+  table of the feature. Copy cells with `Ctrl+C` (macOS `⌘C`); drag the border to resize.
+- **Inspector** (right, fixed width): tabs **데이터** / **모양** / **통계**.
+  - **데이터** (data): chart kind cards, **축 배치** and **그룹** (as in the step window). A
+    graph opened from a feature tab starts with the tab's own series; changing the axes draws
+    it again from the chosen table (lines of other tables, such as fit curves, stay).
+  - **모양** (look): **색** (one per series), **점 · 선**, bar / histogram / heat map options,
+    **축** (X / Y chips), **제목**, **범례**, **글꼴**, **그림**, **글자 상자**. Clicking the title,
+    an axis label, the legend, a point or bar, or a text box on the graph jumps to its card.
+  - **통계** (statistics): significance marks (below).
 
 ## On the graph
 
@@ -71,8 +78,8 @@ objects you select, move and resize.
 - **Click** selects (dashed blue box); **drag** moves.
 - **Drag the blue handle** (bottom right) to resize: width / height for the plot area (top
   edge fixed), the font size for text (both axis labels share one size).
-- Dragging something laid out automatically first pins it where it is. **배치** in the
-  **그래프** tab or right-click › **모든 위치·크기 자동 배치로** returns to automatic layout.
+- Dragging something laid out automatically first pins it where it is. **모두 자동 배치로** in
+  **모양 › 그림** or right-click › **모든 위치·크기 자동 배치로** returns to automatic layout.
 - **Double-click** a text box, the title, an axis label or a legend entry to edit it.
 - **Right-click**: add a text box here, move the legend here, add a legend entry, delete
   this text box.
@@ -85,69 +92,59 @@ objects you select, move and resize.
   rate follows the zoom sensitivity in Settings. Zoom only changes the preview, not the
   saved figure size.
 
-## Settings
+## Look (모양)
 
-### 그래프 (graph)
+- **점 · 선** (all series): drawing style (XY: line + points, line, points, steps, area), line
+  style and width, marker shape, size and fill, opacity, error bar style (bars / band / none),
+  width and caps.
+- Bars / dot plots / boxes / violins: **개별 값을 점으로 표시** (show single values), width, fill
+  opacity, jitter. Histogram: bins (automatic), density, fill. Heat map: colour map, log
+  scale, colour bar. Series that share a category stand side by side; a series alone in its
+  category (colour = category) sits in the middle.
+- **축** (axes), picked with the **X 축** / **Y 축** chips: name, unit, unit conversion
+  (s → min, …; sets scale and unit together), automatic range with min / max, automatic tick
+  spacing with its step, log scale, minor ticks, tick direction, tick label rotation, value
+  scale (×). While automatic, the fields show the values in use. A unit is added to the name in
+  brackets (`Time` + `min` → `Time (min)`); a new scale also converts a range set by hand.
+- **제목** (title) text and font; **범례** (legend): shown, position (automatic, above, right,
+  inside corners, placed by hand), title, columns, frame, font, extra entries (name, colour,
+  marker); rename entries by double-clicking them in the legend.
+- **글꼴** (fonts): family (empty = default with Korean fallback), axis label size / bold, tick
+  label size, text and axis colour. **그림** (figure): width × height (in), dpi, background,
+  top / right spines, spine width, grid and its colour, automatic plot area, **모두 자동 배치로**.
+- **글자 상자** (text boxes): list, add, red **삭제…**, text, size, colour, bold, frame, alignment.
 
-- **그래프 종류** (chart type): XY (lines / points), bars (mean ± error bars), dot plot
-  (values + mean), box plot, violin, histogram, heat map (2D).
-  - XY: values of the x and y columns; text x values are placed in order as categories.
-  - Bars / dot plot / box / violin: y values gathered per value (category) of the x column;
-    empty x = one category per series; several series sit side by side in each category.
-  - Histogram: distribution of the y values. Heat map: x, y, z columns of the first series
-    (other series drawn on top as lines).
-- Title, size (width × height in inches), image resolution (dpi), background color.
-- **배치** (layout): automatic plot area or its left / bottom / width / height (fractions of
-  the figure, the values in use shown while automatic), automatic title / X / Y label
-  positions, **모두 자동 배치로** (all automatic).
-- Bars etc.: error bars (SD / SEM / 95 % CI / none), show single values as dots, width,
-  fill opacity, dot jitter. Histogram: bins (0 = automatic), density, filled. Heat map:
-  color map, log color scale, color bar.
+## Statistics and significance marks (통계 · 유의성 표시)
 
-### 데이터 시리즈 (data series)
+Bars, dot plots, box plots and violins can compare their categories and draw brackets with
+stars (\*). Switch **유의성 표시** on in the inspector's **통계** tab; **통계 창 열기…** (or
+**편집 › 통계 · 유의성 표시…**) sets the same things in a large window with a preview
+(**적용** writes them into the graph). Everything is computed with SciPy.
 
-The series list (ticked = shown) with add, duplicate, ▲ ▼ (drawing order),
-**값마다 나누기…** (split into one series per value of a column, e.g. a colored series per group)
-and, last and in red, **시리즈 삭제…** (Delete series, confirmed in an alert). Legend
-entries and text boxes are deleted the same way (**항목 삭제…**, **글자 상자 삭제…**).
+- **Data check** (window): n and normality (Shapiro-Wilk; n < 3 cannot be tested) per group,
+  equal variances (Levene).
+- **Test**: a **recommendation** from the data.
+  - 2 groups: normal + similar variances → t-test, normal + different variances → Welch's
+    t-test, not normal → Mann-Whitney U.
+  - 3 or more: normal + similar variances → one-way ANOVA + Tukey, normal + different
+    variances → Welch's ANOVA + Games-Howell, not normal → Kruskal-Wallis + Dunn.
+  - **Paired** samples (same cells / images): paired t-test or Wilcoxon signed-rank.
+  - **비교할 값**: which Y column (or series) is compared when there are several.
+  - **Method**: recommended (default) or chosen. **Tails**: two-tailed (recommended),
+    one-tailed (compared group > / < reference; only when the direction was fixed before the
+    experiment). Post hoc tests after ANOVA / Kruskal-Wallis are two-tailed only.
+  - **Multiple comparisons**: Holm (default), Bonferroni, Benjamini-Hochberg (FDR), none;
+    Tukey and Games-Howell use their own. **α**: 0.05 / 0.01 / 0.001.
+- **Pairs**: **all pairs**, **reference vs the others** (reference group), or **chosen**
+  (check boxes); the table shows each pair's adjusted p and mark.
+- **Marks**: stars / p value / both, star levels (4: \* < 0.05, \*\* < 0.01, \*\*\* < 0.001,
+  \*\*\*\* < 0.0001, or 3), ns shown, brackets (bent ends / straight), line width, text size,
+  bold, and a **caption sentence** ("One-way ANOVA with Tukey's post hoc test (two-tailed),
+  n = 10 per group; …", **캡션 복사** copies it).
 
-- **Data**: table, x, y, ± error column, z (heat map), two conditions (column = value),
-  **같은 스타일로 나눠 그리기** (one line per value of a column in the same style, e.g. per
-  cell), **묶기** (mean / median of rows with the same x, or the same value of the
-  **묶는 열** column, with SD / SEM / 95 % CI).
-- **Name and style**: legend name, shown, in legend, shape (line + points, line, points,
-  steps, area), color, line width, line style (solid, dashed, dotted, dash-dot), marker,
-  marker size, filled / open markers, marker edge, opacity, error display (bars / band / none),
-  error bar color (right-click = series color), width and cap size.
-  **이 스타일을 모든 시리즈에** applies the style (not the color) to every series.
-
-### 축 (axes)
-
-For X and Y: label, **최소 – 최대** (min – max) with **자동** (auto), tick spacing with
-**자동** (auto picks a readable spacing), **단위** (unit), **값 배율** (value scale), log scale,
-minor ticks, tick direction, tick label rotation. While automatic, the fields show the range
-and spacing in use; switching 자동 off starts from them.
-
-- **Unit**: added in brackets after the axis name (`Time` + `min` → `Time (min)`; a unit
-  already in brackets at the end of the name is replaced). Type any unit not in the list.
-- **Value scale (×)**: values are multiplied by it when drawn (fractions like `1/60` work).
-  The **단위 바꾸기…** list (s → min, min → s, s → ms, min → h, 0–1 → %, % → 0–1, µm → nm,
-  nm → µm) sets the scale and unit together. Changing the scale also converts a manual
-  min / max / spacing so the same part of the data stays shown. The data table and exported
-  CSV show scaled x / y. Top / right axis lines, axis line and tick width, grid and its color.
-
-### 글꼴 (fonts)
-
-Font family (empty = default, Korean falls back to a Korean font) and, for the title, axis
-labels, tick labels and legend: size, color, bold, italic.
-
-### 범례·글자 (legend and text)
-
-- Legend: shown, position (automatic, above the graph, right of it, the four inside
-  corners, custom), title, columns, frame.
-- Extra legend entries that belong to no series: name, color, marker, line style.
-- Text boxes: text (several lines), size, color, bold, italic, frame, alignment, position
-  (axes fraction: 0–1 is inside the axes; outside works too).
+The initial look (display, star levels, ns, tails, α, bracket shape / width / end length /
+spacing, font, size, bold, caption) is set in **Preferences › 그래프 · 유의성 표시 초기값**.
+The test itself has no initial value: it is recommended for each data set.
 
 ## Saving
 
@@ -158,5 +155,5 @@ only **그래프** switched on. **파일 › 그래프 설정 불러오기 (전�
 apply saved settings (`format: cytosol-viewer-graph`) to another graph. CSVs are UTF-8 with
 BOM so Excel opens them directly.
 
-Features not built yet (reference lines, added fit curves, significance marks, a second
-y axis) are not shown in the menus.
+Features not built yet (reference lines, added fit curves, a second y axis) are not shown
+in the menus.

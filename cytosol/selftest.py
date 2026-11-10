@@ -456,7 +456,8 @@ def run(out_dir) -> int:
                 for gl in (False, True):
                     lv = [theme.region_color(r, sch, gl) for r in ('sidebar', 'canvas', 'inspector')]
                     lv = [c.lightnessF() * c.alphaF() for c in lv]
-                    if not lv[0] < lv[1] < lv[2]:
+                    # 2026-11-10 owner choice: the inspector in the pages' light grey (may equal the canvas)
+                    if not lv[0] < lv[1] <= lv[2]:
                         raise AssertionError(f'region layers out of order ({sch}, glass {gl}): {lv}')
                     if theme.region_shade(sch, gl):
                         raise AssertionError('sidebar shade on the canvas')
@@ -2251,7 +2252,7 @@ def run(out_dir) -> int:
         if not np.isfinite(gw.range_edits['x'][3].value()):
             raise AssertionError('automatic tick spacing not shown')
         # series style from the editor widgets
-        gw.series_list.setCurrentRow(0)
+        gw._series_i = 0
         gw.spec.series[0].color = '#ff0000'
         gw.sync()
         if gw.findChildren(type(gw.range_edits['x'][0]))[0] is None:
@@ -2401,6 +2402,76 @@ def run(out_dir) -> int:
         rd = gw.doc_for(key)
         if rd is None or set(rd.tables()) != tables0 or len(rd.spec.series) != nseries0:
             raise AssertionError('blank graph not restored')
+        # 새 그래프 (owner request 2026-11-09): 종류 → 축 배치 → 그룹, X / Y as 범주 or 값,
+        # several Y columns, groups left out and ordered, significance brackets
+        from PySide6.QtCore import Qt
+        from .graph_editors import STATS_DEFAULTS
+        from .settings import view_settings
+        view_settings.set_defaults('stats', {'display': 'both', 'bracket': 'line'})
+        rng = np.random.default_rng(3)
+        lines = ['group,image,a,b']
+        for g, mu in (('Ctrl', 10.0), ('KO', 14.0), ('Drug', 10.3)):
+            lines += [f'{g},i{k % 3},{rng.normal(mu, 1.5):.4f},{rng.normal(mu * 2, 1.5):.4f}' for k in range(10)]
+        cp = gdir / 'groups.csv'
+        cp.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        wz = gw.start_wizard_csv(str(cp), run=False)
+        m = wz.spec.mapping
+        if not (m.x == 'group' and m.x_cat and m.ys == ['a'] and wz.spec.chart == 'strip'):
+            raise AssertionError(f'wizard guess {m} {wz.spec.chart}')
+        wz._kind('bar')
+        wz.go(1)
+        wz.mapping._add_y()
+        wz.go(2)
+        wz.groups.refresh()
+        it = wz.groups.tree.topLevelItem(2)  # Drug: left out
+        it.setCheckState(0, Qt.CheckState.Unchecked)
+        if wz.spec.cat_hidden != ['Drug'] or len(wz.spec.series) != 2:
+            raise AssertionError(f'wizard groups {wz.spec.cat_hidden} {[s.y for s in wz.spec.series]}')
+        nd = wz.finish()
+        if nd is None or gw.doc is not nd or nd.spec.stats.display != 'both' or nd.spec.stats.bracket != 'line':
+            raise AssertionError('wizard graph / stats defaults from Preferences')
+        cats = [r[1] for r in G.plotted_table(gw.spec, gw.tables()).rows]
+        if 'Drug' in cats or set(cats) != {'Ctrl', 'KO'}:
+            raise AssertionError(f'hidden group drawn {set(cats)}')
+        gw.spec.cat_hidden, gw.spec.cat_order = [], ['KO', 'Ctrl', 'Drug']
+        gw._data_changed()
+        if G.categories(gw.spec, gw.tables()) != ['KO', 'Ctrl', 'Drug']:
+            raise AssertionError('group order')
+        # X 값 / Y 범주: the axes swap (horizontal categories)
+        gw.mapping_ed._role('x', False)
+        app.processEvents()
+        if not gw.spec.horizontal or gw.spec.mapping.ys != ['group']:
+            raise AssertionError(f'axes not swapped {gw.spec.mapping}')
+        gw.mapping_ed._role('x', True)
+        app.processEvents()
+        gw.spec.stats.on, gw.spec.stats.series = True, 'a'
+        gw.render()
+        res = gw.art.get('stats')
+        if res is None or res.method != 'anova_tukey' or len(res.pairs) != 3:
+            raise AssertionError(f'stats {res}')
+        p = {(x, y): q for x, y, q in res.pairs}
+        if not (p[('KO', 'Ctrl')] < 0.001 and p[('Ctrl', 'Drug')] > 0.05):
+            raise AssertionError(f'stats p {p}')
+        marks = [t.get_text() for t in gw.art['ax'].texts if t.get_gid() == 'stats']
+        if len(marks) != 3 or not any('****' in t or '***' in t for t in marks):
+            raise AssertionError(f'stats marks {marks}')
+        gw.spec.stats.method, gw.spec.stats.pairs_mode, gw.spec.stats.ref = 'mwu', 'ref', 'Ctrl'
+        gw.spec.stats.tail = 'greater'
+        gw.render()
+        if [(a, b) for a, b, _p in gw.art['stats'].pairs] != [('Ctrl', 'KO'), ('Ctrl', 'Drug')]:
+            raise AssertionError(f'reference pairs {gw.art["stats"].pairs}')
+        sd = gw.open_stats(run=False)
+        if sd is None or sd.editor.diag.rowCount() != 3 or not sd.editor.cap.toPlainText():
+            raise AssertionError('stats window')
+        sd.close()
+        gw.stats_ed.refresh()
+        st_back = G.GraphSpec.from_dict(gw.spec.to_dict())
+        if st_back.stats.ref != 'Ctrl' or st_back.mapping.ys != gw.spec.mapping.ys:
+            raise AssertionError('stats / mapping not saved')
+        view_settings.set_defaults('stats', None)
+        if STATS_DEFAULTS['display'] != 'stars':
+            raise AssertionError('stats defaults')
+        gw.remove_doc(nd)
         # one source chip per tool; tools without results are greyed out
         chips = getattr(gw, 'chips', None)
         if chips:

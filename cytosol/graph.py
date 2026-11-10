@@ -170,6 +170,13 @@ class Series:
     err_color: str = ''  # '' = the series color
     err_width: float = 0.8
     capsize: float = 2.0
+    # rows whose hide_col value is in hide are left out (그룹 not drawn)
+    hide_col: str = ''
+    hide: list = field(default_factory=list)
+    x_cat: bool = False  # x values as categories (also numbers)
+    y_cat: bool = False  # y values as categories (XY)
+    auto: bool = False   # made from the spec's 축 배치 (Mapping)
+    key: str = ''        # which Y column / colour value an automatic series is (its name may change)
 
 
 STYLE_FIELDS = ('style', 'color', 'line_width', 'line_style', 'marker', 'marker_size', 'marker_fill',
@@ -235,6 +242,57 @@ class LegendItem:
 
 
 @dataclass
+class Mapping:
+    """축 배치 (owner request 2026-11-09): which columns of one table go on
+    which axis, each axis as 범주 (categories) or 값 (numbers), several Y
+    columns, the colour split and the error bars. The series are made from
+    it (build_series); series of other tables stay as overlays."""
+
+    on: bool = False
+    table: str = ''
+    x: str = ''
+    x_cat: bool = True
+    ys: list = field(default_factory=list)
+    y_cat: bool = False
+    z: str = ''          # heat map value
+    color: str = '@y'    # '' = one colour, '@y' = one per Y column, else a column
+    err: str = 'sd'      # error bars of means (ERR_KINDS)
+    agg: str = 'none'    # XY: points of the same x as their mean / median
+
+
+@dataclass
+class Stats:
+    """유의성 표시 (owner request 2026-11-09): the test, the pairs compared
+    and how the marks look. The look's initial values come from Preferences."""
+
+    on: bool = False
+    series: str = ''      # label of the series whose categories are compared ('' = first)
+    paired: bool = False
+    method: str = 'auto'  # 'auto' = recommended for the data, else stats.METHODS
+    tail: str = 'two'
+    correction: str = 'holm'
+    alpha: float = 0.05
+    pairs_mode: str = 'all'  # all / ref / custom
+    ref: str = ''
+    pairs: list = field(default_factory=list)  # [[a, b], ...] when custom
+    display: str = 'stars'   # stars / p / both
+    levels: int = 4
+    ns: bool = True
+    bracket: str = 'tick'    # tick (ends bent down) / line
+    line_width: float = 1.0
+    tip: float = 0.02        # bracket ends, fraction of the value axis
+    gap: float = 0.06        # space between brackets, fraction of the value axis
+    font_family: str = ''    # '' = the graph's font
+    font_size: float = 10.0
+    bold: bool = False
+    caption: bool = True
+
+
+STATS_LOOK = ('display', 'levels', 'ns', 'tail', 'alpha', 'bracket', 'line_width', 'tip', 'gap',
+              'font_family', 'font_size', 'bold', 'caption')
+
+
+@dataclass
 class GraphSpec:
     chart: str = 'xy'
     title: str = ''
@@ -290,6 +348,11 @@ class GraphSpec:
     cmap: str = 'inferno'
     cmap_log: bool = True
     colorbar: bool = True
+    mapping: Mapping = field(default_factory=Mapping)
+    horizontal: bool = False  # categories on the y axis (Y 범주, X 값)
+    cat_order: list = field(default_factory=list)   # order of the 그룹 (categories / colours)
+    cat_hidden: list = field(default_factory=list)  # 그룹 left out
+    stats: Stats = field(default_factory=Stats)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -303,7 +366,7 @@ class GraphSpec:
 
 
 _NESTED = {'x': Axis, 'y': Axis, 'title_font': Font, 'label_font': Font, 'tick_font': Font,
-           'legend_font': Font}
+           'legend_font': Font, 'mapping': Mapping, 'stats': Stats}
 _LISTS = {'series': Series, 'texts': TextBox, 'legend_items': LegendItem}
 
 
@@ -323,7 +386,9 @@ def _build(cls, d):
         else:
             cur = getattr(obj, f.name)
             try:
-                if isinstance(cur, bool):
+                if isinstance(cur, list):
+                    v = list(v) if isinstance(v, (list, tuple)) else cur
+                elif isinstance(cur, bool):
                     v = bool(v)
                 elif isinstance(cur, int):
                     v = int(v)
@@ -364,6 +429,12 @@ def apply_style(spec: GraphSpec, style: GraphSpec) -> GraphSpec:
     out.texts = [TextBox(**asdict(t)) for t in spec.texts]
     out.legend_items = [LegendItem(**asdict(t)) for t in spec.legend_items]
     out.legend_title = spec.legend_title
+    out.mapping = _build(Mapping, asdict(spec.mapping))
+    out.horizontal, out.cat_order, out.cat_hidden = spec.horizontal, list(spec.cat_order), list(spec.cat_hidden)
+    st = _build(Stats, asdict(spec.stats))
+    for k in STATS_LOOK:
+        setattr(st, k, getattr(style.stats, k))
+    out.stats = st
     series = []
     for i, s in enumerate(spec.series):
         s = Series(**asdict(s))
@@ -402,6 +473,9 @@ def _rows_of(s: Series, tables: dict) -> tuple[Table | None, list]:
         if col and col in t.columns:
             j = t.index(col)
             rows = [i for i in rows if _text(t.rows[i][j]) == val]
+    if s.hide_col and s.hide and s.hide_col in t.columns:
+        j, hid = t.index(s.hide_col), {str(v) for v in s.hide}
+        rows = [i for i in rows if _text(t.rows[i][j]) not in hid]
     return t, rows
 
 
@@ -416,9 +490,45 @@ def _err(vals: np.ndarray, kind: str) -> float:
     return sem if kind == 'sem' else 1.96 * sem
 
 
-def xy_parts(s: Series, tables: dict, sx=1.0, sy=1.0) -> list[dict]:
+def _ordered(vals, order) -> list:
+    """vals in the order of `order` first (the 그룹 list), then as they come."""
+    if not order:
+        return list(vals)
+    pos = {str(v): i for i, v in enumerate(order)}
+    return sorted(vals, key=lambda v: (pos.get(str(v), len(pos)), 0))
+
+
+def _texts(t: Table, col, rows) -> list:
+    vals = t.values(col)
+    out = []
+    for i in rows:
+        c = _text(vals[i])
+        if c not in out:
+            out.append(c)
+    return out
+
+
+def axis_cats(spec: 'GraphSpec', tables: dict, which: str) -> list:
+    """The categories of an XY axis shown as 범주 ('x' / 'y'; [] = numbers),
+    shared by every series."""
+    cats = []
+    for s in spec.series:
+        if not s.visible:
+            continue
+        t, rows = _rows_of(s, tables)
+        col = s.x if which == 'x' else s.y
+        if t is None or col not in t.columns:
+            continue
+        flag = s.x_cat if which == 'x' else s.y_cat
+        if flag or not t.is_numeric(col):
+            cats += [c for c in _texts(t, col, rows) if c not in cats]
+    return _ordered(cats, spec.cat_order)
+
+
+def xy_parts(s: Series, tables: dict, sx=1.0, sy=1.0, xcats=None, ycats=None) -> list[dict]:
     """[{key, x, y, err, n}]: one part per split value (one part without split);
-    x, y numeric; non-numeric x become 0, 1, … with the names in 'ticks'."""
+    x, y numeric; categories (text columns, or x_cat / y_cat) become 0, 1, …
+    with the names in 'ticks' (xcats / ycats: the shared list of every series)."""
     t, rows = _rows_of(s, tables)
     if t is None or s.y not in t.columns:
         return []
@@ -430,25 +540,29 @@ def xy_parts(s: Series, tables: dict, sx=1.0, sy=1.0) -> list[dict]:
     else:
         groups[''] = rows
     xs_all = t.values(s.x) if s.x in t.columns else list(range(len(t.rows)))
-    numeric_x = s.x not in t.columns or t.is_numeric(s.x)
+    numeric_x = s.x not in t.columns or (t.is_numeric(s.x) and not s.x_cat)
     cats = []
     if not numeric_x:
-        for i in rows:
-            c = _text(xs_all[i])
-            if c not in cats:
-                cats.append(c)
-    yv = t.numbers(s.y)
+        cats = list(xcats) if xcats else _texts(t, s.x, rows)
+    ycat = s.y_cat or not t.is_numeric(s.y)
+    if ycat:
+        ycl = list(ycats) if ycats else _texts(t, s.y, rows)
+        yraw = t.values(s.y)
+        yv = np.array([ycl.index(_text(v)) if _text(v) in ycl else math.nan for v in yraw], float)
+    else:
+        yv = t.numbers(s.y)
     ev = t.numbers(s.err) if s.err and s.err in t.columns else None
     parts = []
     for key, idx in groups.items():
         if numeric_x:
             x = np.array([_num(xs_all[i]) for i in idx], float)
         else:
-            x = np.array([cats.index(_text(xs_all[i])) for i in idx], float)
+            x = np.array([cats.index(_text(xs_all[i])) if _text(xs_all[i]) in cats else math.nan
+                          for i in idx], float)
         y = yv[idx]
         e = ev[idx] if ev is not None else None
         n = np.ones(len(idx), int)
-        if s.agg in ('mean', 'median'):
+        if s.agg in ('mean', 'median') and not ycat:
             if s.agg_by and s.agg_by in t.columns:
                 by = [_text(v) for v in np.array(t.values(s.agg_by), object)[idx]]
             else:
@@ -475,12 +589,13 @@ def xy_parts(s: Series, tables: dict, sx=1.0, sy=1.0) -> list[dict]:
             e = np.array(ae) if s.agg_err != 'none' else None
         if numeric_x and sx != 1:
             x = x * sx
-        if sy != 1:
+        if sy != 1 and not ycat:
             y = y * sy
             e = e * abs(sy) if e is not None else None
         order = np.argsort(x, kind='stable')
         parts.append({'key': key, 'x': x[order], 'y': y[order],
-                      'err': e[order] if e is not None else None, 'n': n[order], 'ticks': cats})
+                      'err': e[order] if e is not None else None, 'n': n[order], 'ticks': cats,
+                      'yticks': ycl if ycat else []})
     return parts
 
 
@@ -504,7 +619,7 @@ def categories(spec: GraphSpec, tables: dict) -> list:
     for s in spec.series:
         if s.visible:
             cats += [c for c in category_values(s, tables) if c not in cats]
-    return cats
+    return _ordered(cats, spec.cat_order)
 
 
 def _label(s: Series, i: int) -> str:
@@ -518,7 +633,7 @@ def plotted_table(spec: GraphSpec, tables: dict, only=None) -> Table:
         rows = []
         for i in pick:
             s = spec.series[i]
-            for c, v in category_values(s, tables, spec.y.scale).items():
+            for c, v in category_values(s, tables, _vscale(spec)).items():
                 rows += [[_label(s, i), c, float(x)] for x in v]
         return Table('그래프에 쓰인 데이터', ['series', 'category', 'value'], rows)
     if spec.chart == 'hist':
@@ -551,12 +666,19 @@ def plotted_table(spec: GraphSpec, tables: dict, only=None) -> Table:
         return Table('그래프에 쓰인 데이터', ['series', 'x', 'y', 'z'], rows)
     rows = []
     agg = any(spec.series[i].agg != 'none' for i in pick)
+    xc, yc = axis_cats(spec, tables, 'x'), axis_cats(spec, tables, 'y')
     for i in pick:
         s = spec.series[i]
-        for p in xy_parts(s, tables, spec.x.scale, spec.y.scale):
-            ticks = p['ticks']
+        for p in xy_parts(s, tables, spec.x.scale, spec.y.scale, xc, yc):
+            ticks, yt = p['ticks'], p['yticks']
             for j in range(len(p['x'])):
+                if not (np.isfinite(p['x'][j]) and np.isfinite(p['y'][j])):
+                    continue
                 xv = ticks[int(p['x'][j])] if ticks else float(p['x'][j])
+                if yt:
+                    rows.append([_label(s, i), p['key'], xv, yt[int(p['y'][j])], ''] +
+                                ([int(p['n'][j])] if agg else []))
+                    continue
                 e = float(p['err'][j]) if p['err'] is not None else ''
                 rows.append([_label(s, i), p['key'], xv, float(p['y'][j]), e] + ([int(p['n'][j])] if agg else []))
     return Table('그래프에 쓰인 데이터', ['series', 'part', 'x', 'y', 'err'] + (['n'] if agg else []), rows)
@@ -568,7 +690,7 @@ def summary_table(spec: GraphSpec, tables: dict, only=None) -> Table:
     for i, s in enumerate(spec.series):
         if not s.visible or (only is not None and i not in only):
             continue
-        for c, v in category_values(s, tables, spec.y.scale).items():
+        for c, v in category_values(s, tables, _vscale(spec)).items():
             v = v[np.isfinite(v)]
             n = int(v.size)
             rows.append([_label(s, i), c, n,
@@ -577,6 +699,11 @@ def summary_table(spec: GraphSpec, tables: dict, only=None) -> Table:
                          float(v.min()) if n else math.nan, float(v.max()) if n else math.nan])
     return Table('그래프 요약 (평균 · SD · SEM)', ['series', 'category', 'n', 'mean', 'sd', 'sem', 'median',
                                               'min', 'max'], rows)
+
+
+def _vscale(spec: GraphSpec) -> float:
+    """Scale of the value axis of a category chart."""
+    return spec.x.scale if spec.horizontal else spec.y.scale
 
 
 def _no_agg(s: Series) -> Series:
@@ -607,14 +734,14 @@ def _ls(s: Series):
     return 'none' if s.line_style == 'none' else s.line_style
 
 
-def _draw_xy(ax, s: Series, i, tables, handles, sx=1.0, sy=1.0):
+def _draw_xy(ax, s: Series, i, tables, handles, sx=1.0, sy=1.0, xcats=None, ycats=None):
     from matplotlib.lines import Line2D
 
     color = s.color or PALETTE[i % len(PALETTE)]
     ecolor = s.err_color or color
     first = True
     ticks = []
-    for p in xy_parts(s, tables, sx, sy):
+    for p in xy_parts(s, tables, sx, sy, xcats, ycats):
         x, y, e = p['x'], p['y'], p['err']
         ticks = p['ticks'] or ticks
         if not len(x):
@@ -646,38 +773,69 @@ def _draw_xy(ax, s: Series, i, tables, handles, sx=1.0, sy=1.0):
     return ticks
 
 
-def _draw_categories(ax, spec: GraphSpec, tables, handles):
+def _orient(horiz) -> dict:
+    """boxplot / violinplot orientation (matplotlib 3.10 'orientation', older 'vert')."""
+    import matplotlib
+
+    new = tuple(int(x) for x in matplotlib.__version__.split('.')[:2]) >= (3, 10)
+    if new:
+        return {'orientation': 'horizontal' if horiz else 'vertical'}
+    return {'vert': not horiz}
+
+
+def _draw_categories(ax, spec: GraphSpec, tables, handles) -> dict:
+    """Bars / points / boxes / violins per category. Series that share a
+    category stand side by side; a series alone in its categories (colour =
+    the category) sits in the middle. Returns {(series index, category):
+    (position, top of what is drawn)} for the significance brackets."""
     from matplotlib.patches import Patch
 
+    horiz = spec.horizontal
     cats = categories(spec, tables)
     shown = [(i, s) for i, s in enumerate(spec.series) if s.visible]
-    n = max(len(shown), 1)
-    w = spec.bar_width / n
+    vals_of = {i: category_values(s, tables, _vscale(spec)) for i, s in shown}
+    present = {c: [i for i, _s in shown if c in vals_of[i]] for c in cats}
+    n = max([len(v) for v in present.values()] or [1])
+    w = spec.bar_width / max(n, 1)
     rng = np.random.default_rng(0)
-    for j, (i, s) in enumerate(shown):
+    where = {}
+
+    def pt(p, v):  # (category position, value) -> (x, y)
+        return (v, p) if horiz else (p, v)
+
+    for i, s in shown:
+        before = set(ax.get_children())
         color = s.color or PALETTE[i % len(PALETTE)]
         ecolor = s.err_color or color
-        vals = category_values(s, tables, spec.y.scale)
-        pos, data = [], []
+        vals = vals_of[i]
+        pos, data, names = [], [], []
         for k, c in enumerate(cats):
             if c in vals:
                 v = vals[c][np.isfinite(vals[c])]
-                pos.append(k - spec.bar_width / 2 + w * (j + 0.5))
+                m = len(present[c])
+                pos.append(k - m * w / 2 + w * (present[c].index(i) + 0.5))
                 data.append(v)
+                names.append(c)
         if not pos:
             continue
         pos = np.array(pos)
+        tops = [float(v.max()) if v.size else math.nan for v in data]
+        means = [float(v.mean()) if v.size else math.nan for v in data]
+        errs = [(_err(v, spec.bar_err) if spec.bar_err != 'none' else 0.0) for v in data]
         if spec.chart == 'bar':
-            means = [float(v.mean()) if v.size else math.nan for v in data]
-            errs = [(_err(v, spec.bar_err) if spec.bar_err != 'none' else 0.0) for v in data]
-            ax.bar(pos, means, w * 0.9, color=color, alpha=spec.bar_alpha, edgecolor=color,
-                   linewidth=s.line_width, zorder=2)
+            (ax.barh if horiz else ax.bar)(pos, means, w * 0.9, color=color, alpha=spec.bar_alpha,
+                                           edgecolor=color, linewidth=s.line_width, zorder=2)
             if spec.bar_err != 'none' and s.err_style != 'none':
-                ax.errorbar(pos, means, yerr=np.nan_to_num(errs), fmt='none', ecolor=ecolor,
-                            elinewidth=s.err_width, capsize=s.capsize, capthick=s.err_width, zorder=3)
+                ek = {'xerr' if horiz else 'yerr': np.nan_to_num(errs)}
+                ax.errorbar(*pt(pos, means), **ek, fmt='none', ecolor=ecolor, elinewidth=s.err_width,
+                            capsize=s.capsize, capthick=s.err_width, zorder=3)
+                tops = [max(t, m + (e if np.isfinite(e) else 0)) for t, m, e in zip(tops, means, errs)]
+            if not spec.bar_points:
+                tops = [m + (e if np.isfinite(e) else 0) for m, e in zip(means, errs)]
         elif spec.chart == 'box':
             bp = ax.boxplot([v if v.size else [math.nan] for v in data], positions=pos, widths=w * 0.8,
-                            patch_artist=True, showfliers=not spec.bar_points, manage_ticks=False)
+                            patch_artist=True, showfliers=not spec.bar_points, manage_ticks=False,
+                            **_orient(horiz))
             for b in bp['boxes']:
                 b.set(facecolor=color, alpha=spec.bar_alpha, edgecolor=color, linewidth=s.line_width)
             for k in ('whiskers', 'caps', 'medians'):
@@ -688,30 +846,154 @@ def _draw_categories(ax, spec: GraphSpec, tables, handles):
             ok = [k for k, v in enumerate(data) if v.size > 1]
             if ok:
                 vp = ax.violinplot([data[k] for k in ok], positions=pos[ok], widths=w * 0.9,
-                                   showmeans=False, showmedians=True, showextrema=False)
+                                   showmeans=False, showmedians=True, showextrema=False,
+                                   **_orient(horiz))
                 for b in vp['bodies']:
                     b.set(facecolor=color, alpha=spec.bar_alpha, edgecolor=color, linewidth=s.line_width)
                 if 'cmedians' in vp:
                     vp['cmedians'].set(color=color, linewidth=s.line_width * 1.5)
         elif spec.chart == 'strip':
-            means = [float(v.mean()) if v.size else math.nan for v in data]
-            errs = [(_err(v, spec.bar_err) if spec.bar_err != 'none' else 0.0) for v in data]
             half = w * 0.35
-            ax.hlines(means, pos - half, pos + half, colors=color, linewidth=s.line_width * 1.5, zorder=4)
+            (ax.vlines if horiz else ax.hlines)(means, pos - half, pos + half, colors=color,
+                                                linewidth=s.line_width * 1.5, zorder=4)
             if spec.bar_err != 'none' and s.err_style != 'none':
-                ax.errorbar(pos, means, yerr=np.nan_to_num(errs), fmt='none', ecolor=ecolor,
+                ek = {'xerr' if horiz else 'yerr': np.nan_to_num(errs)}
+                ax.errorbar(*pt(pos, means), **ek, fmt='none', ecolor=ecolor,
                             elinewidth=s.err_width, capsize=s.capsize, capthick=s.err_width, zorder=4)
+                tops = [max(t, m + (e if np.isfinite(e) else 0)) for t, m, e in zip(tops, means, errs)]
         if spec.bar_points or spec.chart == 'strip':
             for p, v in zip(pos, data):
                 jit = rng.uniform(-1, 1, v.size) * w * spec.point_jitter * 2
-                ax.plot(p + jit, v, ls='none', alpha=s.alpha, zorder=5, **_marker_kw(s, color))
+                ax.plot(*pt(p + jit, v), ls='none', alpha=s.alpha, zorder=5, **_marker_kw(s, color))
+        for p, c, t in zip(pos, names, tops):
+            where[(i, c)] = (float(p), t)
+        for a in set(ax.get_children()) - before:  # the window picks a series by its artists
+            a.set_gid(f'series:{i}')
         if s.legend:
             handles.append((Patch(facecolor=color, edgecolor=color, alpha=max(spec.bar_alpha, 0.35)),
                             _label(s, i)))
-    ax.set_xticks(range(len(cats)))
-    ax.set_xticklabels(cats)
-    if cats:
-        ax.set_xlim(-0.6, len(cats) - 0.4)
+    if horiz:
+        ax.set_yticks(range(len(cats)))
+        ax.set_yticklabels(cats)
+        if cats:
+            ax.set_ylim(len(cats) - 0.4, -0.6)  # first category on top
+    else:
+        ax.set_xticks(range(len(cats)))
+        ax.set_xticklabels(cats)
+        if cats:
+            ax.set_xlim(-0.6, len(cats) - 0.4)
+    return where
+
+
+# ---- significance (stats.py) ----
+
+def stats_options(spec: GraphSpec, tables: dict) -> dict:
+    """What a significance test can compare: {name: ({category: values},
+    [series indexes])}. Series of one Y column that sit alone in their
+    categories (colour = the category) count as one; others one each."""
+    tabs = tables if isinstance(tables, dict) else {t.name: t for t in tables}
+    shown = [(i, s) for i, s in enumerate(spec.series) if s.visible]
+    vals = {i: category_values(s, tabs, _vscale(spec)) for i, s in shown}
+    cats = categories(spec, tabs)
+    keys = {}
+    for i, s in shown:
+        keys.setdefault(s.y if s.auto else f'#{i}', []).append(i)
+    out = {}
+    for k, idx in keys.items():
+        seen, disjoint = set(), True
+        for i in idx:
+            if seen & set(vals[i]):
+                disjoint = False
+            seen |= set(vals[i])
+        if disjoint and (len(idx) > 1 or k.startswith('#') is False):
+            merged = {}
+            for i in idx:
+                merged.update(vals[i])
+            name = k if not k.startswith('#') else _label(spec.series[idx[0]], idx[0])
+            out[name] = ({c: merged[c] for c in cats if c in merged}, idx)
+        else:
+            for i in idx:
+                out[_label(spec.series[i], i)] = ({c: vals[i][c] for c in cats if c in vals[i]}, [i])
+    return out
+
+
+def stats_groups(spec: GraphSpec, tables: dict) -> tuple[dict, list]:
+    """{category: values} compared by the test and the series they come from."""
+    opts = stats_options(spec, tables)
+    if not opts:
+        return {}, []
+    return opts.get(spec.stats.series) or next(iter(opts.values()))
+
+
+def stats_result(spec: GraphSpec, tables: dict):
+    from . import stats as ST
+
+    groups, _pick = stats_groups(spec, tables)
+    st = spec.stats
+    pairs = ST.pairs_for(list(groups), st.pairs_mode, st.ref, st.pairs)
+    return ST.run(groups, st.method, pairs, st.tail, st.correction, st.paired, st.alpha)
+
+
+def _draw_stats(ax, spec: GraphSpec, tables, where: dict, res):
+    """Brackets with stars / p values over the compared categories."""
+    from . import stats as ST
+
+    st = spec.stats
+    groups, pick = stats_groups(spec, tables)
+    cats = list(groups)
+    horiz = spec.horizontal
+
+    def loc(c):
+        return next((where[(i, c)] for i in pick if (i, c) in where), None)
+
+    lo, hi = ax.get_xlim() if horiz else ax.get_ylim()
+    span = abs(hi - lo) or 1.0
+    gap, tip = st.gap * span, st.tip * span
+    items = []
+    for a, b, p in res.pairs:
+        text = ST.mark(p, st.display, st.levels, st.alpha, st.ns)
+        la, lb = loc(a), loc(b)
+        if not text or la is None or lb is None:
+            continue
+        items.append((abs(cats.index(a) - cats.index(b)), la, lb, text, a, b))
+    items.sort(key=lambda t: t[0])
+    placed = []
+    font = {'size': st.font_size, 'weight': 'bold' if st.bold else 'normal',
+            'color': spec.tick_font.color}
+    fam = st.font_family or spec.font_family
+    if fam:
+        font['family'] = fam
+    top_all = max([v[1] for v in where.values() if np.isfinite(v[1])] or [hi])
+    peak = top_all
+    for _d, la, lb, text, a, b in items:
+        x0, x1 = sorted((la[0], lb[0]))
+        inside = [v[1] for (i, c), v in where.items() if x0 - 1e-9 <= v[0] <= x1 + 1e-9 and np.isfinite(v[1])]
+        y = max(inside or [top_all]) + gap
+        for px0, px1, py in placed:
+            if px0 <= x1 + 1e-9 and x0 <= px1 + 1e-9:
+                y = max(y, py + gap * (1.6 if st.display != 'stars' else 1.3))
+        placed.append((x0, x1, y))
+        if st.bracket == 'tick':
+            cs, vs = [x0, x0, x1, x1], [y - tip, y, y, y - tip]
+        else:
+            cs, vs = [x0, x1], [y, y]
+        xs, ys = (vs, cs) if horiz else (cs, vs)
+        ax.plot(xs, ys, color=spec.tick_font.color, lw=st.line_width, solid_capstyle='butt', zorder=6,
+                gid='stats', clip_on=False)
+        mid = (x0 + x1) / 2
+        if horiz:
+            ax.text(y + gap * 0.15, mid, text, ha='left', va='center', rotation=270, fontdict=font,
+                    zorder=7, gid='stats')
+        else:
+            ax.text(mid, y + (gap * 0.05 if text != 'ns' else gap * 0.12), text, ha='center',
+                    va='bottom', fontdict=font, zorder=7, gid='stats')
+        peak = max(peak, y)
+    if placed:  # room for the last marks (autoscaled axes)
+        room = peak + gap * (1.6 if st.display != 'stars' else 1.1)
+        if horiz:
+            ax.plot([room], [cats and 0], alpha=0, gid='stats')
+        else:
+            ax.plot([cats and 0], [room], alpha=0, gid='stats')
 
 
 def _draw_hist(ax, spec: GraphSpec, tables, handles):
@@ -835,25 +1117,40 @@ def draw(fig, spec: GraphSpec, tables) -> dict:
         ax = fig.add_axes((spec.plot_x, spec.plot_y, max(spec.plot_w, 0.02), max(spec.plot_h, 0.02)))
     ax.set_facecolor(spec.background)
     handles = []
-    xticks = []
-    if spec.chart in CATEGORY_CHARTS:
-        _draw_categories(ax, spec, tabs, handles)
+    xticks, yticks = [], []
+    stats_res = None
+    cat = spec.chart in CATEGORY_CHARTS
+    if cat:
+        where = _draw_categories(ax, spec, tabs, handles)
+        if spec.stats.on:
+            try:
+                stats_res = stats_result(spec, tabs)
+                _draw_stats(ax, spec, tabs, where, stats_res)
+            except Exception:  # noqa: BLE001  a test that cannot run draws no marks
+                import traceback
+
+                traceback.print_exc()
     elif spec.chart == 'hist':
         _draw_hist(ax, spec, tabs, handles)
     elif spec.chart == 'heatmap':
         _draw_heatmap(fig, ax, spec, tabs, handles)
     else:
+        xc, yc = axis_cats(spec, tabs, 'x'), axis_cats(spec, tabs, 'y')
         for i, s in enumerate(spec.series):
             if s.visible:
                 before = set(ax.get_children())
-                xticks = _draw_xy(ax, s, i, tabs, handles, spec.x.scale, spec.y.scale) or xticks
+                xticks = _draw_xy(ax, s, i, tabs, handles, spec.x.scale, spec.y.scale, xc, yc) or xticks
                 for a in set(ax.get_children()) - before:  # the window picks a series by its artists
                     a.set_gid(f'series:{i}')
         if xticks:
             ax.set_xticks(range(len(xticks)))
             ax.set_xticklabels(xticks)
-    _axis(ax, 'x', spec.x, spec, ticks_fixed=spec.chart in CATEGORY_CHARTS or bool(xticks))
-    _axis(ax, 'y', spec.y, spec)
+        if yc:
+            yticks = yc
+            ax.set_yticks(range(len(yc)))
+            ax.set_yticklabels(yc)
+    _axis(ax, 'x', spec.x, spec, ticks_fixed=(cat and not spec.horizontal) or bool(xticks))
+    _axis(ax, 'y', spec.y, spec, ticks_fixed=(cat and spec.horizontal) or bool(yticks))
     for side, on in (('top', spec.spine_top), ('right', spec.spine_right)):
         ax.spines[side].set_visible(on)
     for sp in ax.spines.values():
@@ -914,7 +1211,7 @@ def draw(fig, spec: GraphSpec, tables) -> dict:
         texts.append(txt)
     _tick_fonts(ax, spec)
     return {'ax': ax, 'legend': legend, 'texts': texts, 'title': title,
-            'xlabel': ax.xaxis.label, 'ylabel': ax.yaxis.label}
+            'xlabel': ax.xaxis.label, 'ylabel': ax.yaxis.label, 'stats': stats_res}
 
 
 def save_figure(path, spec: GraphSpec, tables) -> str:
@@ -960,3 +1257,198 @@ def measure_graph(rows: list, title: str, name: str, folder: str = '') -> GraphD
     spec.x.label = by
     spec.y.label = y
     return GraphData(title, [t], spec, name, folder)
+
+
+# ---------------------------------------------------------------------------
+# 축 배치 (Mapping) -> series, 그룹
+# ---------------------------------------------------------------------------
+
+def value_columns(spec: GraphSpec) -> list:
+    """The Y columns the mapping draws as values (categories excluded)."""
+    m = spec.mapping
+    if spec.chart in CATEGORY_CHARTS and m.y_cat and not m.x_cat:
+        return [m.x] if m.x else []
+    if spec.chart in CATEGORY_CHARTS and m.y_cat:
+        return []
+    return [y for y in m.ys if y]
+
+
+def category_column(spec: GraphSpec) -> str:
+    """The column whose values are the categories ('' = none)."""
+    m = spec.mapping
+    if spec.chart in CATEGORY_CHARTS:
+        if m.y_cat and not m.x_cat:
+            return m.ys[0] if m.ys else ''
+        return m.x
+    if spec.chart == 'xy':
+        if m.x_cat and m.x:
+            return m.x
+        if m.y_cat and m.ys:
+            return m.ys[0]
+    return ''
+
+
+def group_column(spec: GraphSpec) -> str:
+    """The column the 그룹 list picks values of: the category axis, else the
+    colour column."""
+    c = category_column(spec)
+    if c:
+        return c
+    col = spec.mapping.color
+    return col if col and col != '@y' else ''
+
+
+def group_values(spec: GraphSpec, tables: dict) -> list:
+    """[(value, n rows)] of the group column, in the 그룹 order."""
+    tabs = tables if isinstance(tables, dict) else {t.name: t for t in tables}
+    col = group_column(spec)
+    t = tabs.get(spec.mapping.table)
+    if t is None or col not in t.columns:
+        return []
+    counts = {}
+    for v in t.values(col):
+        k = _text(v)
+        counts[k] = counts.get(k, 0) + 1
+    return [(k, counts[k]) for k in _ordered(list(counts), spec.cat_order)]
+
+
+def build_series(spec: GraphSpec, tables: dict) -> GraphSpec:
+    """Make spec.series from spec.mapping (when on): one series per Y column
+    and colour value; styles of series with the same name are kept, series of
+    other tables stay (overlays such as fitted curves)."""
+    m = spec.mapping
+    tabs = tables if isinstance(tables, dict) else {t.name: t for t in tables}
+    t = tabs.get(m.table)
+    if not m.on or t is None:
+        return spec
+    old = {(s.key or s.label): s for s in spec.series if s.table == m.table}
+    keep = [s for s in spec.series if s.table != m.table]
+    cat = spec.chart in CATEGORY_CHARTS
+    spec.horizontal = bool(cat and m.y_cat and not m.x_cat)
+    gcol = group_column(spec)
+    if cat:
+        cat_col = category_column(spec)
+        vals = value_columns(spec)
+    elif spec.chart == 'hist':
+        cat_col, vals = '', [y for y in m.ys if y]
+    else:
+        cat_col, vals = m.x, [y for y in m.ys if y][:1 if spec.chart == 'heatmap' else None]
+    vals = [v for v in vals if v in t.columns]
+    color = m.color
+    if color not in ('', '@y') and color not in t.columns:
+        color = '@y'
+    made = []
+    if color in ('', '@y'):
+        for v in vals:
+            made.append((v, '', '', v))
+    else:
+        cv = _ordered(_texts(t, color, range(len(t.rows))), spec.cat_order if color == gcol else [])
+        hid = set(spec.cat_hidden) if color == gcol else set()
+        for v in vals:
+            for c in cv:
+                if c in hid:
+                    continue
+                made.append((v, color, c, c if len(vals) == 1 else f'{v} · {c}'))
+    out = []
+    for k, (y, where, equals, label) in enumerate(made):
+        s = old.get(label)
+        new = Series(table=m.table, label=label, key=label)
+        if s is not None:
+            for f in STYLE_FIELDS + ('legend', 'visible', 'label'):
+                setattr(new, f, getattr(s, f))
+        else:
+            new.color = PALETTE[k % len(PALETTE)] if color != '' else PALETTE[0]
+            if cat:
+                new.marker_size = 3.5
+            elif spec.chart == 'xy' and m.agg == 'none' and not m.x_cat:
+                new.style = 'marker'
+        new.auto = True
+        if spec.horizontal:
+            new.x, new.y = cat_col, y
+        elif cat:
+            new.x, new.y = cat_col, y
+        else:
+            new.x, new.y = (m.x if spec.chart != 'hist' else ''), y
+            new.x_cat = bool(m.x_cat and m.x and spec.chart == 'xy')
+            new.y_cat = bool(m.y_cat and spec.chart == 'xy')
+            new.z = m.z if spec.chart == 'heatmap' else ''
+            new.agg = m.agg if spec.chart == 'xy' and not new.y_cat else 'none'
+            new.agg_err = m.err
+            if m.agg != 'none' and m.err != 'none':
+                new.err_style = new.err_style if new.err_style != 'none' else 'bar'
+        new.where, new.equals = where, equals
+        if gcol and spec.cat_hidden:
+            new.hide_col, new.hide = gcol, list(spec.cat_hidden)
+        out.append(new)
+    spec.bar_err = m.err
+    spec.series = out + keep
+    # axis names follow the columns unless typed
+    xs = [m.x] if m.x else []
+    if spec.chart == 'hist':
+        names = (', '.join(vals), 'count' if not spec.hist_density else 'density')
+    elif spec.horizontal:
+        names = (', '.join(vals), cat_col)
+    else:
+        names = (m.x, ', '.join(vals) if not (cat and not vals) else '')
+    for a, name in zip((spec.x, spec.y), names):
+        if not a.label or a.label in _auto_names(tabs, m) or a.label == '':
+            a.label = name
+    del xs
+    return spec
+
+
+def _auto_names(tabs, m: Mapping) -> set:
+    t = tabs.get(m.table)
+    cols = set(t.columns) if t is not None else set()
+    out = set(cols) | {'count', 'density'}
+    ys = [y for y in m.ys if y]
+    for k in range(2, len(ys) + 1):
+        out.add(', '.join(ys[:k]))
+    return out
+
+
+def text_columns(t: Table) -> list:
+    return [c for c in t.columns if not t.is_numeric(c)]
+
+
+def guess_mapping(spec: GraphSpec, tables: dict, table: str = '') -> Mapping:
+    """A starting 축 배치 for a table: the tool's own columns when its graph
+    uses that table, else a text column with several values as categories
+    and the first measurement as the value."""
+    tabs = tables if isinstance(tables, dict) else {t.name: t for t in tables}
+    first = next((s for s in spec.series if s.table in tabs), None)
+    name = table or (first.table if first else next(iter(tabs), ''))
+    t = tabs.get(name)
+    m = Mapping(on=False, table=name)
+    if t is None:
+        return m
+    nums = [c for c in t.numeric_columns() if c not in ('timepoint', 'label', 'n', 'shown')]
+    texts = [c for c in t.columns if c not in nums]
+    cats = [c for c in ('group', 'image', 'region', 'roi', 'cell', 'channel') if c in t.columns
+            and len(set(t.values(c))) > 1]
+    cats += [c for c in texts if c not in cats and 1 < len(set(t.values(c))) < max(len(t.rows), 2)]
+    if first is not None and first.table == name:
+        m.x = first.x
+        m.ys = list(dict.fromkeys(s.y for s in spec.series if s.table == name and s.y))
+        m.x_cat = spec.chart in CATEGORY_CHARTS or bool(first.x and not t.is_numeric(first.x))
+        if first.split:
+            m.color = first.split
+        elif first.where and all(s.where == first.where for s in spec.series if s.table == name):
+            m.color = first.where
+        else:
+            m.color = '@y'
+        m.err = spec.bar_err if spec.chart in CATEGORY_CHARTS else first.agg_err
+        m.agg = first.agg if spec.chart == 'xy' else 'none'
+        m.z = first.z
+        return m
+    m.x = cats[0] if cats else (nums[0] if nums else '')
+    m.x_cat = bool(cats)
+    ys = [c for c in nums if c != m.x]
+    m.ys = ys[:1]
+    m.color = '@y'
+    return m
+
+
+def recommend_chart(m: Mapping, tables: dict) -> str:
+    """'strip' (점 그림) for values per category, 'xy' for two numbers."""
+    return 'strip' if m.x_cat or m.y_cat else 'xy'

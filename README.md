@@ -41,7 +41,12 @@ feature is added; keep the bracketed words only when the 입자 ROI tab's
 > cross-correlation with a key frame (as in Fiji's Correct 3D Drift plugin),
 > and fitted with ImageJ's Curve Fitter "Exponential recovery" function
 > y = a(1 − e^(−kt)) + c to give the mobile fraction a/(1 − c) and the
-> half-time t½ = ln 2/k.
+> half-time t½ = ln 2/k; groups were compared with the test given in each
+> figure legend (chosen from Shapiro-Wilk normality and Levene's
+> equal-variance tests: Student's or Welch's t-test, Mann-Whitney U, one-way
+> ANOVA with Tukey's, Welch's ANOVA with Games-Howell or Kruskal-Wallis with
+> Dunn's post hoc test, with Holm correction for multiple pairwise tests)
+> computed with SciPy.
 
 ## Reading raw files
 
@@ -558,25 +563,27 @@ From Python: `cytosol.figure` (`FigureSpec`, `fill_row_by_channels`, `save_figur
 
 ### 그래프 편집 창 (graph editor)
 
-`View › 현재 탭의 그래프 편집 창` (`Ctrl+G`), `Tool › (feature) › 그래프 편집 창…` or the
-button under each tab's graph opens that graph (FRAP curves and group means, line profile,
-distance bands, Coloc 2 histogram, the measurement tables of 세포질 ROI / 입자 ROI / 강도 측정)
-in its own window: the graph and its settings in the top 70 %, the data in the bottom 30 %.
-It starts as the tab draws it; chart type (XY, bars, dot plot, box, violin, histogram,
-heat map), x / y / error columns, filters, per-value split and mean / median aggregation,
-every series' color, line and marker shape and size, error bar look, axis ranges and tick
-spacing (automatic by default, the values in use shown), log axes, fonts (family, size,
-bold, italic, color), legend (position, title, extra entries) and text boxes can be
-changed. The plot area, title, axis labels, text boxes and legend are objects moved and
-resized on the graph (resize handle; font size for text), the preview zooms like the image
-preview (`Cmd`/`Ctrl`+drag, `[` `]`, `Cmd`/`Ctrl`+wheel), each axis has min / max, tick
-spacing, unit and value scale (e.g. s → min), and any window can take in the results of other
-analyses (or a CSV) from its 데이터 menu; View › 그래프 편집 창 › 새 그래프 opens an empty
-one. Exports: PNG / TIFF / PDF /
-SVG, the plotted data, a selected series, the summary (n, mean, SD, SEM, …) and every result
-table as CSV, and the settings as JSON (`format: cytosol-viewer-graph`, also loadable as a
-style only). Code: `cytosol.graph` (model, drawing), `cytosol.graph_window`,
-`cytosol.graph_sources` (each tab's graph).
+`그래프 › 현재 탭의 그래프 편집 창` (`Ctrl+G`) or `그래프 › (feature)` opens a tab's graph
+(FRAP curves and group means, line profile, distance bands, Coloc 2 histogram, the
+measurement tables of 세포질 ROI / 입자 ROI / 강도 측정) in the one graph window (graphs in
+its sidebar). The **새 그래프** chips (one per analysis, plus CSV) open a step window:
+chart kind (XY, bars, dot plot, box, violin, histogram, heat map; one recommended from the
+table's columns) → axes (each of X and Y as 범주 = categories or 값 = values, several Y
+columns, colour split by Y column or by a column, error bars SD / SEM / 95 % CI) → groups
+(check = drawn, drag = order), with a preview. The inspector has the same steps in its
+**데이터** tab (`GraphSpec.mapping` → `graph.build_series`), the look in **모양** (colours,
+points / lines, axes with range, ticks, unit and value scale, title, legend, fonts, figure,
+text boxes; clicking a part of the graph jumps to its card) and significance marks in
+**통계**: Shapiro-Wilk / Levene data check, a recommended test (t, Welch, Mann-Whitney U,
+paired t, Wilcoxon, one-way ANOVA + Tukey, Welch ANOVA + Games-Howell, Kruskal-Wallis +
+Dunn), one- or two-tailed, Holm / Bonferroni / BH correction, all pairs / against a
+reference / chosen pairs, brackets with stars or p values and a caption sentence
+(`cytosol.stats`, SciPy); their initial look is set in Preferences. The plot area, title,
+axis labels, text boxes and legend are moved and resized on the graph, the preview zooms
+like the image preview. Saved through 파일 › 내보내기 (PNG / TIFF / PDF / SVG, plotted data,
+summary and result tables as CSV, settings JSON `format: cytosol-viewer-graph`). Code:
+`cytosol.graph` (model, drawing), `cytosol.graph_editors` (step window, 축 배치, 그룹,
+statistics editors), `cytosol.graph_window`, `cytosol.graph_sources`, `cytosol.stats`.
 
 Run from source: `python -m cytosol.app [files…]`
 

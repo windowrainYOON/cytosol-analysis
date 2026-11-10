@@ -168,10 +168,11 @@ BOX_RADIUS = 16  # the floating canvas / inspector boxes
 BOX_GAP = 10  # space around them (window edge, between the boxes)
 # token name, or (white, alpha) for the see-through (glass) variant
 _REGIONS = {
+    # inspector in the light grey of the pages (owner choice 2026-11-10: no white box)
     ('light', False): {'sidebar': 'region-base', 'canvas': 'region-canvas',
-                       'inspector': 'region-box', 'shade': 0.0},
+                       'inspector': 'background-secondary', 'shade': 0.0},
     ('dark', False): {'sidebar': 'region-base', 'canvas': 'region-canvas',
-                      'inspector': 'region-box', 'shade': 0.0},
+                      'inspector': 'background-secondary', 'shade': 0.0},
     # glass: the sidebar adds no tint of its own, so it is the very material
     # the title bar shows (one colour from the window top down, v0.58.1)
     ('light', True): {'sidebar': 0.0, 'canvas': 0.55, 'inspector': 0.80, 'shade': 0.0},

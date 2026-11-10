@@ -34,7 +34,7 @@ hidden, and the open tabs are saved in the project.
 | **일괄 분석 실행…** / **일괄 분석 결과 보기…** (Batch analysis / results) | `Ctrl+B` / `Ctrl+Shift+B` | Tick groups and analyses, run them at once, review and fix per image ([Batch analysis](15-batch.md)) |
 | **일괄 분석 설정 저장…** / **불러오기…** (Save / load batch settings) | | Analysis and group choice plus the settings of those tabs (JSON) |
 | **작업 기록 보기…** (Work log) | `Ctrl+Shift+L` | The [work log](#work-log) window (its CSV is saved from the export window, **프로젝트 · 작업 기록**) |
-| **Preferences…** (on macOS in the app menu, `⌘,`) | | Loading options, mouse sensitivity, initial values of markers and tabs (see [Preferences](#preferences)) |
+| **Preferences…** (on macOS in the app menu, `⌘,`) | | Loading options, mouse sensitivity, initial values of markers, tabs and significance marks (see [Preferences](#preferences)) |
 | **종료** (Quit) | `⌘Q` (macOS) | Asks first about unsaved changes |
 
 ## Feature menus (Tool)
@@ -144,6 +144,14 @@ Windows: the registry).
   options, channels to measure …) as initial values, used at start-up and by
   **새 프로젝트**. Opening a project uses the project's own settings.
 - **저장한 탭 초기값 지우기…**: start with the program's defaults again.
+
+**그래프 · 유의성 표시 초기값** (initial look of significance marks)
+
+The [graph editor](16-graph.md#statistics-and-significance-marks-통계--유의성-표시)'s
+significance marks start with these: display (stars / p value / both), star levels, ns,
+tails, α, bracket shape / line width / end length / spacing, font (the graph's font), text
+size, bold stars, caption sentence. The test is recommended for each data set, so it is not
+here. **지금 그래프 설정 가져오기** (take the current graph's), **프로그램 기본값으로**.
 
 **마커 초기값** (initial values of the markers)
 

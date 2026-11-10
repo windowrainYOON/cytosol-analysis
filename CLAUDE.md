@@ -21,15 +21,16 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.59.0)
+## Window structure (v0.61.0)
 
 - **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
   v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
   (`region-base`); canvas and inspector float on it as two large rounded
   boxes (`theme.BOX_RADIUS` 16, hairline edge, `theme.BOX_GAP` 10 from the
   window edge and between them = `PaneSplitter` margins / handle width, no
-  shade: `region_shade` 0). Inspector box `region-box` brightest, canvas box
-  `region-canvas` a shade darker (`theme.region_color(role)`, opaque or the
+  shade: `region_shade` 0). Inspector box in the pages' light grey
+  `background-secondary` (owner choice 2026-11-10, v0.61; it was the white
+  `region-box`), canvas box `region-canvas` (`theme.region_color(role)`, opaque or the
   glass variant). Padding `theme.REGION_MARGIN` 20 in each region, 24
   between the inspector chips and the page. Pages in a QScrollArea must
   not fill their background (`theme.unify` turns it off), or they paint a
@@ -125,25 +126,35 @@ owner writes in Korean, so reply in Korean.
     `IMPORT_KINDS`; it only pre-filters the file chooser, `import_paths`
     still detects by content).
   - **그래프 편집 창** (owner request 2026-10-30, v0.46; one window since
-    v0.59): every graph is a `GraphDoc` in the sidebar of the one
-    `MainWindow.graph_win` (`GraphWindow`: sidebar | canvas box with one
-    source chip per tool (disabled + tool tip without results), graph, data
-    table | inspector `ChipTabs` 종류 / 값 / 모양 / 컴포넌트, the first three
-    split into 선택한 요소 (`_sel_section`, follows the clicked artist) and
-    전체 그래프). `GraphWindow` attributes (`spec`, `key`, `tables()`…)
-    delegate to the current doc. `MainWindow.open_graph(key)` /
-    `open_blank_graph()` return the window with that doc shown, sources in
-    `MainWindow.graph_sources()` → `graph_sources.py`; opened from the 그래프
-    menu only (no buttons under tab graphs). Saved via the export window
-    (kind `graph`). Features not built yet (기준선, 피팅 곡선, 유의성, 보조
-    y축) stay hidden. It opens with the tab's graph; a new feature graph gets a `graph_sources` function and an
-    entry in `graph_sources()`. Every new graph option belongs in
-    `GraphSpec` / `Series` (saved and loaded with it). Since v0.47 every
-    object on the graph (plot area, title, axis labels, text boxes, legend)
-    is moved / resized with the mouse, the preview zooms like the canvas,
-    and the window's 데이터 menu imports any other analysis
-    (`graph_sources(all_data=True)`) or a CSV; results with no tab graph
-    (e.g. 일괄 분석) only need an `all_data` entry.
+    v0.59; step flow since v0.61): every graph is a `GraphDoc` in the sidebar
+    of the one `MainWindow.graph_win` (`GraphWindow`: sidebar (right-click:
+    new / duplicate / rename / delete) | canvas box with the **새 그래프**
+    chips (one per tool + CSV…; disabled + tool tip without results), graph,
+    data table | inspector `ChipTabs` **데이터** / **모양** / **통계**).
+    `GraphWindow` attributes (`spec`, `key`, `tables()`…) delegate to the
+    current doc. `MainWindow.open_graph(key)` opens the tab's own graph (from
+    the 그래프 menu); a chip runs `GraphWindow.start_wizard(key)` /
+    `start_wizard_csv` → `graph_editors.GraphWizard` (종류 → 축 배치 → 그룹,
+    preview) → `add_from_wizard` (a `free<n>` doc that keeps `_source` in
+    projects). The 축 배치 is `GraphSpec.mapping` (`graph.Mapping`: table,
+    X / Y each 범주 or 값 (`x_cat` / `y_cat`), several `ys`, `color` '' / '@y' /
+    column, `err`, `agg`); `graph.build_series` makes the series from it
+    (series of other tables stay as overlays; styles kept by `Series.key`),
+    groups via `cat_order` / `cat_hidden` (`Series.hide`), category charts with
+    Y 범주 draw horizontally (`spec.horizontal`). Shared editors in
+    `graph_editors.py`: `KindPicker`, `MappingEditor`, `GroupEditor`,
+    `StatsEditor`, `StatsDialog`. Significance (`GraphSpec.stats`,
+    `graph.Stats`; `cytosol/stats.py`: Shapiro / Levene check, recommended
+    test, pairs, corrections, stars, caption; brackets drawn by
+    `graph._draw_stats`, result in `art['stats']`); its look's initial
+    values are Preferences › 그래프 · 유의성 표시 초기값
+    (`view_settings.defaults('stats')`, `graph_editors.apply_stats_defaults`),
+    the test is always recommended per data. Clicking a graph part jumps to
+    its 모양 card (`_show_selection`). Saved via the export window (kind
+    `graph`). Features not built yet (기준선, 피팅 곡선, 보조 y축) stay hidden.
+    A new feature graph gets a `graph_sources` function and an entry in
+    `graph_sources()`; every new graph option belongs in `GraphSpec` / `Series`
+    (saved and loaded with it, nested dataclasses in `graph._NESTED`).
   - Rule from the owner (2026-10-26, v0.25; changed 2026-11-05, v0.59):
     every feature gets its own menu under **Tool** (`tools.addMenu`) with
     its tab item and its loads. Every save goes through **파일 › 내보내기…**
@@ -313,6 +324,7 @@ per-widget style sheets.
 | `marker_panel.py` | Scale bar, time stamp, bleach ROI display |
 | `figure.py`, `figure_window.py` | Figure window (image table, insets, scale bars, per-cell / per-inset brightness, PNG/TIFF/PDF/SVG; drag and drop: `FigureTable` + `FigureWindow.drop_on` / `move_cell` / `place`, `move_whole` 행/열 전체 옮기기). v0.59: regions sidebar (`fig_list`, `FigureWindow.figures` = [[name, FigureSpec]], `new_figure` / `duplicate_figure` (`copy_spec`) / `show_figure` / `remove_figure`, `export_all`) | canvas box (table + preview) | inspector of fixed width (`INSPECTOR_W`, `flow.reflow(right, min_n=2)`, never clipped); table: one extra ＋ row / column (`add_at_end`), `FigureHeader` (hover red × beside the title, title drag with a blue line = `move_label`); projects keep `figures` (+ `figure` for older versions) |
 | `export_dialog.py`, `exporter.py` | 파일 › 내보내기 window (`KINDS`, `ExportDialog.run(ask=)`) and the writer (`exporter.run` → `Result(files, errors, skipped)`) |
+| `graph_editors.py`, `stats.py` | Step window (새 그래프), 축 배치 / 그룹 / significance editors; significance tests (SciPy), stars, caption |
 | `graph.py`, `graph_window.py`, `graph_sources.py` | 그래프 편집 창: `GraphSpec` (every graph setting, JSON `format: cytosol-viewer-graph`) drawn by `graph.draw` from result `Table`s; `GraphWindow` (graph + settings top 70 %, data table bottom 30 %, drag text boxes / legend); `graph_sources` turns each tab's graph into `GraphData` |
 | `groups.py`, `image_tree.py` | Image groups and the grouped image list |
 | `flow.py` | `FlowLayout` and `reflow` (panel rows that follow the pane width) |
@@ -461,3 +473,4 @@ not affected.
 | dev branch | 0.58.0 | Owner request, after mockups: canvas and inspector float as rounded boxes on the sidebar layer (no shade); wide-capsule switch knobs; no hairlines between grouped rows; **검출 자동화** in 세포질 ROI / 입자 ROI (one switch, detail values behind 세부 설정…, edited values marked · 수정됨 with reset, per-value 자동 switches gone, 검출 방식 a pop-up, split/merge on and frame cells 제외 by default); Crop tab removed: Crop icon on the canvas toolbar (draw / move / show while on), crops as rows under their image in the sidebar |
 | dev branch | 0.58.1 | Owner request: one colour per region with Liquid Glass on: the canvas view takes the glass colour once the glass is attached (`theme.refresh_regions`; it had kept the opaque `region-canvas` picked before), the glass sidebar adds no tint of its own and the title bar draws no surface (`setTitlebarAppearsTransparent_`), so the window top and the sidebar show the same material |
 | dev branch | 0.59.0 | Owner request, after mockups: 파일 › 내보내기… (⌘E) one window for every export (target, destination, 이미지별 폴더, kinds list + settings cards; polygon crops cut as their box with the outside 0), export items removed from the feature menus (Tool › Crop / 이미지 정보 / Figure gone); crop context menu: 이 ROI 복사 / 붙여넣기, 수정 (8 handles), 점 편집 (polygon points), 삭제…; menu bar 파일 · Tool · View · 그래프 · Figure; one graph editor window (graphs in a sidebar, a data chip per tool, inspector tabs 종류 / 값 / 모양 / 컴포넌트 with 선택한 요소 / 전체 그래프, unbuilt features hidden); Figure window with a figures sidebar, the saves on a top toolbar, a fixed-width inspector that never clips, ＋ to add rows / columns, hover × to delete, title drag to move |
+| dev branch | 0.61.0 | Owner request, after mockups (v1–v3): graph editor as a step flow: 새 그래프 chips (per tool + CSV) open 종류 → 축 배치 → 그룹 with a preview; X / Y each 범주 or 값 (horizontal category charts), several Y columns, colour split, groups checked / ordered; inspector 데이터 / 모양 / 통계 (old 종류 / 값 / 모양 / 컴포넌트, 선택한 요소, series list, 데이터 menu, sidebar buttons removed); significance marks (data check, recommended test, tails, corrections, pairs, stars / p, brackets, caption) with a 통계 window and Preferences initial values; inspector box in the pages' light grey; merged with the distance-bands tab split (0.60.0) |

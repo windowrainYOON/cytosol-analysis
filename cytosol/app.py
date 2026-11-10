@@ -2513,6 +2513,17 @@ class MainWindow(QMainWindow):
                     continue
                 if key.startswith('free') and key not in docs:
                     gw = self.open_blank_graph(key, show=False)
+                    src = spec.get('_source')
+                    srcs = self.graph_sources(all_data=True)
+                    if src in srcs:  # made with 새 그래프 from a tool: its data again
+                        try:
+                            got = srcs[src][2]()
+                        except Exception:
+                            traceback.print_exc()
+                            got = None
+                        gw.doc.source, gw.doc.data_fn = src, srcs[src][2]
+                        if got is not None:
+                            gw.set_data(got)
                     gw.use_spec(spec)
                     if spec.get('_title'):
                         gw.doc.title = str(spec['_title'])

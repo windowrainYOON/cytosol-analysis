@@ -12,6 +12,7 @@ import time
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
@@ -224,6 +225,27 @@ class PreferencesDialog(QDialog):
         tl.addLayout(row)
         lay.addWidget(tabs)
 
+        # ---- initial values of significance marks on graphs ----
+        lay.addWidget(theme.section_header('그래프 · 유의성 표시 초기값'))
+        snote = QLabel('그래프 편집 창의 통계 · 유의성 표시가 이 값으로 시작합니다. 검정 방법은 데이터마다 '
+                       '추천하므로 여기서 정하지 않습니다. 바꾸면 바로 저장됩니다.')
+        snote.setWordWrap(True)
+        theme.hint(snote)
+        lay.addWidget(snote)
+        srow = QHBoxLayout()
+        take_s = QPushButton('지금 그래프 설정 가져오기')
+        take_s.setEnabled(win is not None)
+        take_s.clicked.connect(self.take_stats)
+        reset_s = QPushButton('프로그램 기본값으로')
+        reset_s.clicked.connect(self.reset_stats)
+        srow.addWidget(take_s)
+        srow.addStretch()
+        srow.addWidget(reset_s)
+        lay.addLayout(srow)
+        self.stats_box = QGroupBox('')
+        self._build_stats_form(QFormLayout(self.stats_box))
+        lay.addWidget(self.stats_box)
+
         # ---- initial values of the markers (their own cards) ----
         from .marker_panel import MarkerPanel
         lay.addWidget(theme.section_header('마커 초기값'))
@@ -257,8 +279,8 @@ class PreferencesDialog(QDialog):
         self.markers.changed.connect(self._markers_changed)
         lay.addWidget(self.markers)
         lay.addStretch()
-        theme.unify(page)
         scroll.setWidget(page)
+        theme.unify(page)  # after setWidget, which turns the page's autofill on (a box)
         outer.addWidget(scroll, 1)
         box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         box.rejected.connect(self.reject)
@@ -330,6 +352,102 @@ class PreferencesDialog(QDialog):
         if self.win is not None:
             restore_widgets(self.win.markers, widget_state(self.markers))
             self.win.markers.changed.emit()
+
+
+    # ---- significance marks ----
+
+    def _build_stats_form(self, f):
+        from . import stats as ST
+        from .figure import installed_families
+        from .graph_editors import stats_defaults
+
+        def combo(items):
+            c = QComboBox()
+            for t, d in items:
+                c.addItem(t, d)
+            return c
+
+        def dspin(lo, hi, step, suffix, dec=2):
+            sp = QDoubleSpinBox()
+            sp.setRange(lo, hi)
+            sp.setSingleStep(step)
+            sp.setDecimals(dec)
+            sp.setSuffix(suffix)
+            return sp
+
+        fam = combo([('그래프 글꼴 따름', '')] + [(n, n) for n in installed_families()])
+        self.stats_w = {
+            'display': ('표시 방식', combo([(v, k) for k, v in ST.DISPLAYS.items()])),
+            'levels': ('별표 기준', combo([('4단계 (* ~ ****)', 4), ('3단계 (* ~ ***)', 3)])),
+            'ns': ('', QCheckBox('유의하지 않으면 ns 표시')),
+            'tail': ('꼬리', combo([(v, k) for k, v in ST.TAILS.items()])),
+            'alpha': ('유의 수준 α', combo([('0.05', 0.05), ('0.01', 0.01), ('0.001', 0.001)])),
+            'bracket': ('괄호', combo([('꺾쇠', 'tick'), ('직선', 'line')])),
+            'line_width': ('괄호 선 굵기', dspin(0.1, 6, 0.1, ' pt')),
+            'tip': ('괄호 끝 길이', dspin(0, 0.2, 0.005, '', 3)),
+            'gap': ('괄호 사이 간격', dspin(0.01, 0.3, 0.005, '', 3)),
+            'font_family': ('글꼴', fam),
+            'font_size': ('글자 크기', dspin(4, 40, 0.5, ' pt', 1)),
+            'bold': ('', QCheckBox('별표 굵게')),
+            'caption': ('', QCheckBox('캡션 문장 만들기')),
+        }
+        self.stats_w['tip'][1].setToolTip('값 축 길이에 대한 비율')
+        self.stats_w['gap'][1].setToolTip('값 축 길이에 대한 비율')
+        for k, (label, w) in self.stats_w.items():
+            if isinstance(w, QCheckBox):
+                w.toggled.connect(lambda _v: self._stats_changed())
+                f.addRow(w)
+            else:
+                (w.currentIndexChanged if isinstance(w, QComboBox) else w.valueChanged).connect(
+                    lambda _v: self._stats_changed())
+                f.addRow(label, w)
+        self._stats_busy = False
+        self._show_stats(stats_defaults())
+
+    def _show_stats(self, d):
+        self._stats_busy = True
+        try:
+            for k, (_l, w) in self.stats_w.items():
+                v = d.get(k)
+                if isinstance(w, QCheckBox):
+                    w.setChecked(bool(v))
+                elif isinstance(w, QComboBox):
+                    i = w.findData(v)
+                    w.setCurrentIndex(max(i, 0))
+                else:
+                    w.setValue(float(v))
+        finally:
+            self._stats_busy = False
+
+    def stats_values(self) -> dict:
+        out = {}
+        for k, (_l, w) in self.stats_w.items():
+            if isinstance(w, QCheckBox):
+                out[k] = w.isChecked()
+            elif isinstance(w, QComboBox):
+                out[k] = w.currentData()
+            else:
+                out[k] = float(w.value())
+        return out
+
+    def _stats_changed(self):
+        if not self._stats_busy:
+            view_settings.set_defaults('stats', self.stats_values())
+
+    def take_stats(self):
+        gw = getattr(self.win, 'graph_win', None) if self.win is not None else None
+        if gw is None or gw.doc.key is None:
+            return
+        from .graph import STATS_LOOK
+
+        self._show_stats({k: getattr(gw.spec.stats, k) for k in STATS_LOOK})
+        self._stats_changed()
+
+    def reset_stats(self):
+        from .graph_editors import STATS_DEFAULTS
+
+        view_settings.set_defaults('stats', None)
+        self._show_stats(STATS_DEFAULTS)
 
 
 SettingsDialog = PreferencesDialog  # the old name
