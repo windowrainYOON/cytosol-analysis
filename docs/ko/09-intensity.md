@@ -48,7 +48,7 @@ cyto - particle;  cell & particle;  (cell - nuc) | particle
 파일: `<이름>_intensity.csv`, `intensity.csv`, 그리고 `<이름>_regions.zip`(세포와
 영역마다 ImageJ ROI 하나, `rgnCCC-R`, 식은 `region` 속성에 저장).
 
-핵 → 세포막 등거리 띠는 v0.57부터 **세포질 ROI** 탭에 있습니다 ([세포질 ROI 탭](03-cytosol-roi.md#6-핵--세포막-등거리-띠)).
+핵 → 세포막 등거리 띠는 v0.60부터 따로 **등거리 띠** 탭에 있습니다 ([등거리 띠 탭](18-bands.md)).
 
 ## 측정 결과 표
 

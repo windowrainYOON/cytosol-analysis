@@ -28,9 +28,10 @@ in projects).
 |---|---|
 | 이미지 (TIFF / MP4) | Composite RGB, RGB per channel, raw-value stack (ImageJ). Time series: all time points or the current one, TIFF / MP4 / both, fps, markers drawn |
 | Crop 영역 | An image per crop region (format as for images; **all regions** or **only the selected one**), crop ROIs (`<name>_crops.zip`). A region reshaped with 점 편집 (edit points) is cut as its bounding rectangle with the outside set to 0 |
-| 세포질 ROI | Cell / nucleus / cytosol ROIs (RoiSet .zip or .roi), measurement CSV, PNG with the ROIs drawn, distance bands CSV / graph |
+| 세포질 ROI | Cell / nucleus / cytosol ROIs (RoiSet .zip or .roi), measurement CSV, PNG with the ROIs drawn |
 | 입자 ROI | Particle ROIs (.zip), measurement CSV, per-image / per-group summaries |
 | 강도 측정 | Measurement CSV, logic region ROIs |
+| 등거리 띠 | Distance bands CSV, band graph (current image) |
 | Coloc 2 | Results CSV, PDF report per ROI |
 | 라인 프로파일 | Line of the current image: CSV, graph, line ROI + picture |
 | FRAP | Summary CSV + group graphs; per image curve CSV / graph / ROIs |

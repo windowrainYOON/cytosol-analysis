@@ -182,21 +182,21 @@ def run(out_dir) -> int:
         if not st or st['state']['sb_len']['value'] != 25:
             raise AssertionError(f'marker initial values not stored: {st}')
         # tab initial values
-        win.roi_panel.bands.band_n.setValue(7)
+        win.bands_panel.band_n.setValue(7)
         win.particle_panel.measure.stat_boxes['Max'].setChecked(True)
         dlg.save_tab_defaults()
         dlg.close()
-        win.roi_panel.bands.band_n.setValue(3)
+        win.bands_panel.band_n.setValue(3)
         win2 = MainWindow()
         app.processEvents()
         if win2.markers.sb_len.value() != 25 or win2.markers.sb_font.value() != 31:
             raise AssertionError('new window did not start with the marker initial values')
-        if win2.roi_panel.bands.band_n.value() != 7 \
+        if win2.bands_panel.band_n.value() != 7 \
                 or not win2.particle_panel.measure.stat_boxes['Max'].isChecked():
             raise AssertionError('new window did not start with the tab initial values')
         win.set_dirty(False)
         win.new_project()
-        if win.roi_panel.bands.band_n.value() != 7:
+        if win.bands_panel.band_n.value() != 7:
             raise AssertionError('새 프로젝트 did not start with the tab initial values')
         dlg = PreferencesDialog(win)
         if dlg.markers.sb_len.value() != 25 or not dlg.clear_tabs_btn.isEnabled():
@@ -1244,7 +1244,7 @@ def run(out_dir) -> int:
         # Tool next to 파일 holds one submenu per feature; the markers sit fixed in the LUT tab
         menus = [a.text() for a in win.menuBar().actions()]
         tools = [a.text() for a in win.tool_menu.actions() if a.menu()]
-        want = ['LUT', '마커', '세포질 ROI', '입자 ROI', '강도 측정', 'Coloc 2',
+        want = ['LUT', '마커', '세포질 ROI', '입자 ROI', '강도 측정', '등거리 띠', 'Coloc 2',
                 '라인 프로파일', 'FRAP 측정', '스택']
         if menus != ['파일', 'Tool', 'View', '그래프', 'Figure'] or tools != want \
                 or 'marker_tab' in win.tab_pages:
@@ -1732,8 +1732,15 @@ def run(out_dir) -> int:
                 raise AssertionError(f'{box.suffix}: all-image measurement skipped the image')
             box.save_item(own, out / 'intensity_gui', res[id(own)])
         # distance bands from the nucleus: n bands per cell, particles per band, graph
-        # (in the 세포질 ROI tab since v0.57)
-        bp = win.roi_panel.bands
+        # (own 등거리 띠 tab since v0.60, opened from Tool › 등거리 띠; no longer in 세포질 ROI)
+        if win.roi_panel.findChildren(type(win.bands_panel)) or hasattr(win.roi_panel, 'bands'):
+            raise AssertionError('distance bands still in the 세포질 ROI tab')
+        win.show_tab('bands_tab')
+        app.processEvents()
+        if not win.tab_current('bands_tab') or '등거리 띠' not in {
+                a.title() for a in win.tool_menu.findChildren(__import__("PySide6.QtWidgets", fromlist=["QMenu"]).QMenu)}:
+            raise AssertionError('no 등거리 띠 tab / Tool menu')
+        bp = win.bands_panel
         bm = bp.bands_measure
         bp.band_n.setValue(5)
         bm.refresh(force=True)
@@ -1754,12 +1761,17 @@ def run(out_dir) -> int:
             raise AssertionError('graph axis not switched to a particle value')
         if hasattr(ip, 'bands_measure') or 'bands' in {a.text() for a in win.tool_menu.actions()}:
             raise AssertionError('distance bands still in the 강도 측정 tab')
-        win.show_tab('roi_tab')
-        app.processEvents()
         bp.show_bands.setChecked(True)
         bp.draw_regions()
         if win.canvas._logic_item is None:
-            raise AssertionError('bands not drawn on the image in the 세포질 ROI tab')
+            raise AssertionError('bands not drawn on the image in the 등거리 띠 tab')
+        win.show_tab('roi_tab')
+        app.processEvents()
+        bp.draw_regions()
+        if win.canvas._logic_item is not None:
+            raise AssertionError('bands still drawn in the 세포질 ROI tab')
+        win.show_tab('bands_tab')
+        app.processEvents()
         bp.show_bands.setChecked(False)
         bp.draw_regions()
         if win.canvas._logic_item is not None:

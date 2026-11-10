@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.59.0)
+## Window structure (v0.60.0)
 
 - **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
   v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
@@ -80,7 +80,7 @@ owner writes in Korean, so reply in Korean.
   일괄 적용 on top, 채널 표시, the channel LUTs; no inner scroll), `마커`
   (`marker_tab`) and `이미지 정보` are always present. The other tabs
   live in `MainWindow.tab_pages` (roi_tab, particle_tab,
-  intensity_tab, coloc_tab, profile_tab, frap_tab, stack_tab) and are shown / hidden
+  intensity_tab, bands_tab, coloc_tab, profile_tab, frap_tab, stack_tab) and are shown / hidden
   by the "… 탭 열기" check action in each feature's menu (`tool_actions`,
   `show_tab`, `hide_tab`, `tab_open`, `tab_current`; no Crop tab since v0.58). Panels ask
   `win.tab_current('<name>')` to know whether they are the visible tab
@@ -119,7 +119,7 @@ owner writes in Korean, so reply in Korean.
     submenu per feature, e.g. Tool › FRAP 측정 › FRAP ROI 불러오기…:
     **LUT** (LUT 프리셋 저장/불러오기),
     **마커** (설정 저장/불러오기, JSON with `format: cytosol-viewer-markers`),
-    **세포질 ROI**, **입자 ROI**, **강도 측정**, **Coloc 2**,
+    **세포질 ROI**, **입자 ROI**, **강도 측정**, **등거리 띠**, **Coloc 2**,
     **라인 프로파일**, **FRAP 측정**, **스택**. Each holds its tab
     action and its loads (`import_kind_dialog(kind)`, kinds in
     `IMPORT_KINDS`; it only pre-filters the file chooser, `import_paths`
@@ -186,11 +186,7 @@ owner writes in Korean, so reply in Korean.
   `RoiParams` default). Editing: Shift+click (`Canvas.cellShiftClicked`)
   builds a multi-selection (`RoiPanel.selection()`), 합치기 (M) joins it
   (`CellRois.merge`, bridges gaps ≤ 3 µm), Option/Alt+drag with 선택 draws a
-  cut line (`Canvas.roi_edit_active`, `_lasso_tool`). At the bottom since
-  v0.57: **핵 → 세포막 등거리 띠** (`bands_panel.BandsPanel` =
-  `roi_panel.bands`, moved from 강도 측정; projects keep it as panel `bands`
-  + `intensity_bands`, older projects' band keys under `intensity` are read
-  via `bands_panel.LEGACY_KEYS`).
+  cut line (`Canvas.roi_edit_active`, `_lasso_tool`).
   - Rule from the owner (2026-10-27, v0.26): the plain manual threshold mode
     (at or above the threshold = ROI, below = discarded, nothing else) must
     always stay, whatever detection algorithms are added later; automatic
@@ -201,6 +197,13 @@ owner writes in Korean, so reply in Korean.
     value actually used (filled in even while automatic). Sizes and
     thresholds get sliders under their fields; live previews that cost
     detection time sit behind a checkbox.
+- **등거리 띠 tab** (`bands_tab`, owner request 2026-11-09, v0.60):
+  **핵 → 세포막 등거리 띠** (`bands_panel.BandsPanel` = `MainWindow.bands_panel`;
+  v0.57–0.59 at the bottom of 세포질 ROI as `roi_panel.bands`, before that in
+  강도 측정). Tool › 등거리 띠, its own export kind `bands`, batch step tab
+  `bands_tab`; band edges drawn only while the tab is shown. Projects keep it
+  as panel `bands` + `intensity_bands`, older projects' band keys under
+  `intensity` are read via `bands_panel.LEGACY_KEYS`.
 - **Status bar**: `LoggingStatusBar` (`worklog.py`); every lasting message
   (`showMessage` without timeout) goes into the `WorkLog` and marks the
   project dirty. Use `statusBar().showMessage(...)` for anything the user
@@ -304,7 +307,7 @@ per-widget style sheets.
 | `intensity.py` | ImageJ Measure values, particle detection (Otsu / Hessian spot seeds + watershed), shape (iso-contours), logic regions |
 | `particle_panel.py` | 입자 ROI tab, per-cell and per-particle measurement, summaries |
 | `intensity_panel.py` | 강도 측정 tab (regions from expressions like `cyto - particle`) |
-| `bands_panel.py`, `radial.py` | 핵 → 세포막 등거리 띠 in the 세포질 ROI tab (distance bands from the nucleus, per-band measurement, graph) |
+| `bands_panel.py`, `radial.py` | 핵 → 세포막 등거리 띠 tab (`bands_tab`; distance bands from the nucleus, per-band measurement, graph) |
 | `measure_box.py` | Measurement table shared by the three measuring tabs |
 | `coloc.py`, `coloc_panel.py` | Fiji Coloc 2 port, per cell |
 | `lineprofile.py`, `profile_panel.py` | Line profile (ImageJ RGB Profiler) |
@@ -461,3 +464,4 @@ not affected.
 | dev branch | 0.58.0 | Owner request, after mockups: canvas and inspector float as rounded boxes on the sidebar layer (no shade); wide-capsule switch knobs; no hairlines between grouped rows; **검출 자동화** in 세포질 ROI / 입자 ROI (one switch, detail values behind 세부 설정…, edited values marked · 수정됨 with reset, per-value 자동 switches gone, 검출 방식 a pop-up, split/merge on and frame cells 제외 by default); Crop tab removed: Crop icon on the canvas toolbar (draw / move / show while on), crops as rows under their image in the sidebar |
 | dev branch | 0.58.1 | Owner request: one colour per region with Liquid Glass on: the canvas view takes the glass colour once the glass is attached (`theme.refresh_regions`; it had kept the opaque `region-canvas` picked before), the glass sidebar adds no tint of its own and the title bar draws no surface (`setTitlebarAppearsTransparent_`), so the window top and the sidebar show the same material |
 | dev branch | 0.59.0 | Owner request, after mockups: 파일 › 내보내기… (⌘E) one window for every export (target, destination, 이미지별 폴더, kinds list + settings cards; polygon crops cut as their box with the outside 0), export items removed from the feature menus (Tool › Crop / 이미지 정보 / Figure gone); crop context menu: 이 ROI 복사 / 붙여넣기, 수정 (8 handles), 점 편집 (polygon points), 삭제…; menu bar 파일 · Tool · View · 그래프 · Figure; one graph editor window (graphs in a sidebar, a data chip per tool, inspector tabs 종류 / 값 / 모양 / 컴포넌트 with 선택한 요소 / 전체 그래프, unbuilt features hidden); Figure window with a figures sidebar, the saves on a top toolbar, a fixed-width inspector that never clips, ＋ to add rows / columns, hover × to delete, title drag to move |
+| dev branch | 0.60.0 | Owner request, after a mockup: 핵 → 세포막 등거리 띠 out of the 세포질 ROI tab into its own **등거리 띠** tab (`bands_tab`, `MainWindow.bands_panel`; Tool › 등거리 띠, View item, own export kind, batch step opens it; old projects load unchanged); docs `18-bands.md` |

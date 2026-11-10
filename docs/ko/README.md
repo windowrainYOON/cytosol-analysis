@@ -38,6 +38,7 @@ Cytosol Viewer(v0.38)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
 | [이미지 정보 탭](10-image-info.md) | 획득 메타데이터 (레이저, 검출기, 대물렌즈, bleaching) |
 | [Figure 창](11-figure.md) | 행·열 이름, 확대 inset, scale bar가 있는 figure 표; PNG/TIFF/PDF/SVG |
 | [그래프 편집 창](16-graph.md) | 기능 탭의 그래프를 새 창에서: 그래프 종류, x·y 열, 색·굵기·글꼴·축·범례·글자 상자 수정, 그래프·데이터 내보내기 |
+| [등거리 띠 탭](18-bands.md) | 핵 → 세포막 등거리 띠: 세포질을 핵에서의 거리로 나눠 띠마다 강도 · 입자 측정, 그래프 |
 | [내보내기 창](17-export.md) | 파일 › 내보내기: 이미지, Crop, ROI, 측정 표, 그래프, 정보, 일괄 분석, 프로젝트를 한 창에서 저장 |
 | [저장되는 파일](12-output-files.md) | 프로그램이 쓰는 모든 파일과 폴더 불러오기 |
 

@@ -1,4 +1,5 @@
-"""핵 → 세포막 등거리 띠 (in the 세포질 ROI tab since v0.57): the cytosol of
+"""핵 → 세포막 등거리 띠 (its own 등거리 띠 tab since v0.60; v0.57–0.59 in the
+세포질 ROI tab, before that in 강도 측정): the cytosol of
 every cell cut into bands of equal distance from the nucleus
 (cytosol.radial), measured per band, drawn as a graph whose axes can be any
 measured column, and (optionally) the band edges drawn on the image."""
@@ -19,7 +20,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -106,12 +106,9 @@ class BandsPanel(QWidget):
 
         self._axes_wanted = ('distance_rel', None)  # kept while the columns change
         self.bands_measure = BandMeasureBox(
-            win, 'roi_tab', self.band_regions_for, 'bands', '등거리 띠 강도 측정',
+            win, 'bands_tab', self.band_regions_for, 'bands', '등거리 띠 강도 측정',
             rows=self._band_rows, key=lambda: self.band_settings(), changed=self.draw_graph)
         lay.addWidget(self.bands_measure, 1)
-        # the 세포질 ROI tab's main action stays its own 지금 측정 (at most two filled buttons a tab)
-        for b in self.bands_measure.findChildren(QPushButton):
-            b.setProperty('hig_prominent', False)
 
         graph = QGroupBox('그래프')
         gl = QVBoxLayout(graph)
@@ -156,8 +153,8 @@ class BandsPanel(QWidget):
         return self.bands_measure.visible_tab()
 
     def draw_regions(self):
-        """Band edges on the image while the 세포질 ROI tab is shown; the
-        강도 측정 tab draws its own regions."""
+        """Band edges on the image while the 등거리 띠 tab is shown (cleared
+        on other tabs); the 강도 측정 tab draws its own regions."""
         if self.win.tab_current('intensity_tab'):
             return
         canvas = self.win.canvas
