@@ -310,8 +310,10 @@ def data_display_step(out: Path):
     gw = win.graph_window()
     gw.refresh_chips()
     names = [gw.data_list.topLevelItem(k).text(0) for k in range(gw.data_list.topLevelItemCount())]
-    if '세포질 ROI' not in names or names[-1] != 'CSV 불러오기…':
-        raise AssertionError(f'graph window data list {names}')
+    orig = gw.data_list.topLevelItem(names.index('기능별 표 (원본)')) if '기능별 표 (원본)' in names else None
+    subs = [orig.child(k).text(0) for k in range(orig.childCount())] if orig else []
+    if names[0] != '통합 데이터' or '세포질 ROI' not in subs or names[-1] != 'CSV 불러오기…':
+        raise AssertionError(f'graph window data list {names} {subs}')
     wz = gw.start_data('세포질 ROI · 세포', run=False)
     if box.stale_items() or len([r for r in box.batch_rows if r['image_id'] == second.image_id]) * 3 != \
             len([r for r in box.batch_rows if r['image_id'] == win.items[0].image_id]) * 2:
@@ -757,8 +759,41 @@ def mito_step(out: Path):
         raise AssertionError('Mito Analyzer CSV not loaded')
     if abs(item.mito.cells[0]['footprint_fraction'] - keep.cells[0]['footprint_fraction']) > 1e-3:
         raise AssertionError('loaded values')
-    # project
+    # v0.68 measure bar + integrated data (cells × mitoROI × cytosol ROI)
     item.mito = keep
+    bar = win.measure_bar
+    if not bar.isVisible() or bar.measurer is not win.measurers['mito_tab']:
+        raise AssertionError('measure bar not bound to the mitoROI tab')
+    win.show_tab('roi_tab')
+    app.processEvents()
+    if bar.measurer is not win.measurers['roi_tab'] or not bar.one_btn.isEnabled():
+        raise AssertionError('measure bar not bound to the cytosol ROI tab')
+    bar._run('all')
+    win.show_tab('stack_tab')
+    app.processEvents()
+    if bar.isVisible():
+        raise AssertionError('measure bar shown on a tab without measurement')
+    from . import integrate
+    tabs = {t.name: t for t in integrate.tables(win)}
+    cells_t = tabs.get(integrate.table_name('세포별'))
+    if cells_t is None or len(cells_t.rows) != 3:
+        raise AssertionError(f'integrated cells {list(tabs)}')
+    cols = cells_t.columns
+    if not any(c.startswith('mitoROI' + integrate.SEP) for c in cols) \
+            or not any(c.startswith('세포질 ROI' + integrate.SEP) for c in cols):
+        raise AssertionError(f'integrated cell columns {cols[:12]}')
+    mito_t = tabs.get(integrate.table_name('미토 조각별'))
+    if mito_t is None or len(mito_t.rows) != len(keep.mito) or not cells_t.column_sets:
+        raise AssertionError('integrated mito fragments / column sets')
+    ents = [e for e in win.data_entries() if e['key'] == 'integrated']
+    if not ents or ents[0]['feature'] != integrate.FEATURE:
+        raise AssertionError('integrated data not first in the data list')
+    ires = export_run(win, [item], out / 'integ_export', {'per_image': False, 'integrated_csv': True})
+    inames = {Path(f).name for f in ires.files}
+    if not {'integrated_cells.csv', 'integrated_mito_fragments.csv', 'integrated_columns.csv'} <= inames:
+        raise AssertionError(f'integrated export {sorted(inames)}')
+    win.roi_panel.measure.batch_rows = []
+    # project
     files = {}
     names = item_files(item, 0, None, files, out)
     item.mito = None
@@ -775,7 +810,8 @@ def mito_step(out: Path):
     _close(win)
     c1 = by['cell01']
     return (f'3 cells, {len(r.mito)} mito objects, {len(r.puncta)} puncta, cell01 green+ '
-            f'(enrichment {c1["green_enrichment_on_mito"]:.1f}), {len(res.files)} files, loaded back, batch')
+            f'(enrichment {c1["green_enrichment_on_mito"]:.1f}), {len(res.files)} files, loaded back, batch; '
+            f'measure bar, integrated {len(cells_t.columns)} cell columns, {len(ires.files)} files')
 
 
 STEPS = [
