@@ -25,7 +25,13 @@ CHARTS = {
     'violin': '바이올린',
     'hist': '히스토그램',
     'heatmap': '히트맵 (2D)',
+    'corr': '상관 행렬',
+    'corrcmp': '상관 비교 (그룹 사이)',
 }
+CORR_CHARTS = ('corr', 'corrcmp')
+REG_FITS = {'ls': '최소제곱', 'log': 'log 값으로 맞춤', 'origin': '원점 통과'}
+QUADRANTS = {'none': '없음', 'mean': '평균에서', 'median': '중앙값에서'}
+COMPARE = {'ab': 'A 대 B', 'all': '모든 그룹'}
 CATEGORY_CHARTS = ('bar', 'strip', 'box', 'violin')
 STYLES = {'line+marker': '선 + 점', 'line': '선', 'marker': '점', 'step': '계단', 'area': '면적 (채움)'}
 LINE_STYLES = {'-': '실선', '--': '파선', ':': '점선', '-.': '일점쇄선', 'none': '없음'}
@@ -74,6 +80,11 @@ class Table:
     name: str
     columns: list
     rows: list
+    labels: dict = field(default_factory=dict)       # column -> shown name (with unit)
+    column_sets: dict = field(default_factory=dict)  # set name -> columns (X / Y defaults)
+
+    def label(self, col) -> str:
+        return self.labels.get(col, col) if self.labels else col
 
     @classmethod
     def from_dicts(cls, name, dicts, columns=None) -> 'Table':
@@ -258,6 +269,36 @@ class Mapping:
     color: str = '@y'    # '' = one colour, '@y' = one per Y column, else a column
     err: str = 'sd'      # error bars of means (ERR_KINDS)
     agg: str = 'none'    # XY: points of the same x as their mean / median
+    unit: str = 'rows'   # 점 하나 = rows / image (image mean) / group (group mean)
+
+
+@dataclass
+class Calc:
+    """상관 계산 and XY 회귀 (owner request 2026-11-14): the columns of the
+    correlation matrix, the method, filters, the groups compared and the
+    regression / quadrant overlay of XY graphs."""
+
+    table: str = ''
+    method: str = 'r'       # r (Pearson) / rho (Spearman)
+    xset: str = ''          # column set ('' = every number column) unless xs
+    xs: list = field(default_factory=list)
+    yset: str = '@x'        # '@x' = same as X
+    ys: list = field(default_factory=list)
+    log_x: bool = False
+    log_y: bool = False
+    where: str = ''
+    equals: str = ''
+    group: str = ''         # 상관 비교: the category column
+    a: str = ''
+    b: str = ''
+    compare: str = 'ab'     # ab / all
+    correction: str = 'none'
+    numbers: bool = True    # values in the cells (≤ 100 cells)
+    reg_on: bool = False
+    reg_fit: str = 'ls'
+    reg_text: bool = True
+    reg_split: bool = False  # one line per colour
+    quadrant: str = 'none'
 
 
 @dataclass
@@ -353,6 +394,7 @@ class GraphSpec:
     cat_order: list = field(default_factory=list)   # order of the 그룹 (categories / colours)
     cat_hidden: list = field(default_factory=list)  # 그룹 left out
     stats: Stats = field(default_factory=Stats)
+    calc: Calc = field(default_factory=Calc)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -366,7 +408,8 @@ class GraphSpec:
 
 
 _NESTED = {'x': Axis, 'y': Axis, 'title_font': Font, 'label_font': Font, 'tick_font': Font,
-           'legend_font': Font, 'mapping': Mapping, 'stats': Stats}
+           'legend_font': Font, 'mapping': Mapping, 'stats': Stats,
+           'calc': Calc}
 _LISTS = {'series': Series, 'texts': TextBox, 'legend_items': LegendItem}
 
 
@@ -628,6 +671,9 @@ def _label(s: Series, i: int) -> str:
 
 def plotted_table(spec: GraphSpec, tables: dict, only=None) -> Table:
     """Every value the graph draws, one row per point (only: series indexes)."""
+    if spec.chart in CORR_CHARTS:
+        return corr_long_table(spec, tables)
+    tables = view_tables(spec, tables)
     pick = [i for i, s in enumerate(spec.series) if s.visible and (only is None or i in only)]
     if spec.chart in CATEGORY_CHARTS:
         rows = []
@@ -686,6 +732,7 @@ def plotted_table(spec: GraphSpec, tables: dict, only=None) -> Table:
 
 def summary_table(spec: GraphSpec, tables: dict, only=None) -> Table:
     """n, mean, SD, SEM, median, min, max per series and category (bar, box, …)."""
+    tables = view_tables(spec, tables)
     rows = []
     for i, s in enumerate(spec.series):
         if not s.visible or (only is not None and i not in only):
@@ -891,7 +938,7 @@ def stats_options(spec: GraphSpec, tables: dict) -> dict:
     """What a significance test can compare: {name: ({category: values},
     [series indexes])}. Series of one Y column that sit alone in their
     categories (colour = the category) count as one; others one each."""
-    tabs = tables if isinstance(tables, dict) else {t.name: t for t in tables}
+    tabs = view_tables(spec, tables)
     shown = [(i, s) for i, s in enumerate(spec.series) if s.visible]
     vals = {i: category_values(s, tabs, _vscale(spec)) for i, s in shown}
     cats = categories(spec, tabs)
@@ -1106,9 +1153,17 @@ def draw(fig, spec: GraphSpec, tables) -> dict:
 
     from . import frap  # noqa: F401  Korean font fallback for group / image names
 
-    tabs = {t.name: t for t in tables} if not isinstance(tables, dict) else tables
+    tabs = view_tables(spec, tables)
     fig.clear()
     fig.set_facecolor(spec.background)
+    if spec.chart in CORR_CHARTS:
+        fig.set_layout_engine('constrained')
+        ax, info = _draw_corr(fig, spec, tabs)
+        title = ax.figure.suptitle(spec.title, **{'fontsize': spec.title_font.size,
+                                                  'fontweight': 'bold' if spec.title_font.bold else 'normal'}) \
+            if spec.title else None
+        return {'ax': ax, 'legend': None, 'texts': [], 'title': title, 'xlabel': ax.xaxis.label,
+                'ylabel': ax.yaxis.label, 'stats': None, **info}
     if spec.plot_auto:
         fig.set_layout_engine('constrained')
         ax = fig.add_subplot(111)
@@ -1149,6 +1204,8 @@ def draw(fig, spec: GraphSpec, tables) -> dict:
             yticks = yc
             ax.set_yticks(range(len(yc)))
             ax.set_yticklabels(yc)
+        if spec.calc.reg_on and not xticks and not yc:
+            _draw_regression(ax, spec, tabs)
     _axis(ax, 'x', spec.x, spec, ticks_fixed=(cat and not spec.horizontal) or bool(xticks))
     _axis(ax, 'y', spec.y, spec, ticks_fixed=(cat and spec.horizontal) or bool(yticks))
     for side, on in (('top', spec.spine_top), ('right', spec.spine_right)):
@@ -1452,3 +1509,464 @@ def guess_mapping(spec: GraphSpec, tables: dict, table: str = '') -> Mapping:
 def recommend_chart(m: Mapping, tables: dict) -> str:
     """'strip' (점 그림) for values per category, 'xy' for two numbers."""
     return 'strip' if m.x_cat or m.y_cat else 'xy'
+
+
+# ---------------------------------------------------------------------------
+# 점 하나 = (unit), 상관 행렬 / 상관 비교, XY 회귀 (owner request 2026-11-14)
+# ---------------------------------------------------------------------------
+
+IMAGE_KEYS = ('image_id', 'image', '이미지', 'file', 'name')
+GROUP_KEYS = ('group', '그룹')
+ID_COLUMNS = ('cell', 'label', 'n_rows', 'timepoint', 'roi', 'particle', 'track', 'index')
+
+
+def _key_column(t: Table, unit: str) -> str:
+    for c in (IMAGE_KEYS if unit == 'image' else GROUP_KEYS):
+        if c in t.columns:
+            return c
+    return ''
+
+
+def unit_table(t: Table, unit: str) -> Table:
+    """The table with one row per image (their mean) or per group; the same
+    table when unit is 'rows' or it has no image / group column."""
+    if unit not in ('image', 'group') or getattr(t, '_unit', '') == unit:
+        return t
+    key = _key_column(t, unit)
+    if not key:
+        return t
+    from . import graph_calc
+
+    nums = [c for c in t.numeric_columns() if c != key]
+    keep = [c for c in GROUP_KEYS + IMAGE_KEYS if c in t.columns and c != key and c not in nums] \
+        if unit == 'image' else []
+    keys = [_text(v) for v in t.values(key)]
+    order, means, counts = graph_calc.sample_means(keys, {c: t.numbers(c) for c in nums})
+    first = {}
+    for i, k in enumerate(keys):
+        first.setdefault(k, i)
+    rows = []
+    for j, k in enumerate(order):
+        r = [k] + [t.rows[first[k]][t.index(c)] for c in keep] + [counts[j]]
+        rows.append(r + [float(means[c][j]) for c in nums])
+    out = Table(t.name, [key] + keep + ['n_rows'] + nums, rows, dict(t.labels), dict(t.column_sets))
+    out._unit = unit
+    return out
+
+
+def view_tables(spec: GraphSpec, tables) -> dict:
+    """Tables as the graph uses them: the 축 배치 / 상관 표 aggregated by
+    mapping.unit (점 하나 =)."""
+    tabs = tables if isinstance(tables, dict) else {t.name: t for t in tables}
+    unit = spec.mapping.unit
+    if unit == 'rows':
+        return tabs
+    out = dict(tabs)
+    for name in {spec.mapping.table, spec.calc.table}:
+        if name in out:
+            out[name] = unit_table(out[name], unit)
+    return out
+
+
+def calc_table(spec: GraphSpec, tables) -> Table | None:
+    tabs = view_tables(spec, tables)
+    name = spec.calc.table or spec.mapping.table or next(iter(tabs), '')
+    return tabs.get(name)
+
+
+def calc_columns(spec: GraphSpec, t: Table, which: str) -> list:
+    """X / Y columns of the correlation: picked ones, a column set, or every
+    number column (ids left out)."""
+    c = spec.calc
+    if which == 'y' and c.yset == '@x' and not c.ys:
+        return calc_columns(spec, t, 'x')
+    picked, cset = (c.xs, c.xset) if which == 'x' else (c.ys, c.yset)
+    nums = t.numeric_columns()
+    if picked:
+        return [x for x in picked if x in nums]
+    if cset and cset in t.column_sets:
+        return [x for x in t.column_sets[cset] if x in nums]
+    return [x for x in nums if x not in ID_COLUMNS and x not in GROUP_KEYS + IMAGE_KEYS]
+
+
+def _calc_rows(spec: GraphSpec, t: Table, extra=None) -> list:
+    c = spec.calc
+    rows = list(range(len(t.rows)))
+    for col, val in ((c.where, c.equals),) + tuple(extra or ()):
+        if col and col in t.columns:
+            vals = t.values(col)
+            rows = [i for i in rows if _text(vals[i]) == val]
+    return rows
+
+
+def _calc_values(spec: GraphSpec, t: Table, cols, rows, log) -> dict:
+    out = {}
+    for col in cols:
+        v = t.numbers(col)[rows]
+        if log:
+            with np.errstate(divide='ignore', invalid='ignore'):
+                v = np.where(v > 0, np.log10(v), np.nan)
+        out[col] = v
+    return out
+
+
+def calc_groups(spec: GraphSpec, t: Table) -> list:
+    g = spec.calc.group
+    if not g or g not in t.columns:
+        return []
+    vals = _ordered(_texts(t, g, _calc_rows(spec, t)), spec.cat_order if g == group_column(spec) else [])
+    return [v for v in vals if v != '' and v not in set(spec.cat_hidden)]
+
+
+def corr_matrix_of(spec: GraphSpec, t: Table, extra=None) -> dict:
+    from . import graph_calc
+
+    xs, ys = calc_columns(spec, t, 'x'), calc_columns(spec, t, 'y')
+    rows = _calc_rows(spec, t, extra)
+    cx = _calc_values(spec, t, xs, rows, spec.calc.log_x)
+    cy = _calc_values(spec, t, ys, rows, spec.calc.log_y)
+    vals, ns = graph_calc.corr_matrix(cx, cy, spec.calc.method)
+    why = [[graph_calc.why_nan(cx[x], cy[y], t.label(x), t.label(y)) for x in xs] for y in ys]
+    return {'xs': xs, 'ys': ys, 'vals': vals, 'ns': ns, 'p': graph_calc.corr_p(vals, ns), 'why': why,
+            'cx': cx, 'cy': cy}
+
+
+def corr_result(spec: GraphSpec, tables) -> dict | None:
+    """상관 행렬: one matrix; 상관 비교: one per group plus the A vs B
+    difference (Fisher z) or the all-group heterogeneity (Cochran Q)."""
+    from . import graph_calc
+
+    t = calc_table(spec, tables)
+    if t is None:
+        return None
+    if spec.chart == 'corr':
+        res = corr_matrix_of(spec, t)
+        res['table'] = t
+        return res
+    groups = calc_groups(spec, t)
+    c = spec.calc
+    per = {g: corr_matrix_of(spec, t, ((c.group, g),)) for g in groups}
+    base = corr_matrix_of(spec, t)
+    res = {'xs': base['xs'], 'ys': base['ys'], 'groups': groups, 'per': per, 'table': t}
+    if c.compare == 'all' or len(groups) < 2:
+        if len(groups) >= 2:
+            q = graph_calc.corr_heterogeneity_p([per[g]['vals'] for g in groups],
+                                                [per[g]['ns'] for g in groups])
+            res['q_p'] = graph_calc.correct(q, c.correction)
+            res['q_p_raw'] = q
+        return res
+    a = c.a if c.a in per else groups[0]
+    b = c.b if c.b in per and c.b != a else next(g for g in groups if g != a)
+    pa, pb = per[a], per[b]
+    raw = graph_calc.corr_diff_p(pa['vals'], pa['ns'], pb['vals'], pb['ns'])
+    res.update(a=a, b=b, diff=pb['vals'] - pa['vals'], p_raw=raw, p=graph_calc.correct(raw, c.correction))
+    n_ok = int(np.isfinite(raw).sum())
+    res['expected'] = n_ok * 0.05
+    res['n_tests'] = n_ok
+    return res
+
+
+def corr_long_table(spec: GraphSpec, tables) -> Table:
+    """그래프에 쓰인 데이터 of a 상관 행렬 / 상관 비교 (Mito Analyzer
+    `_correlations.csv` content; A vs B sorted by |Δ|)."""
+    from . import graph_calc
+
+    res = corr_result(spec, tables)
+    if res is None:
+        return Table('그래프에 쓰인 데이터', [], [])
+    t = res['table']
+    if spec.chart == 'corr':
+        rows = []
+        for i, y in enumerate(res['ys']):
+            for j, x in enumerate(res['xs']):
+                ps = graph_calc.pair_stats(res['cx'][x], res['cy'][y])
+                rows.append([t.label(y), t.label(x), ps['pearson_r'], ps['r2'], ps['p_value'],
+                             ps['spearman_rho'], ps['spearman_p'], ps['n'], ps['note']])
+        return Table('그래프에 쓰인 데이터', ['Y', 'X', 'Pearson r', 'R²', 'p', 'Spearman ρ', 'Spearman p',
+                                       'n', '이유'], rows)
+    m = graph_calc.METHODS.get(spec.calc.method, 'r')
+    if 'diff' in res:
+        a, b = res['a'], res['b']
+        rows = []
+        for i, y in enumerate(res['ys']):
+            for j, x in enumerate(res['xs']):
+                rows.append([t.label(y), t.label(x), res['per'][a]['vals'][i, j], int(res['per'][a]['ns'][i, j]),
+                             res['per'][b]['vals'][i, j], int(res['per'][b]['ns'][i, j]), res['diff'][i, j],
+                             res['p_raw'][i, j], res['p'][i, j], graph_calc.stars(res['p'][i, j])])
+        rows.sort(key=lambda r: -abs(r[6]) if math.isfinite(r[6]) else 0)
+        return Table('그래프에 쓰인 데이터', ['Y', 'X', f'{a} {m}', f'{a} n', f'{b} {m}', f'{b} n',
+                                       'Δ (B − A)', 'p (Fisher z)', 'p (보정)', '표시'], rows)
+    cols = ['Y', 'X']
+    for g in res['groups']:
+        cols += [f'{g} {m}', f'{g} n']
+    cols += ['p (Cochran Q)', 'p (보정)']
+    rows = []
+    for i, y in enumerate(res['ys']):
+        for j, x in enumerate(res['xs']):
+            r = [t.label(y), t.label(x)]
+            for g in res['groups']:
+                r += [res['per'][g]['vals'][i, j], int(res['per'][g]['ns'][i, j])]
+            q = res.get('q_p_raw')
+            r += [q[i, j] if q is not None else math.nan,
+                  res['q_p'][i, j] if q is not None else math.nan]
+            rows.append(r)
+    return Table('그래프에 쓰인 데이터', cols, rows)
+
+
+def _short(name: str, n=22) -> str:
+    return name if len(name) <= n else name[:n - 1] + '…'
+
+
+def _heat(fig, ax, vals, xs, ys, cmap, lim, numbers, fontsize, marks=None, title=''):
+    im = ax.imshow(np.ma.masked_invalid(vals), cmap=cmap, vmin=-lim, vmax=lim, aspect='auto',
+                   interpolation='nearest')
+    ax.set_xticks(range(len(xs)))
+    ax.set_xticklabels([_short(x) for x in xs], rotation=60, ha='right', rotation_mode='anchor')
+    ax.set_yticks(range(len(ys)))
+    ax.set_yticklabels([_short(y) for y in ys])
+    ax.tick_params(length=0, labelsize=fontsize)
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    if title:
+        ax.set_title(title, fontsize=fontsize + 1)
+    if numbers and vals.size <= 100:
+        for i in range(vals.shape[0]):
+            for j in range(vals.shape[1]):
+                v = vals[i, j]
+                txt = '–' if not np.isfinite(v) else f'{v:.2f}'
+                if marks is not None and marks[i][j]:
+                    txt += '\n' + marks[i][j]
+                ax.text(j, i, txt, ha='center', va='center', fontsize=max(fontsize - 1.5, 5),
+                        color='white' if np.isfinite(v) and abs(v) > lim * 0.6 else 'black')
+    elif marks is not None:
+        for i in range(vals.shape[0]):
+            for j in range(vals.shape[1]):
+                if marks[i][j]:
+                    ax.text(j, i, marks[i][j], ha='center', va='center', fontsize=fontsize)
+    return im
+
+
+def _cbar(cb, label, fs):
+    cb.set_label(label, fontsize=fs + 1)
+    cb.ax.tick_params(labelsize=fs)
+    cb.outline.set_visible(False)
+
+
+def _draw_corr(fig, spec: GraphSpec, tables) -> tuple:
+    """상관 행렬 / 상관 비교; returns (first axes, art info for the window)."""
+    from . import graph_calc
+
+    res = corr_result(spec, tables)
+    fs = spec.tick_font.size
+    m = graph_calc.METHODS.get(spec.calc.method, 'r')
+    if res is None or not res['xs'] or not res['ys']:
+        ax = fig.add_subplot(111)
+        ax.text(0.5, 0.5, '상관을 계산할 숫자 열이 없습니다', ha='center', va='center', transform=ax.transAxes)
+        ax.set_axis_off()
+        return ax, {}
+    t = res['table']
+    xs = [t.label(x) for x in res['xs']]
+    ys = [t.label(y) for y in res['ys']]
+    if spec.chart == 'corr':
+        ax = fig.add_subplot(111)
+        im = _heat(fig, ax, res['vals'], xs, ys, 'RdBu_r', 1.0, spec.calc.numbers, fs)
+        if spec.colorbar:
+            _cbar(fig.colorbar(im, ax=ax, shrink=0.85), m, fs)
+        return ax, {'corr': res, 'axes': [ax]}
+    groups = res['groups']
+    if len(groups) < 2:
+        ax = fig.add_subplot(111)
+        ax.text(0.5, 0.5, '비교할 그룹이 2개 이상 있어야 합니다 (그룹 열)', ha='center', va='center',
+                transform=ax.transAxes)
+        ax.set_axis_off()
+        return ax, {}
+    if 'diff' in res:
+        a, b = res['a'], res['b']
+        axes = [fig.add_subplot(1, 3, k + 1) for k in range(3)]
+        _heat(fig, axes[0], res['per'][a]['vals'], xs, ys, 'RdBu_r', 1.0, spec.calc.numbers, fs,
+              title=f'{a} (n = {int(res["per"][a]["ns"].max())})')
+        im = _heat(fig, axes[1], res['per'][b]['vals'], xs, ys, 'RdBu_r', 1.0, spec.calc.numbers, fs,
+                   title=f'{b} (n = {int(res["per"][b]["ns"].max())})')
+        marks = [[graph_calc.stars(p) for p in row] for row in res['p']]
+        d = res['diff']
+        lim = float(np.nanmax(np.abs(d))) if np.isfinite(d).any() else 1.0
+        im2 = _heat(fig, axes[2], d, xs, ys, 'PuOr_r', max(lim, 0.1), spec.calc.numbers, fs, marks,
+                    title='Δ (B − A)')
+        for k in (1, 2):
+            axes[k].set_yticklabels([])
+        if spec.colorbar:
+            _cbar(fig.colorbar(im, ax=axes[:2], shrink=0.8, location='bottom'), m, fs)
+            _cbar(fig.colorbar(im2, ax=axes[2], shrink=0.8, location='bottom'), 'Δ', fs)
+        return axes[0], {'corr': res, 'axes': axes}
+    k = len(groups)
+    axes = [fig.add_subplot(1, k + 1, i + 1) for i in range(k + 1)]
+    im = None
+    for i, g in enumerate(groups):
+        im = _heat(fig, axes[i], res['per'][g]['vals'], xs, ys, 'RdBu_r', 1.0, False, fs,
+                   title=f'{g} (n = {int(res["per"][g]["ns"].max())})')
+        if i:
+            axes[i].set_yticklabels([])
+    q = res.get('q_p')
+    if q is not None:
+        with np.errstate(divide='ignore'):
+            lq = -np.log10(q)
+        axes[-1].imshow(np.ma.masked_invalid(lq), cmap='Greys', vmin=0, vmax=3, aspect='auto',
+                        interpolation='nearest')
+        axes[-1].set_xticks(range(len(xs)))
+        axes[-1].set_xticklabels([_short(x) for x in xs], rotation=60, ha='right', rotation_mode='anchor')
+        axes[-1].set_yticks([])
+        axes[-1].tick_params(length=0, labelsize=fs)
+        axes[-1].set_title('그룹 사이 차이 (Cochran Q)', fontsize=fs + 1)
+        for i in range(q.shape[0]):
+            for j in range(q.shape[1]):
+                s = graph_calc.stars(q[i, j])
+                if s:
+                    axes[-1].text(j, i, s, ha='center', va='center', fontsize=fs, color='white')
+    if spec.colorbar and im is not None:
+        _cbar(fig.colorbar(im, ax=axes[:-1], shrink=0.8, location='bottom'), m, fs)
+    return axes[0], {'corr': res, 'axes': axes}
+
+
+def corr_cell(spec: GraphSpec, art: dict, ax, x: float, y: float):
+    """(x column, y column, group or '') of the matrix cell under a click."""
+    res = (art or {}).get('corr')
+    if not res or ax not in art.get('axes', []):
+        return None
+    j, i = int(round(x)), int(round(y))
+    if not (0 <= j < len(res['xs']) and 0 <= i < len(res['ys'])):
+        return None
+    k = art['axes'].index(ax)
+    group = ''
+    if spec.chart == 'corrcmp':
+        if 'diff' in res:
+            group = res['a'] if k == 0 else res['b'] if k == 1 else ''
+        elif k < len(res['groups']):
+            group = res['groups'][k]
+    return res['xs'][j], res['ys'][i], group
+
+
+def corr_cell_text(spec: GraphSpec, art: dict, ax, x, y) -> str:
+    """Hover text of a matrix cell: r · n · p and why it is undefined."""
+    cell = corr_cell(spec, art, ax, x, y)
+    if cell is None:
+        return ''
+    res = art['corr']
+    t = res['table']
+    i, j = res['ys'].index(cell[1]), res['xs'].index(cell[0])
+    src = res if spec.chart == 'corr' else res['per'].get(cell[2]) if cell[2] else None
+    head = f'{t.label(cell[1])} × {t.label(cell[0])}'
+    if src is None:
+        if 'diff' in res:
+            return f'{head}\nΔ = {res["diff"][i, j]:.3f}, p = {res["p"][i, j]:.3g}'
+        return head
+    v, n, p = src['vals'][i, j], int(src['ns'][i, j]), src['p'][i, j]
+    why = src['why'][i][j]
+    return f'{head}\n{"r" if spec.calc.method == "r" else "ρ"} = {v:.3f} · n = {n} · p = {p:.3g}' + \
+        (f'\n{why}' if why else '')
+
+
+def scatter_spec(spec: GraphSpec, x: str, y: str, group: str = '') -> GraphSpec:
+    """The XY graph of one matrix cell (click on 상관 행렬): points + regression."""
+    out = GraphSpec(chart='xy')
+    out.mapping = Mapping(on=True, table=spec.calc.table or spec.mapping.table, x=x, x_cat=False, ys=[y],
+                          color='@y', unit=spec.mapping.unit)
+    out.calc = Calc(**{**asdict(spec.calc), 'reg_on': True})
+    if group and spec.calc.group:
+        out.calc.where, out.calc.equals = spec.calc.group, group
+    out.x.log, out.y.log = spec.calc.log_x, spec.calc.log_y
+    out.title = f'{y} × {x}' + (f' ({group})' if group else '')
+    return out
+
+
+def _reg_points(spec: GraphSpec, tables, ax_scale=(1.0, 1.0)) -> list:
+    """(label, colour, x, y) per regression line: all visible series pooled,
+    or one per series (reg_split)."""
+    parts = []
+    for i, s in enumerate(spec.series):
+        if not s.visible:
+            continue
+        xs, ys = [], []
+        for p in xy_parts(_no_agg(s), tables, *ax_scale):
+            if p['ticks'] or p['yticks']:
+                continue
+            xs.append(np.asarray(p['x'], float))
+            ys.append(np.asarray(p['y'], float))
+        if xs:
+            parts.append((_label(s, i), s.color, np.concatenate(xs), np.concatenate(ys)))
+    if not spec.calc.reg_split and parts:
+        return [('', '#000000', np.concatenate([p[2] for p in parts]), np.concatenate([p[3] for p in parts]))]
+    return parts
+
+
+def regression_rows(spec: GraphSpec, tables) -> list[dict]:
+    from . import graph_calc
+
+    out = []
+    for label, _col, x, y in _reg_points(spec, view_tables(spec, tables), (spec.x.scale, spec.y.scale)):
+        fx, fy = x, y
+        if spec.calc.reg_fit == 'log':
+            with np.errstate(divide='ignore', invalid='ignore'):
+                fx, fy = np.where(x > 0, np.log10(x), np.nan), np.where(y > 0, np.log10(y), np.nan)
+        reg = graph_calc.regression(fx, fy, through_origin=spec.calc.reg_fit == 'origin')
+        rho, p_s, _ = graph_calc.spearman(x, y)
+        out.append(dict(series=label or '전체', fit=REG_FITS.get(spec.calc.reg_fit, ''), **reg,
+                        spearman_rho=rho, spearman_p=p_s, note=graph_calc.why_nan(fx, fy)))
+    return out
+
+
+def _draw_regression(ax, spec: GraphSpec, tables):
+    from . import graph_calc
+
+    c = spec.calc
+    pts = _reg_points(spec, tables, (spec.x.scale, spec.y.scale))
+    lines = []
+    for (label, col, x, y), reg in zip(pts, regression_rows(spec, tables)):
+        ok = np.isfinite(x) & np.isfinite(y)
+        if not np.isfinite(reg['slope']) or ok.sum() < 3:
+            lines.append(f'{label + ": " if label else ""}{reg["note"]}')
+            continue
+        lo, hi = float(np.nanmin(x[ok])), float(np.nanmax(x[ok]))
+        if c.reg_fit == 'log':
+            lo = max(lo, float(np.nanmin(x[ok & (x > 0)])) if (ok & (x > 0)).any() else lo)
+            xx = np.geomspace(max(lo, 1e-12), max(hi, lo * 1.0001), 60)
+            yy = 10 ** (reg['intercept'] + reg['slope'] * np.log10(xx))
+        else:
+            xx = np.linspace(min(lo, 0) if c.reg_fit == 'origin' else lo, hi, 60)
+            yy = reg['intercept'] + reg['slope'] * xx
+        ax.plot(xx, yy, color=col, lw=1.2, zorder=5, gid='regression')
+        rho = reg['spearman_rho'] if 'spearman_rho' in reg else graph_calc.spearman(x, y)[0]
+        lines.append(f'{label + ": " if label else ""}r = {reg["r"]:.3f}, R² = {reg["r2"]:.3f}, '
+                     f'p = {reg["p"]:.3g}, ρ = {rho:.3f}, n = {reg["n"]}')
+    if c.reg_text and lines:
+        ax.text(0.02, 0.98, '\n'.join(lines), transform=ax.transAxes, ha='left', va='top',
+                fontsize=spec.tick_font.size, zorder=11)
+    if c.quadrant != 'none' and pts:
+        x = np.concatenate([p[2] for p in pts])
+        y = np.concatenate([p[3] for p in pts])
+        ok = np.isfinite(x) & np.isfinite(y)
+        if ok.any():
+            f = np.nanmean if c.quadrant == 'mean' else np.nanmedian
+            mx, my = float(f(x[ok])), float(f(y[ok]))
+            ax.axvline(mx, color='#7f7f7f', lw=0.8, ls='--', zorder=1)
+            ax.axhline(my, color='#7f7f7f', lw=0.8, ls='--', zorder=1)
+            xo, yo = x[ok], y[ok]
+            counts = {'I': int(((xo >= mx) & (yo >= my)).sum()), 'II': int(((xo < mx) & (yo >= my)).sum()),
+                      'III': int(((xo < mx) & (yo < my)).sum()), 'IV': int(((xo >= mx) & (yo < my)).sum())}
+            for name, (dx, dy, ha, va) in {'I': (4, 4, 'left', 'bottom'), 'II': (-4, 4, 'right', 'bottom'),
+                                           'III': (-4, -4, 'right', 'top'),
+                                           'IV': (4, -4, 'left', 'top')}.items():
+                ax.annotate(f'{name} ({counts[name]})', (mx, my), xytext=(dx, dy), textcoords='offset points',
+                            ha=ha, va=va, zorder=11,
+                        fontsize=spec.tick_font.size, color='#7f7f7f')
+
+
+def group_summary_table(t: Table, cols: list, group_col: str, control: str = '', groups=None) -> Table:
+    """여러 열 그룹 요약표 (Mito Analyzer group_summary_long): one row per
+    column × group."""
+    from . import graph_calc
+
+    labels = [_text(v) for v in t.values(group_col)]
+    groups = list(groups or dict.fromkeys(labels))
+    rows = graph_calc.group_summary_long({t.label(c): t.numbers(c) for c in cols}, labels, groups,
+                                         control or None)
+    return Table.from_dicts('그룹 요약', rows)

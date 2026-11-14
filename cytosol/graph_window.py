@@ -744,6 +744,48 @@ class GraphWindow(QMainWindow):
             self.show()
         return d
 
+    def open_scatter(self, x, y, group=''):
+        """A matrix cell clicked: the XY graph of those two columns (with the
+        regression line) as a new graph of the window."""
+        src = self.doc
+        sp = G.scatter_spec(self.spec, x, y, group)
+        G.build_series(sp, self.tables())
+        for s in sp.series:
+            s.style = 'marker'
+        d = self.add_doc(self._free_key(), sp.title, src.data_fn, src.source)
+        d.extra = list(src.extra)
+        d.data = G.GraphData(sp.title, list(src.data.tables) if src.data else [], sp.copy(),
+                             *(() if src.data is None else (src.data.name, src.data.folder)))
+        d.spec, d.default_spec = sp.copy(), sp.copy()
+        d.series_i = 0 if d.spec.series else -1
+        self.show_doc(d)
+        self._changed_no_redraw()
+        return d
+
+    def group_summary(self, path=None, run=True):
+        """여러 열 그룹 요약표: every number column (or the 상관 X 열) × group
+        as one CSV (n, mean, SD, SEM, 95 % CI, median, IQR, tests)."""
+        t = G.calc_table(self.spec, self.tables())
+        if t is None:
+            return None
+        texts = G.text_columns(t)
+        gc = G.group_column(self.spec)
+        gcol = (self.spec.calc.group if self.spec.chart == 'corrcmp' else '') \
+            or next((c for c in ('group', '그룹') if c in t.columns), '') or (gc if gc in texts else '')
+        if not gcol:
+            QMessageBox.information(self, '그룹 요약표', '표에 그룹 열이 없습니다.')
+            return None
+        cols = G.calc_columns(self.spec, t, 'x')
+        out = G.group_summary_table(t, cols, gcol)
+        if path is None and run:
+            path, _ = QFileDialog.getSaveFileName(self, '그룹 요약표 저장', f'{_safe(self.doc.title)}_group_summary.csv',
+                                                  'CSV (*.csv)')
+        if path:
+            G.write_csv(path, out)
+            if hasattr(self.win, 'statusBar'):
+                self.win.statusBar().showMessage(f'그룹 요약표 저장: {path}')
+        return out
+
     def showEvent(self, ev):
         super().showEvent(ev)
         QTimer.singleShot(0, self.refresh_chips)
@@ -794,6 +836,9 @@ class GraphWindow(QMainWindow):
         self._act(m, '그래프 이름 바꾸기…', self.rename_doc)
         m.addSeparator()
         self._act(m, '통계 · 유의성 표시…', self.open_stats)
+        self._act(m, '여러 열 그룹 요약표 저장 (CSV)…', lambda: self.group_summary(),
+                  tip='표의 숫자 열(상관 그래프는 가로 열)마다 그룹별 n · 평균 · SD · SEM · 95% CI · 중앙값 · '
+                      'IQR과 그룹 사이 검정 p를 한 표로 저장합니다.')
         self._act(m, '글자 상자 추가', lambda: self.add_text())
         self._act(m, '범례 항목 추가', self.add_legend_item)
         self._act(m, '모든 위치·크기 자동 배치로', self.auto_layout,
@@ -1101,8 +1146,17 @@ class GraphWindow(QMainWindow):
         self.stats_ed = StatsEditor(lambda: self.spec if self.doc.key is not None else None, self.tables,
                                     self._stats_changed, full=False)
         lay.addWidget(self.stats_ed)
+        from .graph_editors import RegressionEditor
+
+        self.reg_ed = RegressionEditor(lambda: self.spec if self.doc.key is not None else None, self.tables,
+                                       self._reg_changed)
+        lay.addWidget(self.reg_ed)
         lay.addStretch()
         return w
+
+    def _reg_changed(self):
+        self._changed()
+        self.render()
 
     # ---- inspector <-> graph ----
 
@@ -1215,7 +1269,8 @@ class GraphWindow(QMainWindow):
         d['_title'] = self.doc.title
         if self.doc.source and str(self.doc.key).startswith('free'):
             d['_source'] = self.doc.source  # made with 새 그래프 from a tool: data again from it
-        d['_tables'] = [{'name': t.name, 'columns': list(t.columns), 'rows': [list(r) for r in t.rows]}
+        d['_tables'] = [{'name': t.name, 'columns': list(t.columns), 'rows': [list(r) for r in t.rows],
+                         'labels': dict(t.labels), 'column_sets': dict(t.column_sets)}
                         for t in self.extra]
         return d
 
@@ -1261,7 +1316,8 @@ class GraphWindow(QMainWindow):
         data, else only their style."""
         tabs = d.get('_tables') if isinstance(d, dict) else None
         if tabs:
-            self.extra = [G.Table(str(t.get('name', '')), list(t.get('columns', [])), list(t.get('rows', [])))
+            self.extra = [G.Table(str(t.get('name', '')), list(t.get('columns', [])), list(t.get('rows', [])),
+                                  dict(t.get('labels') or {}), dict(t.get('column_sets') or {}))
                           for t in tabs if isinstance(t, dict)]
             if self.data is not None:
                 self._with_extra(self.data)
@@ -1321,11 +1377,13 @@ class GraphWindow(QMainWindow):
         self.mapping_ed.refresh()
         self.groups_ed.refresh()
         self.stats_ed.refresh()
+        self.reg_ed.refresh()
         self._chart_changed(sync=False)
         self._show_used()
 
     def _chart_changed(self, sync=True):
         c = self.spec.chart
+        self.mapping_ed.setTitle('상관 계산' if c in G.CORR_CHARTS else '축 배치')
         self.cat_box.setVisible(c in G.CATEGORY_CHARTS)
         self.hist_box.setVisible(c == 'hist')
         self.heat_box.setVisible(c == 'heatmap')
@@ -1773,6 +1831,11 @@ class GraphWindow(QMainWindow):
             return
         if event.button != 1:
             return
+        if self.spec.chart in G.CORR_CHARTS and event.inaxes is not None and event.xdata is not None:
+            cell = G.corr_cell(self.spec, self.art, event.inaxes, event.xdata, event.ydata)
+            if cell is not None:
+                self.open_scatter(*cell)
+                return
         if event.dblclick:
             kind, i = self._hit(event)
             self._edit(kind, i, event)
@@ -1855,6 +1918,12 @@ class GraphWindow(QMainWindow):
         d = self._drag
         if d is None:
             if event.x is None or not self.art:
+                return
+            if self.spec.chart in G.CORR_CHARTS:
+                tip = G.corr_cell_text(self.spec, self.art, event.inaxes, event.xdata, event.ydata) \
+                    if event.inaxes is not None and event.xdata is not None else ''
+                self.canvas.setToolTip(tip + ('\n클릭: 이 두 열의 산점도' if tip else ''))
+                self.canvas.setCursor(Qt.CursorShape.PointingHandCursor if tip else Qt.CursorShape.ArrowCursor)
                 return
             if self._on_handle(event):
                 shape = Qt.CursorShape.SizeFDiagCursor
@@ -2077,7 +2146,7 @@ class GraphWindow(QMainWindow):
                 name = f'{base} ({k})'
                 k += 1
             have.add(name)
-            nt = G.Table(name, list(t.columns), [list(r) for r in t.rows])
+            nt = G.Table(name, list(t.columns), [list(r) for r in t.rows], dict(t.labels), dict(t.column_sets))
             self.data.tables.append(nt)
             self.extra.append(nt)
             added.append(nt)

@@ -51,7 +51,9 @@ KINDS = [('xy', '선 · 점 (XY)', '시간 · 거리 같은 숫자 x'),
          ('box', '상자 그림', '중앙값과 사분위'),
          ('violin', '바이올린', '값의 분포 모양'),
          ('hist', '히스토그램', '한 값의 분포'),
-         ('heatmap', '히트맵', 'x · y 위의 값')]
+         ('heatmap', '히트맵', 'x · y 위의 값'),
+         ('corr', '상관 행렬', '여러 열 사이의 상관'),
+         ('corrcmp', '상관 비교', '그룹마다 상관이 다른지')]
 STATS_DEFAULTS = {k: getattr(G.Stats(), k) for k in G.STATS_LOOK}
 
 
@@ -339,6 +341,9 @@ class MappingEditor(QGroupBox):
             m = sp.mapping
             if m.table not in tabs:
                 m.table = next(iter(tabs))
+            if sp.chart in G.CORR_CHARTS:
+                self._calc_rows(sp, tabs)
+                return
             t = tabs[m.table]
             nums = t.numeric_columns()
             chart = sp.chart
@@ -346,6 +351,7 @@ class MappingEditor(QGroupBox):
             tc = combo([(f'{n} ({len(tabs[n].rows)}행)', n) for n in tabs], m.table)
             tc.currentIndexChanged.connect(lambda _i, c=tc: self._set_table(c.currentData()))
             self.form.addRow('데이터 표', tc)
+            self._unit_row(t, m)
             if not m.on:
                 self.form.addRow(hint('지금 그래프는 분석 탭이 만든 구성입니다. 여기서 바꾸면 이 표로 다시 그립니다.'))
             # X
@@ -429,6 +435,174 @@ class MappingEditor(QGroupBox):
             _align_end(self.form)
         finally:
             self._busy = False
+
+    def _unit_row(self, t, m):
+        """점 하나 = 행 그대로 / 이미지 평균 / 그룹 평균 (only when the table has those columns)."""
+        from . import graph_calc
+
+        items = [(graph_calc.UNITS['rows'], 'rows')]
+        for k in ('image', 'group'):
+            if G._key_column(t, k):
+                items.append((graph_calc.UNITS[k], k))
+        if len(items) == 1 and m.unit == 'rows':
+            return
+        uc = combo(items, m.unit)
+        uc.setToolTip('점 하나가 무엇인지: 표의 행(세포, 입자 …) 그대로, 또는 이미지 / 그룹마다 평균한 값')
+        uc.currentIndexChanged.connect(lambda _i, c=uc: self._edit(lambda mm: setattr(mm, 'unit', c.currentData())))
+        self.form.addRow('점 하나 =', uc)
+
+    # ---- 상관 계산 (상관 행렬 / 상관 비교) ----
+
+    def _calc(self, fn):
+        if self._busy:
+            return
+        sp = self.get_spec()
+        if sp is None:
+            return
+        fn(sp.calc)
+        sp.mapping.on = True
+        self.changed()
+        QTimer.singleShot(0, self.refresh)
+
+    def _cols_rows(self, title, t, which):
+        """Column-set pop-up (+ chips when picked by hand) for X or Y."""
+        from .flow import FlowLayout
+        from .hig_widgets import Chip
+
+        sp = self.get_spec()
+        c = sp.calc
+        cset, picked = (c.xset, c.xs) if which == 'x' else (c.yset, c.ys)
+        items = []
+        if which == 'y':
+            items.append(('X와 같음 (정사각 행렬)', '@x'))
+        items.append(('모든 숫자 열', ''))
+        items += [(f'{k} ({len(v)}열)', k) for k, v in t.column_sets.items()]
+        items.append(('직접 고르기', '@pick'))
+        cur = '@pick' if picked else cset
+        cb = combo(items, cur)
+
+        def pick(v, which=which):
+            def f(cc):
+                if v == '@pick':
+                    cols = G.calc_columns(sp, t, which)
+                    if which == 'x':
+                        cc.xs = list(cols)
+                    else:
+                        cc.ys = list(cols)
+                    return
+                if which == 'x':
+                    cc.xset, cc.xs = v, []
+                else:
+                    cc.yset, cc.ys = v, []
+            self._calc(f)
+        cb.currentIndexChanged.connect(lambda _i, b=cb: pick(b.currentData()))
+        self.form.addRow(title, cb)
+        rows = [cb]
+        if picked:
+            w = QWidget()
+            fl = FlowLayout(w)
+            on = set(picked)
+            for col in t.numeric_columns():
+                ch = Chip(t.label(col), False)
+                ch.setChecked(col in on)
+                ch.setToolTip(col)
+
+                def tog(checked, col=col, which=which):
+                    def f(cc):
+                        lst = list(cc.xs if which == 'x' else cc.ys)
+                        if checked and col not in lst:
+                            lst.append(col)
+                        if not checked and col in lst:
+                            lst.remove(col)
+                        if which == 'x':
+                            cc.xs = lst or [col]
+                        else:
+                            cc.ys = lst or [col]
+                    self._calc(f)
+                ch.toggled.connect(tog)
+                fl.addWidget(ch)
+            self.form.addRow(w)
+            rows.append(w)
+        theme.group_rows(*rows)
+
+    def _calc_rows(self, sp, tabs):
+        from . import graph_calc
+
+        c, m = sp.calc, sp.mapping
+        if c.table not in tabs:
+            c.table = m.table
+        t = tabs[c.table]
+        tc = combo([(f'{n} ({len(tabs[n].rows)}행)', n) for n in tabs], c.table)
+
+        def set_table(name):
+            def f(cc):
+                cc.table, cc.xs, cc.ys, cc.xset, cc.yset = name, [], [], '', '@x'
+                sp.mapping.table = name
+            self._calc(f)
+        tc.currentIndexChanged.connect(lambda _i, b=tc: set_table(b.currentData()))
+        self.form.addRow('데이터 표', tc)
+        self._unit_row(t, m)
+        mc = combo([(v, k) for k, v in graph_calc.METHODS.items()], c.method)
+        mc.currentIndexChanged.connect(lambda _i, b=mc: self._calc(lambda cc: setattr(cc, 'method', b.currentData())))
+        self.form.addRow('계산', mc)
+        self._cols_rows('가로 (X) 열', t, 'x')
+        self._cols_rows('세로 (Y) 열', t, 'y')
+        lw = QWidget()
+        lh = QHBoxLayout(lw)
+        lh.setContentsMargins(0, 0, 0, 0)
+        lh.addStretch()
+        for attr, text in (('log_x', 'log X'), ('log_y', 'log Y'), ('numbers', '칸에 숫자')):
+            b = QCheckBox(text)
+            b.setChecked(getattr(c, attr))
+            b.toggled.connect(lambda v, a=attr: self._calc(lambda cc: setattr(cc, a, v)))
+            lh.addWidget(b)
+        self.form.addRow('보기', lw)
+        texts = [x for x in t.columns if x not in t.numeric_columns()]
+        wc = combo([('(없음)', '')] + [(x, x) for x in texts], c.where)
+        wc.currentIndexChanged.connect(lambda _i, b=wc: self._calc(
+            lambda cc: (setattr(cc, 'where', b.currentData()), setattr(cc, 'equals', ''))))
+        self.form.addRow('거르기', wc)
+        rows = [wc]
+        if c.where in t.columns:
+            vals = G._ordered(G._texts(t, c.where, range(len(t.rows))), [])
+            if c.equals not in vals and vals:
+                c.equals = vals[0]
+            ec = combo([(v, v) for v in vals], c.equals)
+            ec.currentIndexChanged.connect(lambda _i, b=ec: self._calc(lambda cc: setattr(cc, 'equals', b.currentData())))
+            self.form.addRow('    값', ec)
+            rows.append(ec)
+        theme.group_rows(*rows)
+        if sp.chart == 'corrcmp':
+            if c.group not in texts and texts:
+                c.group = next((x for x in ('group', '그룹') if x in texts), texts[0])
+            gc = combo([(x, x) for x in texts], c.group)
+            gc.currentIndexChanged.connect(lambda _i, b=gc: self._calc(lambda cc: setattr(cc, 'group', b.currentData())))
+            self.form.addRow('그룹 열', gc)
+            cm = combo([(v, k) for k, v in G.COMPARE.items()], c.compare)
+            cm.currentIndexChanged.connect(lambda _i, b=cm: self._calc(lambda cc: setattr(cc, 'compare', b.currentData())))
+            self.form.addRow('비교', cm)
+            groups = G.calc_groups(sp, t)
+            if c.compare == 'ab' and len(groups) >= 2:
+                if c.a not in groups:
+                    c.a = groups[0]
+                if c.b not in groups or c.b == c.a:
+                    c.b = next(g for g in groups if g != c.a)
+                for attr, title in (('a', 'A (기준)'), ('b', 'B')):
+                    ab = combo([(g, g) for g in groups], getattr(c, attr))
+                    ab.currentIndexChanged.connect(lambda _i, b=ab, a=attr: self._calc(
+                        lambda cc: setattr(cc, a, b.currentData())))
+                    self.form.addRow(title, ab)
+            cr = combo([(v, k) for k, v in graph_calc.CORRECTIONS.items()], c.correction)
+            cr.currentIndexChanged.connect(lambda _i, b=cr: self._calc(lambda cc: setattr(cc, 'correction', b.currentData())))
+            self.form.addRow('다중 비교 보정', cr)
+            res = G.corr_result(sp, tabs)
+            if res is not None and 'n_tests' in res:
+                st = theme.StatusLabel(f'칸 {res["n_tests"]}개를 비교합니다. 보정 없이 p < 0.05면 우연히 '
+                                       f'약 {res["expected"]:.1f}개가 나올 수 있습니다.', kind='info')
+                self.form.addRow(st)
+            elif len(groups) < 2:
+                self.form.addRow(theme.StatusLabel('그룹 열의 값이 2개 이상 있어야 비교합니다.', kind='warning'))
+        _align_end(self.form)
 
     def _set_table(self, name):
         def f(m):
@@ -822,6 +996,78 @@ class GraphWizard(QDialog):
             self.accept()
         else:
             self.go(self.step + 1)
+
+
+class RegressionEditor(QGroupBox):
+    """XY 회귀 · 사분면 card (통계 tab of XY graphs): the fitted line, its
+    numbers and the quadrants, on any XY graph."""
+
+    def __init__(self, get_spec, get_tables, changed, parent=None):
+        super().__init__('XY 회귀 · 사분면', parent)
+        self.get_spec, self.get_tables, self.changed = get_spec, get_tables, changed
+        self._busy = False
+        f = QFormLayout(self)
+        self.on = QCheckBox('회귀선')
+        theme.switch(self.on)
+        f.addRow('회귀선', self.on)
+        self.fit = combo([(v, k) for k, v in G.REG_FITS.items()])
+        f.addRow('맞춤', self.fit)
+        self.text = QCheckBox('r · R² · p · ρ · n')
+        f.addRow('글자', self.text)
+        self.split = QCheckBox('색마다 선 하나')
+        f.addRow('나누기', self.split)
+        self.quad = combo([(v, k) for k, v in G.QUADRANTS.items()])
+        f.addRow('사분면', self.quad)
+        self.result = QLabel()
+        self.result.setWordWrap(True)
+        theme.hint(self.result)
+        f.addRow(self.result)
+        _align_end(f)
+        self.on.toggled.connect(lambda v: self._set('reg_on', v))
+        self.fit.currentIndexChanged.connect(lambda _i: self._set('reg_fit', self.fit.currentData()))
+        self.text.toggled.connect(lambda v: self._set('reg_text', v))
+        self.split.toggled.connect(lambda v: self._set('reg_split', v))
+        self.quad.currentIndexChanged.connect(lambda _i: self._set('quadrant', self.quad.currentData()))
+        self.refresh()
+
+    def _set(self, attr, v):
+        if self._busy:
+            return
+        sp = self.get_spec()
+        if sp is None:
+            return
+        setattr(sp.calc, attr, v)
+        self.changed()
+        self.refresh()
+
+    def refresh(self):
+        sp = self.get_spec()
+        self.setVisible(sp is not None and sp.chart == 'xy')
+        if sp is None:
+            return
+        self._busy = True
+        try:
+            c = sp.calc
+            self.on.setChecked(c.reg_on)
+            self.fit.setCurrentIndex(max(self.fit.findData(c.reg_fit), 0))
+            self.text.setChecked(c.reg_text)
+            self.split.setChecked(c.reg_split)
+            self.quad.setCurrentIndex(max(self.quad.findData(c.quadrant), 0))
+            lines = []
+            if c.reg_on and sp.chart == 'xy':
+                try:
+                    for r in G.regression_rows(sp, self.get_tables()):
+                        if r['note']:
+                            lines.append(f"{r['series']}: {r['note']}")
+                        else:
+                            lines.append(f"{r['series']}: y = {r['slope']:.4g} x + {r['intercept']:.4g}, "
+                                         f"R² = {r['r2']:.3f}, p = {r['p']:.3g}, n = {r['n']}")
+                except Exception:  # noqa: BLE001
+                    lines = []
+            self.result.setText('\n'.join(lines))
+            self.result.setVisible(bool(lines))
+        finally:
+            self._busy = False
 
 
 # ---------------------------------------------------------------------------

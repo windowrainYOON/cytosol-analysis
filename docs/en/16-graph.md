@@ -157,3 +157,30 @@ BOM so Excel opens them directly.
 
 Features not built yet (reference lines, added fit curves, a second y axis) are not shown
 in the menus.
+
+## Correlation tools (v0.63)
+
+Correlation tools for any table (mitoROI, particle ROI, measurement tables, batch results, CSV).
+
+- **점 하나 =** (data tab, when the table has an image / group column): **행 그대로** (cells,
+  particles …), **이미지 평균** (image means), **그룹 평균** (group means). Applies to every chart
+  and to the statistics.
+- **상관 행렬** (chart kind): the **상관 계산** card picks the table, **계산** (Pearson r / Spearman
+  ρ), **가로 (X) 열** and **세로 (Y) 열** (every number column / a column set given by the table /
+  chips picked by hand; Y defaults to "same as X" = a square matrix), **log X / log Y**, **칸에 숫자**
+  (≤ 100 cells), **거르기** (any text column = a value). Colours run −1 (blue) … 1 (red); cells that
+  cannot be computed show "–". Hovering a cell shows r · n · p and why a value is undefined (n < 3, all
+  values equal); **clicking a cell opens the scatter plot of those two columns with its regression
+  line as a new graph**. The plotted data is the long table Y, X, Pearson r, R², p, Spearman ρ, p, n,
+  reason.
+- **상관 비교** (chart kind): one matrix per value of the **그룹 열**. **A 대 B**: A and B matrices and
+  Δ (B − A) with Fisher z stars (* p < 0.05, ** p < 0.01), the table sorted by |Δ|. **모든 그룹**: a
+  small matrix per group and the between-group (Cochran Q) map. **다중 비교 보정** defaults to none
+  (as in Mito Analyzer); Holm / FDR can be picked, and the number of cells and the count expected by
+  chance are shown.
+- **XY 회귀 · 사분면** (statistics tab, XY graphs): regression line (least squares / fit on log values /
+  through the origin), text (r, R², p, ρ, n), one line per colour, quadrants (from the mean / median,
+  I–IV with point counts).
+- **편집 › 여러 열 그룹 요약표 저장 (CSV)…**: per number column (X columns of a correlation graph) and
+  group: n, mean, SD, SEM, 95 % CI, median, quartiles and the between-group tests (2 groups: Welch t,
+  Mann-Whitney U; more: ANOVA, Kruskal-Wallis).

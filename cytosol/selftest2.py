@@ -129,6 +129,115 @@ def stacking_step(out: Path):
     return '2 RGB sets stacked, dialog order, same pattern, T stack, pad, project'
 
 
+def _cells_csv(path: Path, seed=0) -> Path:
+    import csv
+
+    rng = np.random.default_rng(seed)
+    with open(path, 'w', newline='', encoding='utf-8') as f:
+        w = csv.writer(f)
+        w.writerow(['group', 'image', 'cell', 'm1', 'm2', 'm3'])
+        for g in ('A', 'B', 'C'):
+            for im in range(4):
+                for c in range(15):
+                    a = rng.normal()
+                    w.writerow([g, f'{g}{im}', c, a, a * (1 if g == 'A' else -0.5) + rng.normal(), rng.random() + 1])
+    return path
+
+
+def graph_corr_step(out: Path):
+    """그래프 창 상관 분석: 상관 행렬 / 상관 비교 equal to Mito Analyzer's
+    stats (Pearson, Fisher z, Cochran Q), 점 하나 = 이미지 평균, a cell click
+    makes the scatter with its regression, 그룹 요약표, the wizard's kinds."""
+    from scipy import stats as SS
+
+    from . import graph as G
+    from . import graph_calc as GC
+
+    app, win = _window()
+    d = out / 'graph_corr'
+    d.mkdir(parents=True, exist_ok=True)
+    csvp = _cells_csv(d / 'cells.csv')
+    gw = win.graph_window()
+    wz = gw.start_wizard_csv(csvp, run=False)
+    wz._kind('corr')
+    if 'corr' not in wz.kinds.cards or 'corrcmp' not in wz.kinds.cards:
+        raise AssertionError('new chart kinds missing from the wizard')
+    doc = wz.finish()
+    app.processEvents()
+    tabs = gw.tables()
+    t = tabs[gw.spec.mapping.table]
+    res = G.corr_result(gw.spec, tabs)
+    m1, m2 = t.numbers('m1'), t.numbers('m2')
+    if res['xs'] != ['m1', 'm2', 'm3'] or abs(res['vals'][1, 0] - SS.pearsonr(m1, m2).statistic) > 1e-9:
+        raise AssertionError(f'correlation matrix {res["xs"]} {res["vals"][1, 0]}')
+    gw.render()
+    if gw.art.get('corr') is None or len(G.plotted_table(gw.spec, tabs).rows) != 9:
+        raise AssertionError('correlation matrix not drawn')
+    # Spearman
+    gw.spec.calc.method = 'rho'
+    if abs(G.corr_result(gw.spec, tabs)['vals'][1, 0] - SS.spearmanr(m1, m2).statistic) > 1e-9:
+        raise AssertionError('Spearman')
+    gw.spec.calc.method = 'r'
+    # 상관 비교 A vs B: Fisher z equals the formula
+    gw.spec.chart = 'corrcmp'
+    gw.spec.calc.group, gw.spec.calc.a, gw.spec.calc.b = 'group', 'A', 'B'
+    res = G.corr_result(gw.spec, tabs)
+    ga = [i for i, v in enumerate(t.values('group')) if v == 'A']
+    gb = [i for i, v in enumerate(t.values('group')) if v == 'B']
+    ra, rb = SS.pearsonr(m1[ga], m2[ga]).statistic, SS.pearsonr(m1[gb], m2[gb]).statistic
+    z = (np.arctanh(rb) - np.arctanh(ra)) / np.sqrt(1 / (len(ga) - 3) + 1 / (len(gb) - 3))
+    if abs(res['p_raw'][1, 0] - 2 * SS.norm.sf(abs(z))) > 1e-9 or res['p'][1, 0] != res['p_raw'][1, 0]:
+        raise AssertionError('Fisher z')
+    gw.spec.calc.correction = 'holm'
+    if not np.allclose(G.corr_result(gw.spec, tabs)['p'], GC.holm(res['p_raw']), equal_nan=True):
+        raise AssertionError('Holm')
+    gw.spec.calc.correction = 'none'
+    gw.spec.calc.compare = 'all'
+    res = G.corr_result(gw.spec, tabs)
+    if res['q_p'].shape != (3, 3) or not np.isfinite(res['q_p'][1, 0]):
+        raise AssertionError('Cochran Q')
+    gw.render()
+    gw.spec.calc.compare = 'ab'
+    gw.render()
+    if len(gw.art.get('axes', [])) != 3:
+        raise AssertionError('A / B / Δ panels')
+    # 점 하나 = 이미지 평균
+    gw.spec.mapping.unit = 'image'
+    res = G.corr_result(gw.spec, tabs)
+    if int(res['per']['A']['ns'][0, 0]) != 4:
+        raise AssertionError(f'image means n {res["per"]["A"]["ns"][0, 0]}')
+    gw.spec.mapping.unit = 'rows'
+    # a cell click: the scatter with its regression
+    gw.spec.chart = 'corr'
+    gw.render()
+    n = len(gw.docs)
+    sc = gw.open_scatter('m1', 'm2')
+    if len(gw.docs) != n + 1 or not sc.spec.calc.reg_on or sc.spec.chart != 'xy':
+        raise AssertionError('scatter from a matrix cell')
+    rows = G.regression_rows(gw.spec, gw.tables())
+    if abs(rows[0]['r'] - SS.pearsonr(m1, m2).statistic) > 1e-9:
+        raise AssertionError('regression r')
+    gw.spec.calc.quadrant = 'median'
+    gw.render()
+    gw.reg_ed.refresh()
+    if gw.reg_ed.isHidden():
+        raise AssertionError('regression card hidden on XY')
+    # 그룹 요약표
+    summ = gw.group_summary(d / 'group_summary.csv', run=False)
+    if summ is None or len(summ.rows) != 3 * 3 or not (d / 'group_summary.csv').exists():
+        raise AssertionError(f'group summary {None if summ is None else len(summ.rows)}')
+    # settings JSON keeps the new fields
+    back = G.GraphSpec.from_dict(gw.spec.to_dict())
+    if back.calc.quadrant != 'median' or not back.calc.reg_on:
+        raise AssertionError('calc settings not saved')
+    gw.remove_doc(sc)
+    gw.remove_doc(doc)
+    gw.hide()
+    _close(win)
+    return 'corr matrix = Pearson / Spearman, Fisher z, Holm, Cochran Q, image means, scatter + regression, summary'
+
+
 STEPS = [
     ('image stacking', stacking_step),
+    ('graph correlation', graph_corr_step),
 ]
