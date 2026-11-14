@@ -113,15 +113,15 @@ class DataRows(QWidget):
     (no scrolling table inside a scrolling page): name, size, state,
     그래프 ›.  `tables()` returns [(name, 점 하나 =, rows)]."""
 
-    def __init__(self, win, tables: Callable[[], list], parent=None):
+    def __init__(self, win, tables: Callable[[], list], feature: str = '', parent=None):
         super().__init__(parent)
         self.win = win
         self.tables = tables
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(0, 0, 0, 0)
         self._lay.setSpacing(6)
-        note = QLabel('표 전체는 그래프 편집 창의 데이터에서 봅니다. 값 확인은 이미지 위의 ROI에 '
-                      '마우스를 올리세요.')
+        from .integrate import feeds_text
+        note = QLabel(' '.join(x for x in (feeds_text(feature), '표 전체는 그래프 편집 창의 데이터에서 봅니다.') if x))
         note.setWordWrap(True)
         theme.hint(note)
         self.note = note

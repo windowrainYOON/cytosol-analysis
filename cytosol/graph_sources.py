@@ -290,6 +290,19 @@ def mito(panel) -> G.GraphData | None:
     return G.GraphData('mitoROI', tables, spec, _stem(it, 'mito') if it else 'mito', _folder(it) if it else '')
 
 
+# ---- 통합 데이터 (v0.68) ----------------------------------------------------------------------------
+
+def integrated(win) -> G.GraphData | None:
+    """The 통합 데이터 tables (one per 점 하나), columns 「기능 › 열」 grouped
+    by feature."""
+    from . import integrate as I
+    tables = I.tables(win)
+    if not tables:
+        return None
+    it = win.current
+    return G.GraphData('통합 데이터', tables, G.GraphSpec(), 'integrated', _folder(it) if it else '')
+
+
 # ---- measurement tables ---------------------------------------------------------------------------
 
 def measure(box, title) -> G.GraphData | None:

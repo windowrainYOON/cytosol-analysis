@@ -25,6 +25,13 @@ from . import theme
 
 # kind key -> (sidebar title, [(card title, [(output key, label, tip, default on)])])
 KINDS: dict = {
+    'integrated': ('통합 데이터', [
+        ('범주별 표 (모든 이미지가 한 표)', [
+            ('integrated_csv', '통합 데이터 CSV (이미지별 · 세포별 · 세포 × 띠별 · 입자별 · 미토 조각별 · 시점별)',
+             '측정할 때마다 저절로 모인 표입니다. 내보내기 폴더 맨 위에 integrated_<범주>.csv와 열 설명 '
+             'integrated_columns.csv로 저장합니다. 기능별 표는 아래 각 기능에서 따로 고릅니다.', True),
+        ]),
+    ]),
     'image': ('이미지 (TIFF / MP4)', [
         ('저장할 형태', [
             ('composite', '합성 RGB (LUT 적용)', '', True),
@@ -149,7 +156,7 @@ KINDS: dict = {
         ]),
     ]),
 }
-DEFAULT_KINDS = ('image', 'crop', 'roi', 'particle')
+DEFAULT_KINDS = ('integrated', 'image', 'crop', 'roi', 'particle')
 # image options that live on the main window (exp_*, saved in projects)
 RGB_FORMATS = (('tif', 'TIFF 스택'), ('mp4', 'MP4 동영상'), ('both', 'TIFF + MP4'))
 
@@ -242,6 +249,8 @@ class ExportDialog(QDialog):
         self.checks = {}  # output key -> QCheckBox
         self.kind_of = {}  # output key -> kind
         on_kinds = set(saved.get('kinds', DEFAULT_KINDS))
+        if 'integrated' not in saved.get('known', ['integrated']):
+            on_kinds.add('integrated')  # new in v0.68: on until the user turns it off
         for key, (title, cards) in KINDS.items():
             it = QTreeWidgetItem([title, ''])
             it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -459,6 +468,7 @@ class ExportDialog(QDialog):
         w.exp_fps.setValue(self.fps.value())
         view_settings.set_defaults('export', {
             'target': self.target.currentData(), 'dest': self.dest.text(), 'kinds': self.kinds_on(),
+            'known': list(KINDS),
             'outputs': {k: b.isChecked() for k, b in self.checks.items()}, 'markers': self.markers.isChecked(),
             'crop_which': self.crop_which.currentData(), 'roi_format': self.roi_format.currentData(),
             'graph_format': self.graph_format.currentData()})

@@ -279,7 +279,7 @@ class ColocPanel(QWidget):
         vl.addWidget(self.table, 1)
         self.table.hide()  # v0.68: the table is in the graph window (데이터), no table in the page
         from .measure_bar import DataRows
-        self.data_rows = DataRows(win, self.data_tables)
+        self.data_rows = DataRows(win, self.data_tables, 'Coloc 2')
         vl.addWidget(self.data_rows)
 
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg

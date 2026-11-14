@@ -322,8 +322,25 @@ class MappingEditor(QGroupBox):
         c = QComboBox()
         if allow_none:
             c.addItem('(없음)', '')
-        for x in cols:
-            c.addItem(x, x)
+        sep = ' › '
+        if any(sep in x for x in cols):
+            # 통합 데이터: columns grouped by feature under a (disabled) heading
+            keys = [x for x in cols if sep not in x]
+            groups = {}
+            for x in cols:
+                if sep in x:
+                    groups.setdefault(x.split(sep, 1)[0], []).append(x)
+            for x in keys:
+                c.addItem(x, x)
+            for feat, xs in groups.items():
+                c.insertSeparator(c.count())
+                c.addItem(feat, None)
+                c.model().item(c.count() - 1).setEnabled(False)
+                for x in xs:
+                    c.addItem('   ' + x.split(sep, 1)[1], x)
+        else:
+            for x in cols:
+                c.addItem(x, x)
         i = c.findData(cur)
         c.setCurrentIndex(max(i, 0))
         return c

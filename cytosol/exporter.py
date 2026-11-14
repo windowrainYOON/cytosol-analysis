@@ -198,6 +198,14 @@ def run(win, items, out, opts, progress=None) -> Result:
     graphs = opts.get('graphs') or []
     if graphs:
         _try(res, lambda: _graphs(win, graphs, out, opts, fmt))
+    # ---- 통합 데이터 (v0.68): one set for every exported image, at the top ----
+    if opts.get('integrated_csv'):
+        from . import integrate
+
+        try:
+            res.add(integrate.write_csv(win, out, {it.image_id for it in items}))
+        except Exception as exc:  # noqa: BLE001
+            res.errors.append(f'통합 데이터: {exc}')
     # ---- 일괄 분석 ----
     if opts.get('batch_results') and win.batch.ran_at:
         from . import batch

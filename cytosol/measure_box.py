@@ -136,6 +136,11 @@ class MeasureBox(QWidget):
         self._data_lay.setContentsMargins(0, 0, 0, 0)
         self._data_lay.setSpacing(6)
         tl.addWidget(self._data_holder)
+        from .integrate import feeds_text
+        self.integ_note = QLabel(feeds_text(self.BASE.get(tab_attr, '')))
+        self.integ_note.setWordWrap(True)
+        theme.hint(self.integ_note)
+        tl.addWidget(self.integ_note)
         self.info = QLabel()
         self.info.setWordWrap(True)
         theme.hint(self.info)

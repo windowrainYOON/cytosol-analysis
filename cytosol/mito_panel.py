@@ -294,7 +294,7 @@ class MitoPanel(QWidget):
         self.table.itemSelectionChanged.connect(self._picked)
         self.table.hide()
         from .measure_bar import DataRows
-        self.data_rows = DataRows(win, self.data_tables)
+        self.data_rows = DataRows(win, self.data_tables, 'mitoROI')
         v.addWidget(self.data_rows)
         self.corr_btn = QPushButton('상관 히트맵 ›')
         self.corr_btn.setToolTip('그래프 편집 창에서 mitoROI · 세포 표로 상관 행렬 그래프를 만듭니다.')

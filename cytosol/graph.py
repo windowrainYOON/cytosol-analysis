@@ -1498,6 +1498,17 @@ def guess_mapping(spec: GraphSpec, tables: dict, table: str = '') -> Mapping:
         m.agg = first.agg if spec.chart == 'xy' else 'none'
         m.z = first.z
         return m
+    if any(' › ' in c for c in t.columns):
+        # 통합 데이터 (v0.68): band (or group / cell) as categories, the first feature value as Y
+        for k in ('band', 'group', 'cell', 'frame'):
+            if k in t.columns and len(set(t.values(k))) > 1:
+                m.x, m.x_cat = k, k != 'frame'
+                break
+        else:
+            m.x, m.x_cat = (cats[0], True) if cats else ('', False)
+        m.ys = [c for c in nums if ' › ' in c][:1]
+        m.color = '@y'
+        return m
     m.x = cats[0] if cats else (nums[0] if nums else '')
     m.x_cat = bool(cats)
     ys = [c for c in nums if c != m.x]

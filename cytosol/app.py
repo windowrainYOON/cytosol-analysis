@@ -2047,13 +2047,15 @@ class MainWindow(QMainWindow):
                       '입자 추적 탭에서 시간축이 있는 이미지를 먼저 추적하세요.'),
             'mito': ('mitoROI', 'mito_tab', lambda: S.mito(self.mito_panel),
                      'mitoROI 탭에서 먼저 분석하세요.'),
+            'integrated': ('통합 데이터', None, lambda: S.integrated(self),
+                           '측정한 결과가 없습니다. 측정 탭에서 먼저 측정하세요.'),
         }
 
     def data_entries(self) -> list[dict]:
         """Every table the tabs made, named 「기능 · 점 하나」 (owner request
         2026-11-14): feature, name, 점 하나 =, rows, state (ok / stale / auto),
         graph source key, the MeasureBox when there is one."""
-        out = []
+        out = self.integrated_entries()
         boxes = (('세포질 ROI', 'roi', self.roi_panel.measure), ('입자 ROI', 'particle', self.particle_panel.measure),
                  ('강도 측정', 'intensity', self.intensity_panel.measure),
                  ('등거리 띠', 'bands', self.bands_panel.bands_measure))
@@ -2087,6 +2089,26 @@ class MainWindow(QMainWindow):
                 out.append({'feature': feat, 'name': f'{feat} · {unit}', 'unit': unit, 'rows': len(t.rows),
                             'state': 'auto', 'key': key, 'table': t.name})
         return out
+
+    def measure_boxes(self) -> list:
+        return [self.roi_panel.measure, self.particle_panel.measure, self.intensity_panel.measure,
+                self.bands_panel.bands_measure]
+
+    def integrated_entries(self) -> list[dict]:
+        """The 통합 데이터 tables (owner request 2026-11-15): filled from every
+        measurement by themselves; first in the graph window's 데이터 list."""
+        from . import integrate as I
+        try:
+            tables = I.tables(self)
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            return []
+        units = {I.table_name(n): u for _k, n, u, _f in I.CATEGORIES}
+        boxes = [b for b in self.measure_boxes() if b.batch_rows and b.stale_items()]
+        return [{'feature': I.FEATURE, 'name': t.name, 'unit': units.get(t.name, ''), 'rows': len(t.rows),
+                 'state': 'stale' if boxes else 'ok', 'key': 'integrated', 'boxes': boxes, 'table': t.name,
+                 'columns': len(t.columns), 'features': sorted(t.column_sets)}
+                for t in tables]
 
     def update_tab_badges(self):
         """A red dot on the chip of every tab whose tables have rows (all
@@ -2181,6 +2203,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f'그래프 편집 창: {data.title}', 5000)
         return gw
 
+    def _integrated_graph(self):
+        gw = self.graph_window()
+        self._show_graphs(gw)
+        return gw.start_wizard('integrated')
+
     def open_graph_current(self):
         srcs = self.graph_sources()
         for key, (_, tab, _, _) in srcs.items():
@@ -2201,7 +2228,11 @@ class MainWindow(QMainWindow):
         open_ = {d.key for d in self.graph_docs()}
         for key, (title, *_rest) in self.graph_sources().items():
             a = QAction(f'{title}{" (열림)" if key in open_ else ""}', m)
-            a.triggered.connect(lambda _=False, k=key: self.open_graph(k))
+            if key == 'integrated':  # 통합 데이터: a new graph on one of its tables
+                a.setText(f'{title}에서 새 그래프…')
+                a.triggered.connect(lambda _=False: self._integrated_graph())
+            else:
+                a.triggered.connect(lambda _=False, k=key: self.open_graph(k))
             m.insertAction(self._graph_end, a)
             self._graph_dyn.append(a)
 

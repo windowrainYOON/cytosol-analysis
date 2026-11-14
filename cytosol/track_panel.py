@@ -222,7 +222,7 @@ class TrackPanel(QWidget):
         self.table.itemSelectionChanged.connect(self._picked)
         self.table.hide()  # v0.68: the tables are in the graph window, no table in the page
         from .measure_bar import DataRows
-        self.data_rows = DataRows(win, self.data_tables)
+        self.data_rows = DataRows(win, self.data_tables, '입자 추적')
         v.addWidget(self.data_rows)
         self.show_tracks = QCheckBox('이미지에 트랙 표시 (최근 8 프레임 꼬리)')
         self.show_tracks.setChecked(True)

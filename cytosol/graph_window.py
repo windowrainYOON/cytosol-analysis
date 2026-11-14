@@ -704,12 +704,22 @@ class GraphWindow(QMainWindow):
 
         self.data_list.clear()
         feats = {}
+        orig = None
         for e in self.data_entries():
             p = feats.get(e['feature'])
             if p is None:
                 p = QTreeWidgetItem([e['feature']])
                 p.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                self.data_list.addTopLevelItem(p)
+                if e['key'] == 'integrated':
+                    self.data_list.addTopLevelItem(p)
+                else:
+                    # each feature's own tables: kept, folded under one heading (v0.68)
+                    if orig is None:
+                        orig = QTreeWidgetItem(['기능별 표 (원본)'])
+                        orig.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                        orig.setToolTip(0, '탭마다 만든 표 그대로입니다. 통합 데이터는 이 표들로 만듭니다.')
+                        self.data_list.addTopLevelItem(orig)
+                    orig.addChild(p)
                 feats[e['feature']] = p
             state = {'stale': ' · 설정 바뀜', 'auto': ' · 자동 계산'}.get(e['state'], '')
             c = QTreeWidgetItem([f"{e['name'].split(' · ', 1)[-1]}  {e['rows']}행{state}"])
@@ -717,9 +727,13 @@ class GraphWindow(QMainWindow):
             c.setToolTip(0, f"{e['name']} — 점 하나 = {e['unit']}, {e['rows']}행"
                          + ('\n설정이나 ROI가 바뀐 이미지가 있습니다. 열면 그 이미지만 다시 잽니다.'
                             if e['state'] == 'stale' else ''))
+            if e['key'] == 'integrated':
+                c.setToolTip(0, c.toolTip(0) + f"\n열 {e.get('columns', 0)}개 · 기능: {', '.join(e.get('features', []))}")
             c.setIcon(0, theme.status_icon('warning' if e['state'] == 'stale' else 'success'))
             p.addChild(c)
             p.setExpanded(True)
+        if orig is not None:
+            orig.setExpanded(False)
         csv = QTreeWidgetItem(['CSV 불러오기…'])
         csv.setData(0, Qt.ItemDataRole.UserRole, '@csv')
         self.data_list.addTopLevelItem(csv)
@@ -737,9 +751,9 @@ class GraphWindow(QMainWindow):
         e = next((x for x in self.data_entries() if x['name'] == name), None)
         if e is None:
             return None
-        box = e.get('box')
-        if box is not None and e['state'] == 'stale':
-            n = box.update_stale()
+        boxes = e.get('boxes') or ([e['box']] if e.get('box') is not None else [])
+        if boxes and e['state'] == 'stale':
+            n = sum(box.update_stale() for box in boxes)
             if n:
                 self._status(f'{name}: 바뀐 이미지 {n}개를 다시 쟀습니다.')
         if not self.isVisible() and run:
