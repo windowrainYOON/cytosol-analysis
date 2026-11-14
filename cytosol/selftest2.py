@@ -814,6 +814,51 @@ def mito_step(out: Path):
             f'measure bar, integrated {len(cells_t.columns)} cell columns, {len(ires.files)} files')
 
 
+def language_step(out: Path):
+    """v0.68 화면 언어: Preferences › 일반 › 언어 / Language switches every
+    open window between 한국어 and English at once; code keeps reading the
+    Korean source texts; the language is not kept in projects."""
+    from . import i18n
+    from .settings import PreferencesDialog
+
+    app, win = _window()
+    win.show()
+    win.show_tab('roi_tab')
+    app.processEvents()
+    bar = win.menuBar()
+    dlg = PreferencesDialog(win)
+    if i18n.shown(dlg.lang.parentWidget(), 'title') != '일반' or dlg.lang.currentData() != 'ko':
+        raise AssertionError('language row')
+    try:
+        dlg.lang.setCurrentIndex(dlg.lang.findData('en'))
+        app.processEvents()
+        menus = [i18n.shown(a, 'text') for a in bar.actions()]
+        if menus[:2] != ['File', 'Tool'] or i18n.setting() != 'en':
+            raise AssertionError(f'English menus {menus}')
+        if i18n.shown(win.measure_bar.all_btn) != 'Measure All Images' \
+                or win.measure_bar.all_btn.text() != '전체 이미지 측정':
+            raise AssertionError('measure bar text / source')
+        if i18n.tr('세포 3개 · 아래 측정 버튼을 누르세요.') != '3 cells · press a measure button below.':
+            raise AssertionError(i18n.tr('세포 3개 · 아래 측정 버튼을 누르세요.'))
+        k = win.roi_panel.mode_combo
+        if k.currentText() != k.itemText(k.currentIndex()) or not i18n.HAN.search(k.currentText()):
+            raise AssertionError('combo source text')
+        if not dlg.relaunch.isVisibleTo(dlg):
+            raise AssertionError('reopen button not offered')
+        page = win.tab_pages['roi_tab'][0]
+        if page.widget().width() > page.viewport().width() + 1:
+            raise AssertionError('English page wider than the inspector')
+    finally:
+        dlg.lang.setCurrentIndex(dlg.lang.findData('ko'))
+        app.processEvents()
+    menus = [i18n.shown(a, 'text') for a in bar.actions()]
+    if menus[0] != '파일':
+        raise AssertionError(f'back to Korean {menus}')
+    dlg.close()
+    _close(win)
+    return 'English ⇄ 한국어 at once, sources kept, page fits'
+
+
 STEPS = [
     ('image stacking', stacking_step),
     ('graph correlation', graph_corr_step),
@@ -821,4 +866,5 @@ STEPS = [
     ('particle criterion + HT cells', particle_criterion_step),
     ('particle tracking', tracking_step),
     ('mitoROI', mito_step),
+    ('language', language_step),
 ]

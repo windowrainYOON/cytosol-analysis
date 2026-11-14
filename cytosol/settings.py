@@ -158,6 +158,31 @@ class PreferencesDialog(QDialog):
         page = QWidget()
         lay = QVBoxLayout(page)
 
+        # ---- general: language (design system Language: first row of 일반) ----
+        from . import i18n
+        general = QGroupBox('일반')
+        gf = QFormLayout(general)
+        self.lang = QComboBox()
+        for key, name in i18n.LANGS:
+            self.lang.addItem(name, key)
+        self.lang.setCurrentIndex(max(0, self.lang.findData(i18n.setting())))
+        self.lang.setToolTip('프로그램 화면의 언어. 파일 이름, 표의 열 이름, 이미지 · 그룹 · 채널 이름은 바뀌지 않습니다.')
+        self.lang.currentIndexChanged.connect(self._language)
+        gf.addRow('언어 / Language', self.lang)
+        self.lang_note = QLabel('그래프 안의 글자와 일부 창은 다시 열면 바뀝니다.')
+        self.lang_note.setWordWrap(True)
+        theme.hint(self.lang_note)
+        self.relaunch = QPushButton('다시 열기…')
+        self.relaunch.setToolTip('프로그램을 닫고 새 언어로 다시 엽니다 (저장하지 않은 프로젝트는 먼저 저장할지 묻습니다).')
+        self.relaunch.clicked.connect(self._relaunch)
+        note_row = QHBoxLayout()
+        note_row.addWidget(self.lang_note, 1)
+        note_row.addWidget(self.relaunch)
+        gf.addRow(note_row)
+        self.lang_note.hide()
+        self.relaunch.hide()
+        lay.addWidget(general)
+
         # ---- loading ----
         load = QGroupBox('이미지 불러오기')
         lf = QFormLayout(load)
@@ -287,6 +312,28 @@ class PreferencesDialog(QDialog):
         box.accepted.connect(self.accept)
         outer.addWidget(box)
         self._show_tabs_state()
+
+    def _language(self, _i=None):
+        from . import i18n
+        before = i18n.LANG
+        after = i18n.set_language(self.lang.currentData() or 'system')
+        if after != before:
+            self.lang_note.show()
+            self.relaunch.show()
+
+    def _relaunch(self):
+        """Close the program (asking to save first) and open it again."""
+        import sys
+
+        from PySide6.QtCore import QProcess
+        from PySide6.QtWidgets import QApplication
+        win = self.win
+        self.close()
+        if win is not None and not win.close():
+            return
+        args = sys.argv[1:] if getattr(sys, 'frozen', False) else sys.argv
+        QProcess.startDetached(sys.executable, list(args))
+        QApplication.instance().quit()
 
     def _changed(self, key, v, slider):
         slider.blockSignals(True)

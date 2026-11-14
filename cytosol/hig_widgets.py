@@ -160,7 +160,8 @@ class Chip(QAbstractButton):
 
     def sizeHint(self):
         fm = QFontMetrics(self._font())
-        w = fm.horizontalAdvance(self.text()) + 2 * self.PAD
+        from .i18n import tr
+        w = fm.horizontalAdvance(tr(self.text())) + 2 * self.PAD
         if self.badge:
             w += self.DOT + 4
         if self.closable:

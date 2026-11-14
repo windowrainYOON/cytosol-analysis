@@ -4423,6 +4423,9 @@ def main(argv=None):
     app.setApplicationName('Cytosol Viewer')
     app.setApplicationVersion(__version__)
     theme.apply(app)  # Apple HIG design system (desktop profile), see cytosol/theme.py
+    from . import i18n  # 화면 언어 (Preferences › 일반 › 언어 / Language)
+    i18n.install()
+    i18n.set_language(i18n.setting(), store=False)
     icon = Path(__file__).parent / 'assets' / 'icon.png'
     if icon.exists():
         app.setWindowIcon(QIcon(str(icon)))

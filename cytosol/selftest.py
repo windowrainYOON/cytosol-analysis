@@ -129,6 +129,10 @@ def run(out_dir) -> int:
         if prefs.exists():
             prefs.unlink()
         view_settings.use_store(QSettings(str(prefs), QSettings.Format.IniFormat))
+        # checks read the Korean texts: the self-test runs in Korean whatever the system language
+        from . import i18n
+        i18n.install()
+        i18n.set_language('ko')
     except Exception:
         traceback.print_exc()
 
