@@ -2650,6 +2650,9 @@ def run(out_dir) -> int:
     step('preferences', preferences_step)
     step('design system', design_system)
     step('export window + crop edit + figures', export_crop_figure_step)
+    from . import selftest2
+    for name, fn in selftest2.STEPS:
+        step(name, lambda fn=fn: fn(out))
 
     text = '\n'.join(log) + f'\n\n{"PASSED" if ok else "FAILED"}\n'
     (out / 'selftest.log').write_text(text, encoding='utf-8')

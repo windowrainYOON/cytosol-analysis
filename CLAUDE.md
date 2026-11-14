@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.61.0)
+## Window structure (v0.62.0)
 
 - **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
   v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
@@ -330,6 +330,7 @@ per-widget style sheets.
 | `graph_editors.py`, `stats.py` | Step window (새 그래프), 축 배치 / 그룹 / significance editors; significance tests (SciPy), stars, caption |
 | `graph.py`, `graph_window.py`, `graph_sources.py` | 그래프 편집 창: `GraphSpec` (every graph setting, JSON `format: cytosol-viewer-graph`) drawn by `graph.draw` from result `Table`s; `GraphWindow` (graph + settings top 70 %, data table bottom 30 %, drag text boxes / legend); `graph_sources` turns each tab's graph into `GraphData` |
 | `groups.py`, `image_tree.py` | Image groups and the grouped image list |
+| `stacking.py`, `stack_dialog.py` | 이미지 묶기: `StackSpec` (C / Z / T, sources with channel / name / colour) built into one `Image`, RGB triplets found on load, the 이미지 묶기… window |
 | `flow.py` | `FlowLayout` and `reflow` (panel rows that follow the pane width) |
 | `theme.py` | Apple HIG design system mapped onto Qt: palette from the tokens, text roles, `StatusLabel`, destructive buttons + confirmation alert, section headers |
 | `hig_style.py` | App-wide style sheet generated from the tokens (all controls, light/dark), indicator SVGs |
@@ -478,3 +479,4 @@ not affected.
 | dev branch | 0.59.0 | Owner request, after mockups: 파일 › 내보내기… (⌘E) one window for every export (target, destination, 이미지별 폴더, kinds list + settings cards; polygon crops cut as their box with the outside 0), export items removed from the feature menus (Tool › Crop / 이미지 정보 / Figure gone); crop context menu: 이 ROI 복사 / 붙여넣기, 수정 (8 handles), 점 편집 (polygon points), 삭제…; menu bar 파일 · Tool · View · 그래프 · Figure; one graph editor window (graphs in a sidebar, a data chip per tool, inspector tabs 종류 / 값 / 모양 / 컴포넌트 with 선택한 요소 / 전체 그래프, unbuilt features hidden); Figure window with a figures sidebar, the saves on a top toolbar, a fixed-width inspector that never clips, ＋ to add rows / columns, hover × to delete, title drag to move |
 | dev branch | 0.60.0 | Owner request, after a mockup: 핵 → 세포막 등거리 띠 out of the 세포질 ROI tab into its own **등거리 띠** tab (`bands_tab`, `MainWindow.bands_panel`; Tool › 등거리 띠, View item, own export kind, batch step opens it; old projects load unchanged); docs `18-bands.md` |
 | dev branch | 0.61.0 | Owner request, after mockups (v1–v3): graph editor as a step flow: 새 그래프 chips (per tool + CSV) open 종류 → 축 배치 → 그룹 with a preview; X / Y each 범주 or 값 (horizontal category charts), several Y columns, colour split, groups checked / ordered; inspector 데이터 / 모양 / 통계 (old 종류 / 값 / 모양 / 컴포넌트, 선택한 요소, series list, 데이터 menu, sidebar buttons removed); significance marks (data check, recommended test, tails, corrections, pairs, stars / p, brackets, caption) with a 통계 window and Preferences initial values; inspector box in the pages' light grey; merged with the distance-bands tab split (0.60.0) |
+| dev branch | 0.62.0 | Owner request (2026-11-14, proposals mito-tracking ch. 이미지 묶기): 이미지 묶기 (`stacking.py`, `stack_dialog.py`): Red/Green/Blue TIFF triplets stacked on load, 이미지 묶기… dialog (C / Z / T, row order by drag, channel per file, name / colour, size check with refuse / crop / pad, same naming pattern), stacked rows `name (3채널)` with greyed source rows (`image_tree.SOURCE`), 묶음 풀기, projects rebuild stacks from the sources; `theme.RoundedDialog` (radius 18, shadow) for new windows; `selftest2.py` holds the new steps |

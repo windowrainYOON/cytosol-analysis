@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QApplication,
+    QDialog,
     QFormLayout,
     QFrame,
     QLabel,
@@ -1022,3 +1023,113 @@ def prominent(button: QPushButton) -> QPushButton:
     """Button --prominent: the accent-filled main action (one, at most two, a screen)."""
     button.setProperty('hig_prominent', True)
     return button
+
+
+# ---- windows the app opens (design system StepFlow § 3, owner request 2026-11-14) ----
+
+WINDOW_RADIUS = 18  # --hig-r-window (Desktop)
+WINDOW_SHADOW = 32  # room around the panel for the float shadow
+
+
+class RoundedDialog(QDialog):
+    """A window the app opens (question, 이미지 묶기, 입자 기준 잡기 …): a
+    frameless window with a rounded panel (`WINDOW_RADIUS`) and one soft
+    float shadow; drag anywhere on the panel's background to move it.
+    Put the content into ``self.body`` (a QVBoxLayout with padding 20);
+    ``self.title`` is the headline at the top."""
+
+    def __init__(self, parent=None, title: str = '', text: str = ''):
+        from PySide6.QtGui import QColor as _QColor  # noqa: PLC0415
+        from PySide6.QtWidgets import (  # noqa: PLC0415
+            QFrame, QGraphicsDropShadowEffect, QVBoxLayout)
+
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setProperty('hig_float', True)
+        offscreen = QApplication.platformName() in ('offscreen', 'minimal')
+        if not offscreen:
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        outer = QVBoxLayout(self)
+        m = 0 if offscreen else WINDOW_SHADOW
+        outer.setContentsMargins(m, m - 8 if m else 0, m, m + 8 if m else 0)
+        self.panel = QFrame()
+        self.panel.setObjectName('hig_window_panel')
+        if not offscreen:
+            fx = QGraphicsDropShadowEffect(self.panel)
+            fx.setBlurRadius(32)
+            fx.setOffset(0, 8)
+            fx.setColor(_QColor(0, 0, 0, 46))
+            self.panel.setGraphicsEffect(fx)
+        outer.addWidget(self.panel)
+        self.body = QVBoxLayout(self.panel)
+        self.body.setContentsMargins(20, 20, 20, 20)
+        self.body.setSpacing(8)
+        self.title = QLabel(title)
+        text_style(self.title, 'headline')
+        self.title.setWordWrap(True)
+        self.body.addWidget(self.title)
+        self.text = QLabel(text)
+        self.text.setWordWrap(True)
+        text_style(self.text, 'callout', secondary=True)
+        self.text.setVisible(bool(text))
+        self.body.addWidget(self.text)
+        self.body.addSpacing(4)
+        self._drag = None
+
+    def button_row(self, *buttons, default=None):
+        """Buttons at the end of one row: [secondary] [default] — the default
+        last and prominent (Return)."""
+        from PySide6.QtWidgets import QHBoxLayout  # noqa: PLC0415
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+        for b in buttons:
+            row.addWidget(b)
+        if default is not None:
+            prominent(default)
+            default.setDefault(True)
+            default.setAutoDefault(True)
+        self.body.addSpacing(8)
+        self.body.addLayout(row)
+        return row
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.MouseButton.LeftButton:
+            self._drag = ev.globalPosition().toPoint() - self.frameGeometry().topLeft()
+        super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev):
+        if self._drag is not None and ev.buttons() & Qt.MouseButton.LeftButton:
+            self.move(ev.globalPosition().toPoint() - self._drag)
+        super().mouseMoveEvent(ev)
+
+    def mouseReleaseEvent(self, ev):
+        self._drag = None
+        super().mouseReleaseEvent(ev)
+
+    def place_on(self, widget, top: bool = True):
+        """A short question sits at the top centre of `widget` (the canvas);
+        a work window in the middle of the screen."""
+        self.adjustSize()
+        if widget is None:
+            return
+        g = widget.mapToGlobal(widget.rect().topLeft())
+        x = g.x() + (widget.width() - self.width()) // 2
+        y = g.y() + (40 if top else (widget.height() - self.height()) // 2)
+        self.move(max(x, 0), max(y, 0))
+
+
+def ask(parent, title: str, text: str, primary: str, secondary: str, near=None) -> bool:
+    """A question window (rounded, StepFlow § 3): True = the primary
+    (recommended) action, False = the secondary one or Escape."""
+    from PySide6.QtWidgets import QPushButton  # noqa: PLC0415
+
+    dlg = RoundedDialog(parent, title, text)
+    a = QPushButton(secondary)
+    b = QPushButton(primary)
+    a.clicked.connect(dlg.reject)
+    b.clicked.connect(dlg.accept)
+    dlg.button_row(a, b, default=b)
+    dlg.place_on(near)
+    return dlg.exec() == 1

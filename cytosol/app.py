@@ -1848,6 +1848,9 @@ class MainWindow(QMainWindow):
         act(m, '불러오기 (폴더)…', self.import_folder_dialog, 'Ctrl+Shift+O',
             '폴더 안의 원본 이미지, 내보낸 TIFF, ROI를 이미지 ID로 짝지어 불러옵니다. '
             '이미 열린 이미지에는 ROI·Crop·라인을 붙입니다.')
+        act(m, '이미지 묶기…', self.stack_selected,
+            tip='목록에서 고른 이미지 2개 이상을 채널 · Z · 시간 방향으로 한 이미지로 묶습니다 '
+                '(원본 파일은 그대로).')
         self.recent_menu = m.addMenu('최근 프로젝트')
         self.recent_menu.aboutToShow.connect(self._fill_recent)
         act(m, '프로젝트에서 설정(파이프라인)만 불러오기…', self.import_settings_dialog,
@@ -2598,6 +2601,7 @@ class MainWindow(QMainWindow):
         entries = data.get('images', [])
         found = [resolve_image(e, base) for e in entries]
         missing = [e for e, f in zip(entries, found) if f is None]
+        search = None
         if missing:
             names = '\n'.join(e['name'] for e in missing[:15])
             more = f'\n… 외 {len(missing) - 15}개' if len(missing) > 15 else ''
@@ -2606,6 +2610,7 @@ class MainWindow(QMainWindow):
                 f'이미지 {len(missing)}개를 원래 위치에서 찾지 못했습니다:\n{names}{more}\n\n'
                 '이미지가 있는 폴더를 고르면 그 안(하위 폴더 포함)에서 같은 이름의 파일을 찾습니다.')
             folder = QFileDialog.getExistingDirectory(self, '이미지가 있는 폴더', str(base))
+            search = folder or None
             if folder:
                 found = [f if f is not None else resolve_image(e, base, [folder])
                          for e, f in zip(entries, found)]
@@ -2624,7 +2629,18 @@ class MainWindow(QMainWindow):
                     loaded.append(None)
                     continue
                 try:
-                    it = ImageItem.load(f, label=e.get('label'), **(e.get('load') or {}))
+                    if e.get('stack'):  # 이미지 묶기: built again from its files
+                        from . import stacking  # noqa: PLC0415
+
+                        spec = stacking.StackSpec.from_dict(e['stack'].get('spec'))
+                        lost = stacking.resolve_sources(spec, e['stack'].get('sources'), base,
+                                                        [search] if search else [])
+                        if lost:
+                            raise FileNotFoundError('묶음의 파일을 찾지 못함: ' + ', '.join(lost))
+                        it = stacking.load_item(spec)
+                        it.label = e.get('label') or it.label
+                    else:
+                        it = ImageItem.load(f, label=e.get('label'), **(e.get('load') or {}))
                     self._restore_item(it, e, base, files, Path(tmp), notes)
                 except Exception as exc:
                     traceback.print_exc()
@@ -2842,6 +2858,13 @@ class MainWindow(QMainWindow):
         if explicit or pair:  # images already in the list are not opened again
             have = {self._path_key(it.path) for it in self.items}
             plan['open'] = [p for p in plan['open'] if self._path_key(p) not in have]
+        # ImageJ RGB splits (…_Ch1_Red / _Ch2_Green / _Ch3_Blue) open as one
+        # 3-channel image (이미지 묶기, owner request 2026-11-13)
+        from . import stacking  # noqa: PLC0415
+
+        rgb_sets = stacking.find_rgb_sets(plan['open'])
+        in_sets = {p for st in rgb_sets for p in st}
+        plan['open'] = [p for p in plan['open'] if p not in in_sets]
         prog = QProgressDialog('불러오는 중…', '취소', 0, len(plan['open']) + len(plan['exports']),
                                self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
@@ -2868,6 +2891,17 @@ class MainWindow(QMainWindow):
                 break
             load(p, i)
             i += 1
+        stacked = []
+        for st in rgb_sets:
+            try:
+                item = stacking.load_item(stacking.spec_for(st))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f'{st[0].name} …: {exc}')
+                for p in st:
+                    load(p, i)
+                continue
+            self._add_item(item)
+            stacked.append(item)
         by_id = {it.image_id: it for it in self.items}
         for iid, files in plan['exports'].items():
             if prog.wasCanceled():
@@ -2921,7 +2955,105 @@ class MainWindow(QMainWindow):
         if notes:
             msg += f' · 짝 없는 ROI {len(notes)}개'
             print('\n'.join(notes))
+        if stacked:
+            names = stacked[0].label + (f' … {stacked[-1].label}' if len(stacked) > 1 else '')
+            msg += (f' · {names}: 파일 3개씩 채널로 묶었습니다 (자동 인식 …_Ch1_Red / _Ch2_Green / '
+                    '_Ch3_Blue). 묶음 풀기: 오른쪽 클릭')
         self.statusBar().showMessage(msg)
+
+    # ---- 이미지 묶기 (owner request 2026-11-13) -------------------------------
+
+    def stack_selected(self):
+        """Open 이미지 묶기 for the selected images (2 or more)."""
+        from .stack_dialog import StackDialog  # noqa: PLC0415
+
+        items = [self.items[r] for r in self.file_list.selected_rows()]
+        if len(items) < 2 or any(it.stack is not None for it in items):
+            QMessageBox.information(self, '이미지 묶기',
+                                    '목록에서 묶을 이미지를 2개 이상 고르세요 (묶음은 다시 묶지 않습니다).')
+            return None
+        others = [it.path for it in self.items if it not in items and it.stack is None]
+        dlg = StackDialog(self, [it.path for it in items], [it.image for it in items], others)
+        dlg.place_on(self.canvas, top=False)
+        if not dlg.exec():
+            return None
+        return self.make_stacks([dlg.spec()] + dlg.extra_specs())
+
+    def make_stacks(self, specs) -> list:
+        """Add one stacked image per spec; with `fold` its files leave the
+        list (shown greyed under the stack)."""
+        from . import stacking  # noqa: PLC0415
+
+        made, errors = [], []
+        for spec in specs:
+            keys = [self._path_key(Path(s.path)) for s in spec.sources]
+            srcs = [next((it for it in self.items if it.stack is None and self._path_key(it.path) == k), None)
+                    for k in keys]
+            try:
+                images = None
+                if spec.fold and all(srcs) and len(set(map(id, srcs))) == len(srcs):
+                    images = [it.image for it in srcs]
+                item = stacking.load_item(spec, images)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f'{spec.name}: {exc}')
+                continue
+            pos = min((self.items.index(it) for it in srcs if it is not None), default=len(self.items))
+            item.group = next((it.group for it in srcs if it is not None and it.group), '')
+            if spec.fold:
+                for it in srcs:
+                    if it is not None and it in self.items:
+                        if it is self.current:
+                            self.current = None
+                        self.items.remove(it)
+                        self.frap_panel.forget(it)
+            self.items.insert(min(pos, len(self.items)), item)
+            made.append(item)
+        self.file_list.rebuild(self.items)
+        for row in range(len(self.items)):
+            self._update_tooltip(row)
+        if made:
+            self.file_list.setCurrentRow(self.items.index(made[0]))
+            self._select(self.items.index(made[0]))
+            self.set_dirty()
+            names = ', '.join(it.label for it in made[:4]) + (' …' if len(made) > 4 else '')
+            self.statusBar().showMessage(f'이미지 묶기: {names} ({len(made)}개). 묶음 풀기: 오른쪽 클릭')
+        if errors:
+            QMessageBox.warning(self, '이미지 묶기', '\n'.join(errors))
+        return made
+
+    def unstack(self, stacks):
+        """묶음 풀기: the stack leaves the list; its files come back as images
+        (when they were folded under it)."""
+        pos = 0
+        for st in list(stacks):
+            if st not in self.items:
+                continue
+            pos = self.items.index(st)
+            self.items.remove(st)
+            if st is self.current:
+                self.current = None
+            if st.stack.fold:
+                have = {self._path_key(it.path) for it in self.items}
+                for s in st.stack.sources:
+                    p = Path(s.path)
+                    if self._path_key(p) in have:
+                        continue
+                    try:
+                        for it in load_items(p, view_settings.flag('align_tcf')):
+                            it.group = st.group
+                            self.items.insert(pos, it)
+                            pos += 1
+                    except Exception as exc:  # noqa: BLE001
+                        self.statusBar().showMessage(f'{p.name}: {exc}', 8000)
+        self.file_list.rebuild(self.items)
+        for row in range(len(self.items)):
+            self._update_tooltip(row)
+        if self.items:
+            row = min(pos, len(self.items) - 1)
+            self.file_list.setCurrentRow(row)
+            self._select(row)
+        self.set_dirty()
+        self.statusBar().showMessage(f'묶음 풀기: {len(stacks)}개')
 
     # ---- groups ---------------------------------------------------------
 
@@ -3066,6 +3198,13 @@ class MainWindow(QMainWindow):
             return m
         rows = self.file_list.selected_rows()
         folder = item is not None and item.data(0, GROUP) is not None
+        if len(rows) >= 2:
+            m.addAction('이미지 묶기…', self.stack_selected)
+        stacks = [self.items[r] for r in rows if self.items[r].stack is not None]
+        if stacks:
+            m.addAction('묶음 풀기', lambda: self.unstack(stacks))
+        if len(rows) >= 2 or stacks:
+            m.addSeparator()
         if len(rows) >= 2 or folder:
             m.addAction('그룹 지정…', self.assign_group)
             if self.groups():

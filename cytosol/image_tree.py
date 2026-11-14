@@ -22,6 +22,8 @@ ROW = Qt.ItemDataRole.UserRole       # image row, on image items
 ROWS_MIME = 'application/x-cytosol-image-rows'
 GROUP = Qt.ItemDataRole.UserRole + 1  # group name, on folder items
 CROP = Qt.ItemDataRole.UserRole + 2  # crop index, on crop items (under their image)
+# source file of a stacked image (이미지 묶기), greyed under it and never selected
+SOURCE = Qt.ItemDataRole.UserRole + 3
 
 
 PAD = 3  # px above / below the text of a row
@@ -145,6 +147,7 @@ class ImageTree(QTreeWidget):
         self._leaves: list[QTreeWidgetItem] = []
         self._collapsed: set[str] = set()
         self._crops_collapsed: set[int] = set()  # id() of images whose crops are folded
+        self._stacks_open: set[int] = set()  # id() of stacked images shown unfolded
         self._ids: list[int] = []
         self.itemCollapsed.connect(lambda n: self._folded(n, True))
         self.itemExpanded.connect(lambda n: self._folded(n, False))
@@ -180,6 +183,7 @@ class ImageTree(QTreeWidget):
         if r is not None:
             if 0 <= r < len(self._ids):
                 (self._crops_collapsed.add if folded else self._crops_collapsed.discard)(self._ids[r])
+                (self._stacks_open.discard if folded else self._stacks_open.add)(self._ids[r])
             return
         (self._collapsed.add if folded else self._collapsed.discard)(node.data(0, GROUP))
 
@@ -286,7 +290,12 @@ class ImageTree(QTreeWidget):
             c.setData(0, CROP, k)
             c.setToolTip(0, f'x {region[0]}–{region[2]}, y {region[1]}–{region[3]}')
             leaf.addChild(c)
-        leaf.setExpanded(row < len(self._ids) and self._ids[row] not in self._crops_collapsed)
+        spec = self._specs[row] if row < len(getattr(self, '_specs', [])) else None
+        self._add_sources(leaf, spec)
+        if spec is not None:
+            leaf.setExpanded(row < len(self._ids) and self._ids[row] in self._stacks_open)
+        else:
+            leaf.setExpanded(row < len(self._ids) and self._ids[row] not in self._crops_collapsed)
         if select is not None and 0 <= select < leaf.childCount():
             leaf.setExpanded(True)
             self.setCurrentItem(leaf.child(select))
@@ -294,6 +303,23 @@ class ImageTree(QTreeWidget):
             k = min(cur_crop[1], leaf.childCount() - 1)
             self.setCurrentItem(leaf.child(k) if k >= 0 else leaf)
         self.blockSignals(blocked)
+
+    @staticmethod
+    def _add_sources(leaf, spec):
+        """The files of a stacked image, greyed under it, never selected."""
+        if spec is None:
+            return
+        from pathlib import Path  # noqa: PLC0415
+
+        from . import theme  # noqa: PLC0415
+
+        for k, src in enumerate(spec.sources):
+            c = QTreeWidgetItem([Path(src.path).name])
+            c.setData(0, SOURCE, k)
+            c.setToolTip(0, str(src.path))
+            c.setFlags(Qt.ItemFlag.NoItemFlags)
+            c.setForeground(0, theme.color('label-secondary'))
+            leaf.addChild(c)
 
     def current_crop(self):
         """(image row, crop index) of the current crop row, else None."""
@@ -321,8 +347,15 @@ class ImageTree(QTreeWidget):
                 self.addTopLevelItem(node)
                 folders[it.group] = node
         self._ids = [id(it) for it in items]
+        self._specs = [getattr(it, 'stack', None) for it in items]
         for row, it in enumerate(items):
-            leaf = QTreeWidgetItem([it.label])
+            spec = getattr(it, 'stack', None)
+            text = it.label
+            if spec is not None:
+                from . import stacking  # noqa: PLC0415
+
+                text = f'{it.label} ({stacking.count_text(spec, it.image)})'
+            leaf = QTreeWidgetItem([text])
             leaf.setData(0, ROW, row)
             if it.group:
                 folders[it.group].addChild(leaf)
@@ -333,7 +366,11 @@ class ImageTree(QTreeWidget):
                 c = QTreeWidgetItem([self.crop_text(k, region)])
                 c.setData(0, CROP, k)
                 leaf.addChild(c)
-            leaf.setExpanded(id(it) not in self._crops_collapsed)
+            self._add_sources(leaf, spec)
+            if spec is not None:
+                leaf.setExpanded(id(it) in self._stacks_open)
+            else:
+                leaf.setExpanded(id(it) not in self._crops_collapsed)
         for name, node in folders.items():
             node.setText(0, f'{name}  ({node.childCount()})')
             node.setExpanded(name not in self._collapsed)

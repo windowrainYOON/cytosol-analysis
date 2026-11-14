@@ -99,6 +99,8 @@ class ImageItem:
     load_kwargs: dict = field(default_factory=dict)
     # cytosol.prefetch.TimeCache that reads this image's timepoints ahead
     time_cache: object = field(default=None, repr=False)
+    # 이미지 묶기 (cytosol.stacking.StackSpec) when this image is several files
+    stack: object = None
     _bleach: list | None = field(default=None, repr=False)  # overrides the file's bleach ROIs
     _planes: np.ndarray | None = field(default=None, repr=False)
     _planes_z: object = field(default=None, repr=False)

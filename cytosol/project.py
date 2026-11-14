@@ -247,7 +247,17 @@ def image_entry(it, base: Path) -> dict:
         else None,
         'linked': [_rel(Path(f).resolve(), base) for f in it.linked],
         'frap': it.frap.to_dict() if hasattr(it.frap, 'to_dict') else None,
+        'stack': _stack_entry(it, base),
     }
+
+
+def _stack_entry(it, base: Path):
+    spec = getattr(it, 'stack', None)
+    if spec is None:
+        return None
+    from .stacking import rel_sources
+
+    return {'spec': spec.to_dict(), 'sources': rel_sources(spec, base)}
 
 
 def resolve_image(entry: dict, base: Path, search_dirs=()) -> Path | None:

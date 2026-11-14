@@ -238,6 +238,10 @@ QMainWindow, QSplitter, QStatusBar { background: transparent; }
 /* ---- surfaces: the sidebar is the window's own layer; canvas and
    inspector float on it as rounded boxes with a hairline edge (v0.58) ---- */
 QMainWindow, QDialog {{ background: {c('background-secondary')}; }}
+/* windows the app opens (StepFlow § 3): rounded panel with a soft float shadow */
+QDialog[hig_float="true"] {{ background: transparent; }}
+QFrame#hig_window_panel {{ background: {c('background-secondary')}; border-radius: {theme.WINDOW_RADIUS}px;
+    border: {'none' if s == 'light' else '1px solid ' + c('separator')}; }}
 QMainWindow, QMainWindow > QSplitter {{ background: {region('sidebar')}; }}
 QWidget#hig_sidebar {{ background: {region('sidebar')}; border: none; }}
 QWidget#hig_content {{ background: {region('canvas')}; border-radius: {theme.BOX_RADIUS}px;
