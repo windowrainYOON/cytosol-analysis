@@ -390,6 +390,8 @@ def run(out_dir) -> int:
             rpn.set_details_open(True)
             if not shown(rpn.smooth) or not rpn.smooth.isEnabled() or not rpn.min_cell.isEnabled():
                 raise AssertionError('세부 설정: detail values hidden or locked')
+            rpn.window().activateWindow()
+            QApplication.processEvents()
             rpn.smooth.setFocus()
             rpn.smooth.setValue(1.3)
             if rpn.val_auto[rpn.smooth].isChecked() or not rpn.val_auto[rpn.neck_max].isChecked() \
@@ -1724,7 +1726,7 @@ def run(out_dir) -> int:
             raise AssertionError('logic regions not drawn')
         win.roi_panel.select(own.cells.ids()[0])
         win.roi_panel.delete_selected()
-        ip.measure.refresh()
+        ip.measure.current_rows()
         if len(ip.measure.rows) != 2 * len(own.cells):
             raise AssertionError('intensity did not follow the deleted cell')
         for box in win._measure_boxes():
@@ -1820,9 +1822,10 @@ def run(out_dir) -> int:
         if len(mean) != 1 or mean[0]['group'] != 'treated' or mean[0]['n'] != len(vals) \
                 or abs(mean[0]['mean'] - np.mean(vals)) > 1e-6 or mean[0]['max'] != max(vals):
             raise AssertionError(f'group summary: {mean}')
-        pm.view.setCurrentIndex(pm.view.findData('sum_group'))
-        if pm.table.rowCount() != len(summ):
-            raise AssertionError('summary not shown')
+        pm._fill_table()
+        tabs = {n: r for n, _u, r in pm.data_tables()}
+        if len(tabs.get('입자 ROI · 그룹 요약', [])) != len(summ) or pm._data_lay.count() != 3:
+            raise AssertionError(f'summary not in the 데이터 card: {list(tabs)}')
         files = pm.write_summaries(out / 'intensity_gui', pm.batch_rows)
         if len(files) != 2:
             raise AssertionError(f'summary files {files}')
@@ -2167,7 +2170,7 @@ def run(out_dir) -> int:
         if st.errors:
             raise AssertionError(f'batch errors: {st.errors}')
         res = win.batch_win
-        if res is None or res.table.rowCount() != 2:
+        if res is None or res.table.rowCount() != len(win.items) or res.windowTitle() != '측정 현황 · 일괄 분석':
             raise AssertionError('batch results window')
         # fix one image (drop a cell), measure again: the edit is kept
         before = st.results['batch1']['roi_measure']

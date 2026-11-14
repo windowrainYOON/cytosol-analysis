@@ -243,9 +243,20 @@ def bands(panel) -> G.GraphData | None:
 # ---- measurement tables ---------------------------------------------------------------------------
 
 def measure(box, title) -> G.GraphData | None:
+    """Every table of a measuring tab under its data name (「기능 · 점 하나」):
+    all measured images, else the current image."""
     rows, _ = box._rows_shown()
     it = box.win.current
-    return G.measure_graph(rows, f'{title} · {box.view.currentText()}', _stem(it, box.suffix), _folder(it))
+    data = G.measure_graph(rows, box.data_name(), _stem(it, box.suffix), _folder(it))
+    if data is None:
+        return None
+    data.tables[0].name = box.data_name()
+    for s in data.spec.series:
+        s.table = box.data_name()
+    for name, _unit, r in box.data_tables()[1:]:
+        if r:
+            data.tables.append(G.Table.from_dicts(name, r))
+    return data
 
 
 # ---- Coloc 2 --------------------------------------------------------------------------------------

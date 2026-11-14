@@ -108,7 +108,7 @@ class BandsPanel(QWidget):
         self.bands_measure = BandMeasureBox(
             win, 'bands_tab', self.band_regions_for, 'bands', '등거리 띠 강도 측정',
             rows=self._band_rows, key=lambda: self.band_settings(), changed=self.draw_graph)
-        lay.addWidget(self.bands_measure, 1)
+        lay.addWidget(self.bands_measure)
 
         graph = QGroupBox('그래프')
         gl = QVBoxLayout(graph)
@@ -137,6 +137,7 @@ class BandsPanel(QWidget):
         theme.hint(hint)
         gl.addWidget(hint)
         lay.addWidget(graph, 1)
+        graph.setVisible(False)  # the band graph lives in the graph window and the live box (v0.64)
 
     def schedule(self, *_):
         self._timer.start()

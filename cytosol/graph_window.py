@@ -471,6 +471,11 @@ class GraphWindow(QMainWindow):
         cl.setContentsMargins(*theme.CONTENT_MARGINS)
         cl.setSpacing(12)
         cl.addWidget(chip_row)
+        chip_row.setVisible(False)  # v0.64: the sidebar's 데이터 list starts new graphs
+        self.data_head = QLabel()
+        theme.secondary(self.data_head)
+        self.data_head.setWordWrap(True)
+        cl.addWidget(self.data_head)
         cl.addWidget(split, 1)
 
         # ---- inspector box: 종류 / 값 / 모양 / 컴포넌트 ----
@@ -489,11 +494,23 @@ class GraphWindow(QMainWindow):
         sl = QVBoxLayout(side)
         sl.setContentsMargins(*theme.SIDEBAR_MARGINS)
         sl.setSpacing(8)
+        from .image_tree import WrapDelegate
+
+        dhead = QLabel('데이터')
+        theme.text_style(dhead, 'headline')
+        dhead.setToolTip('측정한 표: 누르면 그 표로 새 그래프를 만듭니다 (종류 → 축 배치 → 그룹).')
+        sl.addWidget(dhead)
+        self.data_list = QTreeWidget()
+        self.data_list.setHeaderHidden(True)
+        self.data_list.setIndentation(12)
+        self.data_list.setItemDelegate(WrapDelegate(self.data_list))
+        self.data_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.data_list.itemClicked.connect(self._data_clicked)
+        sl.addWidget(self.data_list, 1)
         head = QLabel('그래프')
         theme.text_style(head, 'headline')
         head.setToolTip('오른쪽 클릭: 복제 · 이름 바꾸기 · 삭제')
         sl.addWidget(head)
-        from .image_tree import WrapDelegate
 
         self.doc_list = QTreeWidget()
         self.doc_list.setHeaderHidden(True)
@@ -655,6 +672,10 @@ class GraphWindow(QMainWindow):
         """A chip per tool; tools with nothing analysed yet look disabled."""
         from PySide6.QtWidgets import QGraphicsOpacityEffect
 
+        try:
+            self.refresh_data()
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
         srcs = self._sources()
         for key, c in self.chips.items():
             title, _tab, fn, hint = srcs.get(key, ('', None, lambda: None, ''))
@@ -671,6 +692,70 @@ class GraphWindow(QMainWindow):
                 eff.setOpacity(0.4)
                 c.setGraphicsEffect(eff)
                 c.setToolTip(hint)
+
+    # ---- 데이터 list (v0.64) ----
+
+    def data_entries(self) -> list[dict]:
+        fn = getattr(self.win, 'data_entries', None)
+        return fn() if fn is not None else []
+
+    def refresh_data(self):
+        from PySide6.QtWidgets import QTreeWidgetItem
+
+        self.data_list.clear()
+        feats = {}
+        for e in self.data_entries():
+            p = feats.get(e['feature'])
+            if p is None:
+                p = QTreeWidgetItem([e['feature']])
+                p.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                self.data_list.addTopLevelItem(p)
+                feats[e['feature']] = p
+            state = {'stale': ' · 설정 바뀜', 'auto': ' · 자동 계산'}.get(e['state'], '')
+            c = QTreeWidgetItem([f"{e['name'].split(' · ', 1)[-1]}  {e['rows']}행{state}"])
+            c.setData(0, Qt.ItemDataRole.UserRole, e['name'])
+            c.setToolTip(0, f"{e['name']} — 점 하나 = {e['unit']}, {e['rows']}행"
+                         + ('\n설정이나 ROI가 바뀐 이미지가 있습니다. 열면 그 이미지만 다시 잽니다.'
+                            if e['state'] == 'stale' else ''))
+            c.setIcon(0, theme.status_icon('warning' if e['state'] == 'stale' else 'success'))
+            p.addChild(c)
+            p.setExpanded(True)
+        csv = QTreeWidgetItem(['CSV 불러오기…'])
+        csv.setData(0, Qt.ItemDataRole.UserRole, '@csv')
+        self.data_list.addTopLevelItem(csv)
+
+    def _data_clicked(self, item, _col=0):
+        name = item.data(0, Qt.ItemDataRole.UserRole)
+        if name == '@csv':
+            self.start_wizard_csv()
+        elif name:
+            self.start_data(name)
+
+    def start_data(self, name, run=True):
+        """A table of the 데이터 list: images whose ROIs or settings changed
+        are measured again first, then 새 그래프 on that table."""
+        e = next((x for x in self.data_entries() if x['name'] == name), None)
+        if e is None:
+            return None
+        box = e.get('box')
+        if box is not None and e['state'] == 'stale':
+            n = box.update_stale()
+            if n:
+                self._status(f'{name}: 바뀐 이미지 {n}개를 다시 쟀습니다.')
+        if not self.isVisible() and run:
+            self.show()
+        return self.start_wizard(e['key'], run=run, table=e.get('table', name))
+
+    def _data_head(self):
+        t = self.tables().get(self.spec.mapping.table) if self.doc.key is not None else None
+        if t is None:
+            self.data_head.setText('')
+            return
+        imgs = len(set(t.values('image_id'))) if 'image_id' in t.columns else 0
+        grps = len({v for v in t.values('group') if v}) if 'group' in t.columns else 0
+        parts = [t.name, f'{len(t.rows)}행'] + ([f'{imgs} 이미지'] if imgs else []) + \
+            ([f'{grps} 그룹'] if grps else []) + [f'열 {len(t.columns)}']
+        self.data_head.setText(' · '.join(parts))
 
     def load_source(self, key):
         """A data chip: the tool's result becomes the data of the graph shown."""
@@ -695,7 +780,7 @@ class GraphWindow(QMainWindow):
         self._changed_no_redraw()
         return d
 
-    def start_wizard(self, key, run=True):
+    def start_wizard(self, key, run=True, table=''):
         """An analysis chip: 새 그래프 window (종류 → 축 배치 → 그룹) on the
         tool's result; 그래프 만들기 adds the graph to the sidebar."""
         title, _tab, fn, hint = self._sources()[key]
@@ -709,6 +794,10 @@ class GraphWindow(QMainWindow):
             self.refresh_chips()
             QMessageBox.information(self, '새 그래프', hint)
             return None
+        if table and any(t.name == table for t in data.tables):
+            data.tables = sorted(data.tables, key=lambda t: t.name != table)
+            data.spec = G.GraphSpec(chart=data.spec.chart) if data.spec.series and \
+                data.spec.series[0].table != table else data.spec
         return self._wizard(title, data, key, fn, run)
 
     def start_wizard_csv(self, path=None, run=True):
@@ -1711,6 +1800,7 @@ class GraphWindow(QMainWindow):
         finally:
             self.b.busy = False
         self.fill_table()
+        self._data_head()
 
     # ---- objects on the graph: select, move, resize ------------------------------------------------
 
@@ -2254,6 +2344,8 @@ class GraphWindow(QMainWindow):
             self.table_pick.addItem('그래프 요약 (평균 · SD · SEM · n)', ('summary', None))
         for name in self.tables():
             self.table_pick.addItem(f'표: {name}', ('table', name))
+        for name in self.tables():
+            self.table_pick.addItem(f'열 설명: {name}', ('columns', name))
         i = self.table_pick.findData(cur) if cur is not None else 0
         self.table_pick.setCurrentIndex(max(i, 0))
         self.table_pick.blockSignals(False)
@@ -2266,6 +2358,11 @@ class GraphWindow(QMainWindow):
             return G.plotted_table(self.spec, self.tables(), only)
         if kind == 'summary':
             return G.summary_table(self.spec, self.tables(), only)
+        if kind == 'columns':
+            from . import columns_doc
+
+            t = self.tables().get(name)
+            return columns_doc.table(t) if t is not None else G.Table('', [], [])
         return self.tables().get(name) or G.Table(name or '', [], [])
 
     def fill_table(self):

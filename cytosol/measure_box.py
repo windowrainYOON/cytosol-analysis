@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -25,7 +24,6 @@ from PySide6.QtWidgets import (
     QProgressDialog,
     QPushButton,
     QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -75,12 +73,15 @@ class MeasureBox(QWidget):
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(150)  # coalesce ROI edits and slider drags
-        self._timer.timeout.connect(self.refresh)
+        self._timer.timeout.connect(self._fill_table)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
 
-        val = QGroupBox('측정값 (채널마다)')
+        val = QGroupBox('측정 항목')
+        vl0 = QLabel('세기 (채널마다)')
+        theme.secondary(vl0)
         vl = QVBoxLayout(val)
+        vl.addWidget(vl0)
         row = QHBoxLayout()
         self.stat_boxes = {}
         for k in STATS:
@@ -108,43 +109,47 @@ class MeasureBox(QWidget):
         vl.addWidget(self.only_visible)
         lay.addWidget(val)
 
-        res = QGroupBox('강도 측정 결과')
-        tl = QVBoxLayout(res)
-        row = QHBoxLayout()
+        # 데이터 card (owner request 2026-11-14, data-display proposal): no
+        # result table in the inspector; one row per table this tab makes,
+        # its state, and a way into the graph window. The table widget and
+        # the view pop-up stay as hidden state for older callers.
         self.view = QComboBox()
         self.view.addItem('현재 이미지', 'current')
         self.view.addItem('모든 이미지 (일괄 측정 결과)', 'batch')
         if summary:
             self.view.addItem('요약: 이미지별 (일괄 측정 결과)', 'sum_image')
             self.view.addItem('요약: 그룹별 (일괄 측정 결과)', 'sum_group')
-        self.view.currentIndexChanged.connect(lambda _: self._fill_table())
-        row.addWidget(self.view, 1)
+        self.view.setCurrentIndex(1)
+        self.view.setVisible(False)
         self.auto = QCheckBox('자동 갱신')
-        self.auto.setChecked(True)
-        self.auto.setToolTip('ROI·Z·시점·설정이 바뀔 때마다 현재 이미지 결과를 다시 계산합니다.')
-        self.auto.toggled.connect(lambda on: on and self.schedule())
-        row.addWidget(self.auto)
-        tl.addLayout(row)
+        self.auto.setChecked(False)
+        self.auto.setVisible(False)
         self.table = QTableWidget(0, 0)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setMinimumHeight(200)
-        self.table.itemSelectionChanged.connect(self._row_selected)
-        tl.addWidget(self.table, 1)
+        self.table.setVisible(False)
+        self._measured: dict = {}  # image_id -> settings signature the batch rows were measured with
+        res = QGroupBox('데이터')
+        tl = QVBoxLayout(res)
+        self.state = theme.StatusLabel('')
+        tl.addWidget(self.state)
+        self._data_holder = QWidget()
+        self._data_lay = QVBoxLayout(self._data_holder)
+        self._data_lay.setContentsMargins(0, 0, 0, 0)
+        self._data_lay.setSpacing(6)
+        tl.addWidget(self._data_holder)
         self.info = QLabel()
         self.info.setWordWrap(True)
         theme.hint(self.info)
         tl.addWidget(self.info)
         row = QHBoxLayout()
-        b = theme.prominent(QPushButton('지금 측정 (현재 이미지)'))
-        b.clicked.connect(lambda: self.refresh(force=True))
-        row.addWidget(b, 1)
-        b = QPushButton('모든 이미지 측정')
+        b = theme.prominent(QPushButton('모든 이미지 측정'))
         b.setToolTip('ROI가 있는 모든 이미지에서 같은 영역·측정값으로 잽니다 '
                      '(입자는 각 이미지의 입자 설정대로).')
         b.clicked.connect(self.measure_all)
+        self.all_btn = b
+        row.addWidget(b, 1)
+        b = QPushButton('현재 이미지만')
+        b.setToolTip('지금 보는 이미지만 다시 재서 데이터에 넣습니다.')
+        b.clicked.connect(self.measure_current)
         row.addWidget(b, 1)
         tl.addLayout(row)
         self.all_t = QCheckBox('일괄 측정에 모든 시점 포함')
@@ -154,7 +159,7 @@ class MeasureBox(QWidget):
         self.with_roi = getattr(win, 'opt_with_roi', None)
         self.save_tip = ''
         self.set_suffix(suffix)
-        lay.addWidget(res, 1)
+        lay.addWidget(res)
 
     # ---- helpers ----------------------------------------------------------
 
@@ -276,8 +281,6 @@ class MeasureBox(QWidget):
             self.rows = []
             self._sig = None
             self._fill_table()
-            self.info.setText('세포질 ROI 탭에서 ROI를 검출하거나 그리세요.' if it is not None
-                              else '이미지를 추가하세요.')
             return
         if not force and (not self.auto.isChecked() or not self.visible_tab()):
             return  # only work when someone looks
@@ -289,6 +292,7 @@ class MeasureBox(QWidget):
         except Exception as exc:
             traceback.print_exc()
             self.info.setText(f'측정 실패: {exc}')
+            self.info.setVisible(True)
             return
         self._sig = sig
         self._fill_table()
@@ -297,19 +301,111 @@ class MeasureBox(QWidget):
         self._build_channel_boxes()
         self._sig = None
         self.rows = []
-        self.refresh(force=self.visible_tab())
-        if not self.visible_tab():
-            self._fill_table()
+        self._fill_table()
 
     # ---- table ------------------------------------------------------------------
 
     def _rows_shown(self):
-        view = self.view.currentData()
-        if view == 'batch':
+        """Rows a graph of this tab shows: every measured image, else the
+        current image (measured now)."""
+        if self.batch_rows:
             return self.batch_rows, True
-        if view in ('sum_image', 'sum_group'):
-            return summarize(self.batch_rows, view == 'sum_image'), True
-        return self.rows, False
+        return self.current_rows(), False
+
+    def current_rows(self) -> list[dict]:
+        """The current image's rows, measured when the ROIs or settings changed
+        (ROI hover pop-over, live box, graphs without a batch)."""
+        it = self.win.current
+        if it is None or not self.has_rois(it):
+            return []
+        try:
+            sig = self._signature(it)
+            if sig != self._sig:
+                self.rows = self.measure_item(it)
+                self._sig = sig
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            return []
+        return self.rows
+
+    # ---- data names and state -----------------------------------------------------
+
+    BASE = {'roi_tab': '세포질 ROI', 'particle_tab': '입자 ROI', 'intensity_tab': '강도 측정',
+            'bands_tab': '등거리 띠'}
+    UNIT = {'cell_intensity': '세포', 'particle_intensity': '세포', 'particle_shape': '입자',
+            'intensity': '영역', 'bands': '세포 × 띠'}
+
+    def data_name(self, which='rows') -> str:
+        base = self.BASE.get(self.tab_attr, self.title)
+        if which == 'image':
+            return f'{base} · 이미지 요약'
+        if which == 'group':
+            return f'{base} · 그룹 요약'
+        return f'{base} · {self.UNIT.get(self.suffix, "행")}'
+
+    def data_tables(self) -> list[tuple]:
+        """(name, 점 하나 =, rows) of every table this tab makes."""
+        out = [(self.data_name(), self.UNIT.get(self.suffix, '행'), self.batch_rows)]
+        if self.summary:
+            out.append((self.data_name('image'), '이미지', summarize(self.batch_rows, True) if self.batch_rows else []))
+            out.append((self.data_name('group'), '그룹', summarize(self.batch_rows, False) if self.batch_rows else []))
+        return out
+
+    def _settings_sig(self, it):
+        sig = self._signature(it)
+        return (sig[1],) + tuple(sig[4:])  # ROIs, regions, particles, stats, channels, key (not z / t)
+
+    def stale_items(self) -> list:
+        """Images measured before their ROIs or the settings changed."""
+        out = []
+        for it in self.win.items:
+            old = self._measured.get(it.image_id)
+            if old is None or not self.has_rois(it):
+                continue
+            try:
+                if self._settings_sig(it) != old:
+                    out.append(it)
+            except Exception:  # noqa: BLE001
+                out.append(it)
+        return out
+
+    def _remember(self, items):
+        for it in items:
+            try:
+                self._measured[it.image_id] = self._settings_sig(it)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _merge(self, items, res):
+        ids = {it.image_id for it in items}
+        keep = [r for r in self.batch_rows if r.get('image_id') not in ids]
+        order = [it.image_id for it in self.win.items]
+        new = keep + [r for it in items for r in res.get(id(it), [])]
+        self.batch_rows = sorted(new, key=lambda r: order.index(r.get('image_id'))
+                                 if r.get('image_id') in order else len(order))
+        self._remember(items)
+
+    def update_stale(self) -> int:
+        """Measure again only the images whose ROIs or settings changed; the
+        graph window calls this when a table marked 설정 바뀜 is opened."""
+        items = self.stale_items()
+        if not items:
+            return 0
+        res = self.measure_items(items)
+        self._merge(items, res)
+        self._fill_table()
+        self.status(f'{self.data_name()}: 바뀐 이미지 {len(items)}개를 다시 쟀습니다.')
+        return len(items)
+
+    def measure_current(self):
+        it = self.win.current
+        if it is None or not self.has_rois(it):
+            QMessageBox.information(self, self.title, '먼저 ROI를 검출하거나 그리세요.')
+            return
+        self.refresh(force=True)
+        self._merge([it], {id(it): list(self.rows)})
+        self._fill_table()
+        self.status(f'{self.data_name()}: {it.label} {len(self.rows)}행')
 
     def regroup(self):
         """Give rows measured before a group change their image's new group."""
@@ -334,63 +430,77 @@ class MeasureBox(QWidget):
         return files
 
     def _fill_table(self):
-        rows, batch = self._rows_shown()
-        skip = {'image_id', 'source', 'plane', 'status', 'particle_channel'}
-        if not batch:
-            skip |= {'image', 'timepoint'}
-        cols = []
-        for r in rows:
-            for k in r:
-                if k not in skip and k not in cols:
-                    cols.append(k)
-        self.table.blockSignals(True)
-        self.table.clear()
-        self.table.setColumnCount(len(cols))
-        self.table.setRowCount(len(rows))
-        self.table.setHorizontalHeaderLabels(cols)
-        for i, r in enumerate(rows):
-            for j, k in enumerate(cols):
-                v = r.get(k, '')
-                text = f'{v:.4g}' if isinstance(v, float) else str(v)
-                cell = QTableWidgetItem(text)
-                if isinstance(v, (int, float)):
-                    cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                self.table.setItem(i, j, cell)
-        self.table.resizeColumnsToContents()
-        self.table.blockSignals(False)
-        if batch:
-            src = self.batch_rows
-            n = len({r['image_id'] for r in src})
-            text = f'일괄 측정: 이미지 {n}개, {len(src)}행' if src else '‘모든 이미지 측정’을 누르세요.'
-            if src and rows is not src:
-                text += (' · 요약: 파라미터마다 n(입자 또는 세포 수), 평균, SD, 최소, 최대'
-                         ' (그룹은 이미지 목록의 ‘그룹 지정…’)')
-            self.info.setText(text)
-        else:
+        """The 데이터 card: one line per table (name, 점 하나, size, state,
+        그래프 ›) and the state line."""
+        from .hig_widgets import IconButton  # noqa: F401
+
+        while self._data_lay.count():
+            w = self._data_lay.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        stale = self.stale_items() if self.batch_rows else []
+        n_img = len({r.get('image_id') for r in self.batch_rows})
+        total = sum(1 for it in self.win.items if self.has_rois(it))
+        for name, unit, rows in self.data_tables():
+            w = QWidget()
+            h = QHBoxLayout(w)
+            h.setContentsMargins(0, 0, 0, 0)
+            h.setSpacing(8)
+            lab = QLabel(f'<b>{name}</b>')
+            lab.setToolTip(f'점 하나 = {unit}')
+            h.addWidget(lab)
+            size = QLabel(f'{len(rows)}행 · 이미지 {len({r.get("image_id", r.get("image")) for r in rows})}'
+                          if rows else '없음')
+            theme.secondary(size)
+            h.addWidget(size)
+            h.addStretch()
+            kind = None if not rows else ('warning' if stale else 'success')
+            st = theme.StatusLabel('설정 바뀜' if rows and stale else '최신' if rows else '', kind=kind)
+            st.setVisible(bool(rows))
+            h.addWidget(st)
+            g = QPushButton('그래프 ›')
+            g.setEnabled(bool(rows))
+            g.setToolTip('그래프 창에서 이 표로 새 그래프를 만듭니다 (종류 → 축 배치 → 그룹).')
+            g.clicked.connect(lambda _=False, n=name: self.open_graph(n))
+            h.addWidget(g)
+            self._data_lay.addWidget(w)
+        if not total:
             it = self.win.current
-            cells = self.cells(it) if it is not None else None
-            if cells is not None and len(cells):
-                if rows:
-                    t = f', t {it.t + 1}/{it.nt}' if it.nt > 1 else ''
-                    what = '이미지 전체' if cells is not it.cells else f'세포 {len(cells)}개'
-                    self.info.setText(f'{what} · {rows[0]["plane"]}{t} · {len(rows)}행')
-                elif not self.regions(it):
-                    self.info.setText('측정할 영역이 없습니다.')
-                elif not self.channels_for(it):
-                    self.info.setText('측정할 채널을 하나 이상 체크하세요.')
-                else:
-                    self.info.setText('')
+            self.state.setText('세포질 ROI 탭에서 ROI를 검출하거나 그리세요.' if it is not None
+                               else '이미지를 추가하세요.')
+            self.state.set_kind(None)
+        elif not self.batch_rows:
+            self.state.setText(f'ROI가 있는 이미지 {total}개 · 아직 측정하지 않았습니다.')
+            self.state.set_kind(None)
+        elif stale:
+            self.state.setText(f'{total} 이미지 중 {n_img}개 측정됨 · ROI나 측정 항목이 바뀐 이미지 '
+                               f'{len(stale)}개는 다시 측정해야 합니다.')
+            self.state.set_kind('warning')
+        else:
+            self.state.setText(f'{total} 이미지 중 {n_img}개 측정됨')
+            self.state.set_kind('success' if n_img >= total else None)
+        it = self.win.current
+        cells = self.cells(it) if it is not None else None
+        if cells is not None and len(cells) and not self.regions(it):
+            self.info.setText('측정할 영역이 없습니다.')
+        elif cells is not None and len(cells) and not self.channels_for(it):
+            self.info.setText('측정할 채널을 하나 이상 체크하세요.')
+        else:
+            self.info.setText('')
+        self.info.setVisible(bool(self.info.text()))
+        badge = getattr(self.win, 'update_tab_badges', None)
+        if badge is not None:
+            badge()
+
+    def open_graph(self, name):
+        gw = getattr(self.win, 'graph_window', None)
+        if gw is None:
+            return
+        w = gw()
+        w.start_data(name)
 
     def _row_selected(self):
-        rows, batch = self._rows_shown()
-        sel = self.table.selectedItems()
-        if batch or not sel:
-            return
-        r = rows[sel[0].row()]
-        try:
-            self.win.roi_panel.select(int(r['roi'][4:]))
-        except (KeyError, ValueError):
-            pass
+        return
 
     # ---- all images ---------------------------------------------------------------
 
@@ -452,10 +562,10 @@ class MeasureBox(QWidget):
             QMessageBox.warning(self, '측정 실패', str(exc))
             return
         self.batch_rows = [r for it in items for r in res.get(id(it), [])]
-        self.view.setCurrentIndex(self.view.findData('batch'))
+        self._measured = {}
+        self._remember([it for it in items if id(it) in res])
         self._fill_table()
-        self.status(f'{self.title}: 이미지 {len(res)}개, {len(self.batch_rows)}행')
-        self.refresh(force=True)
+        self.status(f'{self.data_name()}: 이미지 {len(res)}개, {len(self.batch_rows)}행')
 
     # ---- save -----------------------------------------------------------------------
 
@@ -552,7 +662,7 @@ class MeasureBox(QWidget):
         summaries = self.write_summaries(out, rows)
         grouped = write_groups(Path(out) / GROUP_FILE, items)
         self.batch_rows = rows
-        self.view.setCurrentIndex(self.view.findData('batch'))
+        self._remember(items)
         self._fill_table()
         msg = (f'이미지 {n}개의 {self.title} 결과를 이미지별 폴더에, 전체 {len(rows)}행을 '
                f'{self.suffix}.csv에 저장했습니다.')

@@ -36,6 +36,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from . import theme
+
 FORMAT = 'cytosol-viewer-batch'
 NO_GROUP = '(그룹 없음)'
 
@@ -178,7 +180,8 @@ def run(win, state: BatchState, items, detect=True) -> list[str]:
             errors.append(f'{TITLES[key]}: {exc}')
             continue
         box.batch_rows = [r for it in todo for r in rows.get(id(it), [])]
-        box.view.setCurrentIndex(box.view.findData('batch'))
+        box._measured = {}
+        box._remember([it for it in todo if id(it) in rows])
         box._fill_table()
         for it in items:
             res[it.label][key] = len(rows.get(id(it), []))
@@ -484,70 +487,100 @@ class BatchDialog(QDialog):
 
 
 class BatchResults(QDialog):
-    """Results per image: double-click opens the image in the step's tab to
-    fix it; 다시 측정 measures again keeping the edited ROIs."""
+    """측정 현황 · 일괄 분석 (owner decision 2026-11-14; replaces the 일괄
+    분석 결과 window): images by group × every data table of the tabs, each
+    cell 최신 / 설정 바뀜 / empty.  Double-click opens the image in that tab,
+    right-click measures that cell again; the toolbar picks groups and
+    analyses, runs the batch and measures again what changed."""
 
     def __init__(self, win):
         super().__init__(win)
         self.win = win
-        self.setWindowTitle('일괄 분석 결과')
-        self.resize(760, 460)
+        self.setWindowTitle('측정 현황 · 일괄 분석')
+        self.resize(900, 520)
         lay = QVBoxLayout(self)
+        lay.setContentsMargins(20, 16, 20, 16)
+        bar = QHBoxLayout()
+        self.pick_btn = QPushButton('그룹 · 분석 고르기…')
+        self.pick_btn.setToolTip('일괄 분석할 그룹과 분석을 고르고 실행합니다.')
+        self.pick_btn.clicked.connect(lambda: win.batch_dialog())
+        bar.addWidget(self.pick_btn)
+        self.run_btn = QPushButton('일괄 분석 실행')
+        self.run_btn.setToolTip('고른 그룹 · 분석으로 처음부터 실행합니다 (검출 포함).')
+        self.run_btn.clicked.connect(self.run)
+        bar.addWidget(self.run_btn)
+        self.stale_btn = QPushButton('바뀐 것 다시 측정')
+        theme.prominent(self.stale_btn)
+        self.stale_btn.setToolTip('ROI나 측정 항목이 바뀐 이미지만 다시 잽니다 (검출은 그대로).')
+        self.stale_btn.clicked.connect(self.remeasure_stale)
+        bar.addWidget(self.stale_btn)
+        bar.addStretch(1)
+        exp = QPushButton('내보내기…')
+        exp.clicked.connect(lambda: win.export_dialog('batch'))
+        bar.addWidget(exp)
+        lay.addLayout(bar)
         self.head = QLabel()
         self.head.setWordWrap(True)
+        theme.secondary(self.head)
         lay.addWidget(self.head)
         self.table = QTableWidget()
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.verticalHeader().setVisible(False)
         self.table.cellDoubleClicked.connect(self.open_cell)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._menu)
         lay.addWidget(self.table, 1)
-        hint = QLabel('행을 두 번 누르면 그 이미지를 열고, 누른 열의 분석 탭으로 갑니다. '
-                      'ROI나 설정을 고친 뒤 ‘다시 측정’을 누르면 고친 ROI 그대로 측정만 다시 합니다.')
+        hint = QLabel('칸을 두 번 누르면 그 이미지를 그 탭에서 엽니다. 오른쪽 클릭: 그 칸만 다시 측정.')
         hint.setWordWrap(True)
+        theme.hint(hint)
         lay.addWidget(hint)
-        row = QHBoxLayout()
-        for text, fn, tip in (
-                ('이미지 열기', self.open_selected, '선택한 이미지를 열어 고칩니다.'),
-                ('다시 측정 (수정 반영)', self.remeasure, '검출은 다시 하지 않고 측정만 다시 합니다.'),
-                ('전체 다시 실행…', win.batch_dialog, '분석과 그룹을 다시 골라 처음부터 실행합니다.'),
-                ('내보내기…', lambda: win.export_dialog('batch'),
-                 '일괄 분석 결과와 설정을 파일 › 내보내기 창에서 저장합니다.')):
-            b = QPushButton(text)
-            b.setToolTip(tip)
-            b.clicked.connect(lambda _=False, fn=fn: fn())
-            row.addWidget(b)
-        row.addStretch(1)
-        close = QPushButton('닫기')
-        close.clicked.connect(self.close)
-        row.addWidget(close)
-        lay.addLayout(row)
         self.refresh()
+
+    def _boxes(self):
+        w = self.win
+        return [('roi', '세포질 ROI', w.roi_panel.measure), ('particle', '입자 ROI', w.particle_panel.measure),
+                ('intensity', '강도 측정', w.intensity_panel.measure),
+                ('bands', '등거리 띠', w.bands_panel.bands_measure)]
+
+    TAB_OF = {'roi': 'roi_tab', 'particle': 'particle_tab', 'intensity': 'intensity_tab', 'bands': 'bands_tab',
+              'coloc': 'coloc_tab'}
 
     def refresh(self):
         st = self.win.batch
-        items = ran_items(self.win, st)
-        cols = columns(st)
-        groups = ', '.join(g or NO_GROUP for g in st.groups)
-        txt = (f'{st.ran_at} · 그룹 {groups} · 이미지 {len(items)}개 · 분석: '
-               + ', '.join(TITLES[k] for k in st.steps)) if st.ran_at else '아직 실행하지 않았습니다.'
+        items = sorted(self.win.items, key=lambda it: (it.group or '~', self.win.items.index(it)))
+        cols = [(key, box.data_name(), box) for key, _f, box in self._boxes()]
+        cols.append(('coloc', 'Coloc 2 · ROI', None))
+        stale = {key: {id(it) for it in box.stale_items()} for key, _f, box in self._boxes()}
+        n_stale = sum(len(v) for v in stale.values())
+        self.stale_btn.setText(f'바뀐 것 다시 측정 ({n_stale})')
+        self.stale_btn.setEnabled(bool(n_stale))
+        self.run_btn.setEnabled(bool(st.steps))
+        txt = (f'일괄 분석 {st.ran_at} · 그룹 ' + ', '.join(g or NO_GROUP for g in st.groups) + ' · 분석: '
+               + ', '.join(TITLES[k] for k in st.steps)) if st.ran_at else '일괄 분석은 아직 실행하지 않았습니다.'
         if st.errors:
-            txt += f'\n문제 {len(st.errors)}건: ' + '; '.join(st.errors[:5]) + (
-                ' …' if len(st.errors) > 5 else '')
+            txt += f'\n문제 {len(st.errors)}건: ' + '; '.join(st.errors[:5]) + (' …' if len(st.errors) > 5 else '')
         self.head.setText(txt)
         self.table.clear()
         self.table.setColumnCount(2 + len(cols))
-        self.table.setHorizontalHeaderLabels(['그룹', '이미지'] + [h for _, h in cols])
+        self.table.setHorizontalHeaderLabels(['그룹', '이미지'] + [name for _k, name, _b in cols])
         self.table.setRowCount(len(items))
-        self._items = items
-        self._cols = cols
+        self._items, self._cols = items, cols
         for r, it in enumerate(items):
-            vals = [it.group or NO_GROUP, it.label] + [value(self.win, st, it, k) for k, _ in cols]
-            for c, v in enumerate(vals):
-                cell = QTableWidgetItem(str(v))
-                if c >= 2 and v in ('', 0):
-                    cell.setForeground(Qt.GlobalColor.red)
-                self.table.setItem(r, c, cell)
+            self.table.setItem(r, 0, QTableWidgetItem(it.group or NO_GROUP))
+            self.table.setItem(r, 1, QTableWidgetItem(it.label))
+            for c, (key, _name, box) in enumerate(cols):
+                if box is not None:
+                    n = sum(1 for row in box.batch_rows if row.get('image_id') == it.image_id)
+                    bad = id(it) in stale.get(key, set())
+                else:
+                    n, bad = len(it.coloc or []), False
+                text = '설정 바뀜' if n and bad else (f'최신 · {n}행' if n else '')
+                cell = QTableWidgetItem(text)
+                if n:
+                    cell.setIcon(theme.status_icon('warning' if bad else 'success'))
+                self.table.setItem(r, 2 + c, cell)
 
     def open_cell(self, row, col):
         if not 0 <= row < len(self._items):
@@ -555,14 +588,55 @@ class BatchResults(QDialog):
         it = self._items[row]
         if it in self.win.items:
             self.win.file_list.setCurrentRow(self.win.items.index(it))
-        steps = self.win.batch.steps
-        key = self._cols[col - 2][0] if col >= 2 else (steps[0] if steps else None)
-        if key is not None:
-            self.win.show_tab(TABS[key])
+        key = self._cols[col - 2][0] if col >= 2 else None
+        if key is None:
+            steps = self.win.batch.steps
+            if steps:
+                self.win.show_tab(TABS[steps[0]])
+            return
+        self.win.show_tab(self.TAB_OF[key])
+
+    def remeasure_cell(self, row, col):
+        if not (0 <= row < len(self._items)) or col < 2:
+            return
+        it = self._items[row]
+        key, _name, box = self._cols[col - 2]
+        if box is None:
+            return
+        if not box.has_rois(it):
+            return
+        res = box.measure_items([it])
+        box._merge([it], res)
+        box._fill_table()
+        self.refresh()
+
+    def _menu(self, pos):
+        idx = self.table.indexAt(pos)
+        if not idx.isValid() or idx.column() < 2:
+            return
+        from PySide6.QtWidgets import QMenu
+
+        m = QMenu(self)
+        m.addAction('이 칸만 다시 측정', lambda: self.remeasure_cell(idx.row(), idx.column()))
+        m.addAction('이 이미지를 이 탭에서 열기', lambda: self.open_cell(idx.row(), idx.column()))
+        m.exec(self.table.viewport().mapToGlobal(pos))
+
+    def remeasure_stale(self) -> int:
+        n = 0
+        for _key, _f, box in self._boxes():
+            n += box.update_stale()
+        self.refresh()
+        return n
+
+    def run(self):
+        if not self.win.batch.steps:
+            self.win.batch_dialog()
+        else:
+            self.win.run_batch()
 
     def open_selected(self):
-        rows = self.table.selectionModel().selectedRows()
-        self.open_cell(rows[0].row() if rows else 0, 0)
+        idx = self.table.currentIndex()
+        self.open_cell(idx.row() if idx.isValid() else 0, idx.column() if idx.isValid() else 0)
 
     def remeasure(self):
         self.win.run_batch(detect=False)

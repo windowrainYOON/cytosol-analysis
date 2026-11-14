@@ -1629,6 +1629,10 @@ class MainWindow(QMainWindow):
         cl.addLayout(view_row, 1)
         cl.addWidget(self.t_row)
         self.t_row.setVisible(False)  # shown for images with T
+        from .live_box import LiveBox
+
+        self.live_box = LiveBox(self)  # 실시간 값 박스 (v0.64), filled once the panels exist
+        cl.addWidget(self.live_box)
         self.z_col.setVisible(False)  # shown once an image is open
         cl.addLayout(bar2)
 
@@ -1738,6 +1742,7 @@ class MainWindow(QMainWindow):
         # 핵 → 세포막 등거리 띠: own tab (owner request 2026-11-09; v0.57–0.59 in 세포질 ROI)
         from .bands_panel import BandsPanel
         self.bands_panel = BandsPanel(self)
+        self.live_box.adopt_plots()  # FRAP curve, profile, Coloc 2 plots under the canvas (v0.64)
         self.info_panel = InfoPanel()
         # inspector: capsule chips switch the pages (hig_widgets.ChipTabs)
         right = hig_widgets.ChipTabs()
@@ -1867,7 +1872,7 @@ class MainWindow(QMainWindow):
         act(m, '일괄 분석 실행…', self.batch_dialog, 'Ctrl+B',
             '그룹을 고르고 수행할 분석(세포질 ROI, 입자, 강도 측정, Coloc 2, FRAP …)을 체크해 '
             '그 그룹의 모든 이미지에 한 번에 실행합니다.')
-        act(m, '일괄 분석 결과 보기…', self.show_batch_results, 'Ctrl+Shift+B',
+        act(m, '측정 현황 · 일괄 분석…', self.show_batch_results, 'Ctrl+Shift+B',
             '이미지별 결과를 보고, 이미지를 열어 ROI를 고친 뒤 다시 측정합니다.')
         act(m, '일괄 분석 설정 저장…', self.save_batch_settings,
             tip='고른 분석·그룹과 그 분석들의 탭 설정을 JSON 파일로 저장합니다 (다른 이미지셋에 다시 쓰기).')
@@ -1946,6 +1951,9 @@ class MainWindow(QMainWindow):
         act(view, '모든 기능 탭 열기', lambda: [self.show_tab(n, focus=False) for n in self.tab_pages])
         act(view, '모든 기능 탭 닫기', lambda: [self.hide_tab(n) for n in self.tab_pages],
             tip='LUT와 이미지 정보 탭은 항상 열려 있습니다.')
+        view.addSeparator()
+        act(view, '측정 현황 · 일괄 분석', self.show_batch_results,
+            tip='그룹별 이미지 × 데이터 표: 최신 / 설정 바뀜 / 없음. 두 번 누르면 그 탭에서 엽니다.')
 
         # 그래프 and Figure next to View (owner request 2026-11-05)
         self.graph_menu = g = mb.addMenu('그래프')
@@ -1990,6 +1998,61 @@ class MainWindow(QMainWindow):
             'frap': ('FRAP', 'frap_tab', lambda: S.frap(self.frap_panel),
                      'FRAP 측정 탭에서 시간축이 있는 이미지를 먼저 측정하세요.'),
         }
+
+    def data_entries(self) -> list[dict]:
+        """Every table the tabs made, named 「기능 · 점 하나」 (owner request
+        2026-11-14): feature, name, 점 하나 =, rows, state (ok / stale / auto),
+        graph source key, the MeasureBox when there is one."""
+        out = []
+        boxes = (('세포질 ROI', 'roi', self.roi_panel.measure), ('입자 ROI', 'particle', self.particle_panel.measure),
+                 ('강도 측정', 'intensity', self.intensity_panel.measure),
+                 ('등거리 띠', 'bands', self.bands_panel.bands_measure))
+        for feat, key, box in boxes:
+            if not box.batch_rows:
+                continue
+            stale = bool(box.stale_items())
+            for name, unit, rows in box.data_tables():
+                if rows:
+                    out.append({'feature': feat, 'name': name, 'unit': unit, 'rows': len(rows),
+                                'state': 'stale' if stale else 'ok', 'key': key, 'box': box, 'table': name})
+        n = sum(len(it.coloc or []) for it in self.items)
+        if n:
+            out.append({'feature': 'Coloc 2', 'name': 'Coloc 2 · ROI', 'unit': 'ROI', 'rows': n, 'state': 'ok',
+                        'key': 'coloc', 'table': 'Coloc 2 결과'})
+        for feat, key, unit in (('라인 프로파일', 'profile', '선 위 점'), ('FRAP', 'frap', '시점')):
+            try:
+                data = self.graph_sources()[key][2]()
+            except Exception:  # noqa: BLE001
+                data = None
+            if data is not None and data.tables:
+                t = data.tables[0]
+                out.append({'feature': feat, 'name': f'{feat} · {unit}', 'unit': unit, 'rows': len(t.rows),
+                            'state': 'auto', 'key': key, 'table': t.name})
+        return out
+
+    def update_tab_badges(self):
+        """A red dot on the chip of every tab whose tables have rows (all
+        images), the tables listed in its tool tip."""
+        if not hasattr(self, 'bands_panel'):
+            return
+        tabs = {'roi': 'roi_tab', 'particle': 'particle_tab', 'intensity': 'intensity_tab', 'bands': 'bands_tab',
+                'coloc': 'coloc_tab'}
+        have = {}
+        for feat, key, box in (('세포질 ROI', 'roi', self.roi_panel.measure),
+                               ('입자 ROI', 'particle', self.particle_panel.measure),
+                               ('강도 측정', 'intensity', self.intensity_panel.measure),
+                               ('등거리 띠', 'bands', self.bands_panel.bands_measure)):
+            parts = [f'{name.split(" · ", 1)[-1]} {len(rows):,}행' for name, _u, rows in box.data_tables() if rows]
+            if parts:
+                have[tabs[key]] = f'측정값 있음 — {feat} · ' + ', '.join(parts)
+        n = sum(len(it.coloc or []) for it in self.items)
+        if n:
+            have['coloc_tab'] = f'측정값 있음 — Coloc 2 · ROI {n}행'
+        rt = self.right_tabs
+        for name, (page, _title) in self.tab_pages.items():
+            i = rt.indexOf(page)
+            if i >= 0 and hasattr(rt, 'set_badge'):
+                rt.set_badge(i, name in have, have.get(name, ''))
 
     def graph_window(self):
         """The one 그래프 편집 창 (created when first needed)."""
@@ -3623,6 +3686,8 @@ class MainWindow(QMainWindow):
         self.roi_panel.measure.schedule()
         self.particle_panel.schedule()
         self.intensity_panel.schedule()
+        self.live_box.schedule()
+        self.update_tab_badges()
 
     def rois_changed(self, hidden=False):
         """The cell ROIs or the shown plane changed: particles and every
@@ -3632,9 +3697,11 @@ class MainWindow(QMainWindow):
         self.roi_panel.measure.schedule()
         self.particle_panel.overlay_changed(hidden)
         self.intensity_panel.overlay_changed(hidden)
+        self.live_box.schedule()
 
     def particles_changed(self):
         self.intensity_panel.schedule()
+        self.live_box.schedule()
 
     def _stack_preview(self, refit=False):
         import time
@@ -3778,6 +3845,8 @@ class MainWindow(QMainWindow):
 
     def update_preview(self, refit=False, light=False):
         """Redraw the image; ``light`` (while T changes) skips the line profile."""
+        if hasattr(self, 'live_box') and not light:
+            self.live_box.schedule()
         it = self.current
         if it is None:
             return
@@ -4129,9 +4198,7 @@ class MainWindow(QMainWindow):
         self.show_batch_results()
 
     def show_batch_results(self):
-        if not self.batch.ran_at:
-            QMessageBox.information(self, '일괄 분석', '아직 실행한 일괄 분석이 없습니다.')
-            return
+        """측정 현황 · 일괄 분석 window (v0.64; opens without a batch too)."""
         if self.batch_win is None:
             self.batch_win = BatchResults(self)
         self.batch_win.refresh()

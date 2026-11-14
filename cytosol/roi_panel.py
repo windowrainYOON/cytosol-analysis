@@ -1493,7 +1493,40 @@ class RoiPanel(QWidget):
         c = self._hover_rois
         if c is None or not self._hover:
             return None
-        return self._hover.get(c.label_at(x, y))
+        label = c.label_at(x, y)
+        base = self._hover.get(label)
+        if base is None:
+            return None
+        extra = self.hover_values(label)
+        return (base[0] + ('\n' + extra if extra else ''), base[1])
+
+    HOVER_SKIP = {'group', 'image', 'image_id', 'source', 'timepoint', 'plane', 'roi', 'cell',
+                  'particle_channel', 'particle_intensity_roi', 'status', 'label'}
+
+    def hover_values(self, label) -> str:
+        """The measured values of the ROI under the cursor (the measuring tab
+        shown, its 측정 항목; owner request 2026-11-14 · 값 팝오버)."""
+        box = None
+        for tab, get in (('roi_tab', lambda: self.measure), ('particle_tab', lambda: self.win.particle_panel.measure),
+                         ('intensity_tab', lambda: self.win.intensity_panel.measure),
+                         ('bands_tab', lambda: self.win.bands_panel.bands_measure)):
+            if self.win.tab_current(tab):
+                box = get()
+                break
+        if box is None or not label:
+            return ''
+        rows = [r for r in box.current_rows() if str(r.get('roi', '')) in (f'cell{label}', f'cell{int(label):03d}', str(label))]
+        lines = []
+        for r in rows[:4]:
+            head = str(r.get('region', '') or r.get('band', ''))
+            vals = [f'{k} {v:.4g}' if isinstance(v, float) else f'{k} {v}'
+                    for k, v in r.items() if k not in self.HOVER_SKIP and k != 'region'
+                    and isinstance(v, (int, float))][:4]
+            if vals:
+                lines.append((head + ': ' if head else '') + ' · '.join(vals))
+        if len(rows) > 4:
+            lines.append(f'… {len(rows) - 4}행 더')
+        return '\n'.join(lines)
 
     # ---- editing ----------------------------------------------------------
 

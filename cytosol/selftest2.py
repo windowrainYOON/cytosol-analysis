@@ -237,7 +237,133 @@ def graph_corr_step(out: Path):
     return 'corr matrix = Pearson / Spearman, Fisher z, Holm, Cochran Q, image means, scatter + regression, summary'
 
 
+def _cell_tiff(path: Path, seed=0) -> Path:
+    """Two-channel image with three bright cells (channel 1) and spots (channel 2)."""
+    import tifffile
+
+    rng = np.random.default_rng(seed)
+    a = np.zeros((2, 80, 120), np.uint16)
+    yy, xx = np.mgrid[:80, :120]
+    for cx in (25, 60, 95):
+        d = (xx - cx) ** 2 + (yy - 40) ** 2
+        a[0][d < 15 ** 2] = 800
+        a[1][d < 15 ** 2] = 200
+        for _ in range(4):
+            px, py = cx + rng.integers(-8, 9), 40 + rng.integers(-8, 9)
+            a[1][(xx - px) ** 2 + (yy - py) ** 2 < 4] = 2000
+    a = (a + rng.integers(0, 30, a.shape)).astype(np.uint16)
+    tifffile.imwrite(path, a, imagej=True, resolution=(5.0, 5.0), metadata={'unit': 'um', 'axes': 'CYX'})
+    return path
+
+
+def _cells_of(it):
+    from .cellroi import CellRois
+
+    lab = np.zeros(it.image.shape[-2:], np.int32)
+    yy, xx = np.mgrid[:lab.shape[0], :lab.shape[1]]
+    for k, cx in enumerate((25, 60, 95), 1):
+        lab[(xx - cx) ** 2 + (yy - 40) ** 2 < 15 ** 2] = k
+    nuc = np.where((xx % 1 == 0) & (lab > 0) & (((xx - 25) % 35) ** 2 + (yy - 40) ** 2 < 25), lab, 0).astype(np.int32)
+    return CellRois(lab, nuc, it.pixel_um)
+
+
+def data_display_step(out: Path):
+    """측정 데이터 표시 통일: 측정 항목 / 데이터 cards (no inspector table,
+    no auto refresh), data names, 설정 바뀜 and re-measuring only the changed
+    images, the tab chip dot, the ROI hover values, the live box, the graph
+    window 데이터 list + 열 설명, the 측정 현황 · 일괄 분석 window."""
+    from . import graph as G
+
+    app, win = _window()
+    win.show()
+    d = out / 'data_display'
+    d.mkdir(parents=True, exist_ok=True)
+    win.add_files([_cell_tiff(d / 'a.tif', 1), _cell_tiff(d / 'b.tif', 2)], explicit=True)
+    for it in win.items:
+        it.cells = _cells_of(it)
+    win.file_list.setCurrentRow(0)
+    win.show_tab('roi_tab')
+    app.processEvents()
+    box = win.roi_panel.measure
+    if box.table.isVisible() or box.view.isVisible() or box.auto.isChecked():
+        raise AssertionError('inspector result table still shown')
+    if box.data_name() != '세포질 ROI · 세포' or win.particle_panel.measure.data_name('group') != '입자 ROI · 그룹 요약':
+        raise AssertionError(f'data names {box.data_name()}')
+    box.measure_all()
+    n0 = len(box.batch_rows)
+    if not n0 or box.stale_items() or len({r['image_id'] for r in box.batch_rows}) != 2:
+        raise AssertionError(f'measure all: {n0} rows, stale {box.stale_items()}')
+    # the chip dot and its tool tip
+    win.update_tab_badges()
+    i = win.right_tabs.indexOf(win.tab_pages['roi_tab'][0])
+    if not win.right_tabs.badge(i) or '세포질 ROI' not in win.right_tabs._chips()[i].toolTip():
+        raise AssertionError('tab chip dot')
+    # a changed ROI marks that image only; the graph window re-measures it
+    second = win.items[1]
+    second.cells = _cells_of(second)
+    second.cells.labels[second.cells.labels == 3] = 0
+    if [it.label for it in box.stale_items()] != [second.label]:
+        raise AssertionError(f'stale images {[it.label for it in box.stale_items()]}')
+    box._fill_table()
+    if '다시 측정' not in box.state.text():
+        raise AssertionError(f'state line {box.state.text()}')
+    gw = win.graph_window()
+    gw.refresh_chips()
+    names = [gw.data_list.topLevelItem(k).text(0) for k in range(gw.data_list.topLevelItemCount())]
+    if '세포질 ROI' not in names or names[-1] != 'CSV 불러오기…':
+        raise AssertionError(f'graph window data list {names}')
+    wz = gw.start_data('세포질 ROI · 세포', run=False)
+    if box.stale_items() or len([r for r in box.batch_rows if r['image_id'] == second.image_id]) * 3 != \
+            len([r for r in box.batch_rows if r['image_id'] == win.items[0].image_id]) * 2:
+        raise AssertionError('stale image not measured again when the table was opened')
+    doc = wz.finish()
+    if gw.spec.mapping.table != '세포질 ROI · 세포' or '세포질 ROI · 세포' not in gw.data_head.text():
+        raise AssertionError(f'wizard table {gw.spec.mapping.table} / {gw.data_head.text()}')
+    k = gw.table_pick.findText('열 설명: 세포질 ROI · 세포')
+    gw.table_pick.setCurrentIndex(k)
+    t = gw.shown_table()
+    if k < 0 or t.columns[:2] != ['열', '표시 이름'] or not any('평균 세기' in str(r[4]) for r in t.rows):
+        raise AssertionError('열 설명')
+    gw.remove_doc(doc)
+    gw.hide()
+    # hover values of the ROI under the cursor
+    txt = win.roi_panel.hover_values(1)
+    if 'Mean' not in txt:
+        raise AssertionError(f'hover values {txt!r}')
+    # live box under the canvas follows the tab
+    win.live_box.refresh()
+    vals = win.live_box.values()
+    if not win.live_box.isVisible() or vals.get('세포') != 3:
+        raise AssertionError(f'live box {vals}')
+    win.show_tab('frap_tab')
+    app.processEvents()
+    win.live_box.refresh()
+    if win.live_box.plots.currentWidget() is not win.frap_panel.plot:
+        raise AssertionError('FRAP curve not in the live box')
+    win.show_tab('stack_tab')
+    win.live_box.refresh()
+    if win.live_box.isVisible():
+        raise AssertionError('live box shown for a tab without one')
+    # 측정 현황 · 일괄 분석
+    win.show_batch_results()
+    ov = win.batch_win
+    col = 2 + [c[0] for c in ov._cols].index('roi')
+    if ov.table.rowCount() != 2 or '최신' not in ov.table.item(0, col).text():
+        raise AssertionError('measurement overview')
+    second.cells.labels[second.cells.labels == 2] = 0
+    ov.refresh()
+    if ov.table.item(1, col).text() != '설정 바뀜' or '(1)' not in ov.stale_btn.text():
+        raise AssertionError(f'overview stale {ov.table.item(1, col).text()} {ov.stale_btn.text()}')
+    if ov.remeasure_stale() != 1 or box.stale_items():
+        raise AssertionError('overview re-measure')
+    ov.close()
+    box.batch_rows = []
+    _close(win)
+    return f'{n0} rows, stale = 1 image, data list, 열 설명, hover, live box, overview'
+
+
 STEPS = [
     ('image stacking', stacking_step),
     ('graph correlation', graph_corr_step),
+    ('data display', data_display_step),
 ]

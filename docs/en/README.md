@@ -46,6 +46,7 @@ appears on screen, followed by its meaning in parentheses, e.g.
 | [Graph editor window](16-graph.md) | A tab's graph in its own window: chart type, x / y columns, colors, widths, fonts, axes, legend, text boxes; export of the graph and its data |
 | [등거리 띠 tab](18-bands.md) | Distance bands from the nucleus to the cell edge: per-band intensity and particles, graph |
 | [Image stacking](19-stacking.md) | Stack files saved per channel, Z or time into one image, RGB TIFFs stacked on load, unstack |
+| [Viewing measured data](20-data.md) | 측정 항목 / 데이터 cards, values on ROIs, tab chip dots, the live box, the graph window data list and column notes, the measurement overview |
 | [Export window](17-export.md) | File › Export: images, crops, ROIs, tables, graphs, info, batch results and the project saved from one window |
 | [Output files](12-output-files.md) | Every file the program writes, and folder loading |
 

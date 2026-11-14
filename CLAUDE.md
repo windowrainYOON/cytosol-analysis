@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.63.0)
+## Window structure (v0.64.0)
 
 - **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
   v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
@@ -319,7 +319,9 @@ per-widget style sheets.
 | `particle_panel.py` | 입자 ROI tab, per-cell and per-particle measurement, summaries |
 | `intensity_panel.py` | 강도 측정 tab (regions from expressions like `cyto - particle`) |
 | `bands_panel.py`, `radial.py` | 핵 → 세포막 등거리 띠 tab (`bands_tab`; distance bands from the nucleus, per-band measurement, graph) |
-| `measure_box.py` | Measurement table shared by the three measuring tabs |
+| `measure_box.py` | 측정 항목 + 데이터 cards shared by the measuring tabs (data names, state per image, re-measure changed images) |
+| `live_box.py` | 실시간 값 박스 under the canvas: per-tab numbers + small graph of the current image |
+| `columns_doc.py` | 열 설명: unit, meaning and ImageJ source of result columns |
 | `coloc.py`, `coloc_panel.py` | Fiji Coloc 2 port, per cell |
 | `lineprofile.py`, `profile_panel.py` | Line profile (ImageJ RGB Profiler) |
 | `frap.py`, `frap_panel.py` | FRAP 측정 tab: bleach / control / background ROIs (`FrapState` per image in `ImageItem.frap`, auto placement, dragged on the canvas via `Canvas.show_frap` / `frapMoved`), (B−BG)/(C−BG) curves, ImageJ-equal ROI masks, exponential recovery fit, drift correction (ROIs follow each frame's movement, `track_drift`), group means, summary CSV / figures |
@@ -482,3 +484,4 @@ not affected.
 | dev branch | 0.61.0 | Owner request, after mockups (v1–v3): graph editor as a step flow: 새 그래프 chips (per tool + CSV) open 종류 → 축 배치 → 그룹 with a preview; X / Y each 범주 or 값 (horizontal category charts), several Y columns, colour split, groups checked / ordered; inspector 데이터 / 모양 / 통계 (old 종류 / 값 / 모양 / 컴포넌트, 선택한 요소, series list, 데이터 menu, sidebar buttons removed); significance marks (data check, recommended test, tails, corrections, pairs, stars / p, brackets, caption) with a 통계 window and Preferences initial values; inspector box in the pages' light grey; merged with the distance-bands tab split (0.60.0) |
 | dev branch | 0.62.0 | Owner request (2026-11-14, proposals mito-tracking ch. 이미지 묶기): 이미지 묶기 (`stacking.py`, `stack_dialog.py`): Red/Green/Blue TIFF triplets stacked on load, 이미지 묶기… dialog (C / Z / T, row order by drag, channel per file, name / colour, size check with refuse / crop / pad, same naming pattern), stacked rows `name (3채널)` with greyed source rows (`image_tree.SOURCE`), 묶음 풀기, projects rebuild stacks from the sources; `theme.RoundedDialog` (radius 18, shadow) for new windows; `selftest2.py` holds the new steps |
 | dev branch | 0.63.0 | Owner request (2026-11-14, proposal mito-tracking ch. 6): graph window correlation tools for any table: `graph_calc.py` (Mito Analyzer `stats.py` functions: regression, Spearman, corr matrix, Fisher z, Cochran Q, Holm / FDR, why_nan, group summary, sample means), `Table.labels` / `column_sets`, `Mapping.unit` (점 하나 = 행 / 이미지 평균 / 그룹 평균, `graph.view_tables`), chart kinds 상관 행렬 / 상관 비교 (`GraphSpec.calc` = `graph.Calc`; 상관 계산 card in `MappingEditor._calc_rows`; cell hover r · n · p, click = scatter with regression `GraphWindow.open_scatter`), XY 회귀 · 사분면 card (`RegressionEditor`), 편집 › 여러 열 그룹 요약표 |
+| dev branch | 0.64.0 | Owner request + decisions (2026-11-14, data-display proposal): measuring tabs end with **측정 항목** + **데이터** cards (`MeasureBox`: no inspector result table, no auto refresh; data names 「기능 · 점 하나」 `data_name` / `data_tables`; 설정 바뀜 per image `stale_items` / `_measured`, `update_stale`, 모든 이미지 측정 / 현재 이미지만), ROI hover values (`RoiPanel.hover_values`), red dot on tab chips (`ChipTabs.set_badge`, `MainWindow.update_tab_badges`), 실시간 값 박스 under the canvas (`live_box.LiveBox`; FRAP / profile / Coloc 2 plots moved there, band graph only in the graph window), graph window 데이터 list (`MainWindow.data_entries`, `GraphWindow.start_data` re-measures changed images; chips hidden) + 열 설명 (`columns_doc.py`) + table header, 측정 현황 · 일괄 분석 window (`batch.BatchResults` rewritten; View menu); docs `20-data.md` |

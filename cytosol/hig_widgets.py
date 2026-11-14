@@ -137,6 +137,7 @@ class Chip(QAbstractButton):
     closeClicked = Signal()
     H = 26
     PAD = 10
+    DOT = 7
     X = 14  # close glyph size
 
     def __init__(self, text: str, closable: bool, parent=None):
@@ -145,6 +146,7 @@ class Chip(QAbstractButton):
         self.setCheckable(True)
         self.setAutoExclusive(False)
         self.closable = closable
+        self.badge = False  # red dot: the tab has measured data (v0.64)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.setMouseTracking(True)
@@ -159,6 +161,8 @@ class Chip(QAbstractButton):
     def sizeHint(self):
         fm = QFontMetrics(self._font())
         w = fm.horizontalAdvance(self.text()) + 2 * self.PAD
+        if self.badge:
+            w += self.DOT + 4
         if self.closable:
             w += self.X + 2
         return QSize(w, self.H)
@@ -200,8 +204,17 @@ class Chip(QAbstractButton):
         qp.setFont(self._font())
         qp.setPen(fg)
         tr = QRectF(self.PAD, 0, self.width() - 2 * self.PAD
-                    - ((self.X + 2) if self.closable else 0), self.H)
+                    - ((self.X + 2) if self.closable else 0) - ((self.DOT + 4) if self.badge else 0), self.H)
         qp.drawText(tr, Qt.AlignmentFlag.AlignCenter, self.text())
+        if self.badge:
+            d = QRectF(tr.right() + 4, (self.H - self.DOT) / 2, self.DOT, self.DOT)
+            if self.isChecked():
+                qp.setBrush(theme.color('on-accent'))
+                qp.setPen(Qt.PenStyle.NoPen)
+                qp.drawEllipse(d.adjusted(-1.5, -1.5, 1.5, 1.5))
+            qp.setBrush(theme.color('red'))
+            qp.setPen(Qt.PenStyle.NoPen)
+            qp.drawEllipse(d)
         if self.closable:
             x = self._x_rect()
             token = 'on-accent' if self.isChecked() else 'label-secondary'
@@ -246,6 +259,35 @@ class ChipTabs(QTabWidget):
     def _chips(self) -> list[Chip]:
         return [self._flow.itemAt(i).widget() for i in range(self._flow.count())]
 
+    def set_badge(self, index, on, tip=''):
+        """A red dot on the chip of tab `index` (it has measured data); the
+        tool tip lists the tables."""
+        badges = self.__dict__.setdefault('_badges', {})
+        page = self.widget(index)
+        old = badges.get(page)
+        new = tip if on else None
+        if old == new:
+            return
+        if on:
+            badges[page] = tip
+        else:
+            badges.pop(page, None)
+        chips = self._chips()
+        if 0 <= index < len(chips):
+            self._badge_chip(chips[index], page)
+            self._flow.invalidate()
+
+    def badge(self, index) -> bool:
+        return self.widget(index) in self.__dict__.get('_badges', {})
+
+    def _badge_chip(self, chip, page):
+        tip = self.__dict__.get('_badges', {}).get(page)
+        chip.badge = tip is not None
+        base = '우클릭 또는 ×: 탭 닫기' if chip.closable else ''
+        chip.setToolTip('\n'.join(x for x in (tip, base) if x))
+        chip.updateGeometry()
+        chip.update()
+
     def _rebuild(self):
         while self._flow.count():
             w = self._flow.takeAt(0).widget()
@@ -263,6 +305,7 @@ class ChipTabs(QTabWidget):
             chip.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             chip.customContextMenuRequested.connect(
                 lambda pos, c=chip, p=page: self._menu(c, p, pos))
+            self._badge_chip(chip, page)
             self._flow.addWidget(chip)
             chip.show()
         self._sync()
