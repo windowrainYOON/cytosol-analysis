@@ -130,14 +130,60 @@ class ParticlePanel(QWidget):
         self.detect_auto.toggled.connect(lambda _: self._detail_rows())
         self.detect_auto.clicked.connect(self._detect_auto_clicked)
         self._details_open = False
+        # 자동 (v0.65): significance of the bg-subtracted image (particle_detect);
+        # the former Hessian spots stay as 점 모양 강조 (hidden state spot_mode)
+        self.spot_mode = QCheckBox('점 모양 강조')
+        self.spot_mode.hide()
         self.method_combo = QComboBox()
-        self.method_combo.addItems(['점 검출 (자동)', 'threshold'])
-        self.method_combo.setToolTip(self.thr_auto.toolTip() + '\nthreshold: 이 값 이상인 영역이 입자입니다.')
-        self.method_combo.currentIndexChanged.connect(
-            lambda i: (self.thr_auto if i == 0 else self.thr_manual).setChecked(True))
+        self.method_combo.addItems(['자동 (유의성)', '점 모양 강조 (작은 점 많을 때)', 'threshold'])
+        self.method_combo.setToolTip(
+            '자동: 배경을 뺀 이미지에서 잡음(σ)보다 뚜렷한 봉우리만 입자로 봅니다. 기준 k는 이미지 '
+            '넓이에 맞춰 정해 노이즈가 입자로 잡히는 일이 드뭅니다 (입자 기준 잡기로 직접 정할 수도 있음).\n'
+            '점 모양 강조: Hessian 필터로 작고 둥근 점을 찾습니다 (작은 점이 많을 때).\n'
+            'threshold: 이 값 이상인 영역이 입자입니다.')
+        self.method_combo.currentIndexChanged.connect(self._method_picked)
         pl.addRow('검출 자동화', self.detect_auto)
         pl.addRow('검출 방식', self.method_combo)
         self._method_form = pl
+        # 입자 기준 (calibration, owner proposal 2026-11-14)
+        self.calib_btn = QPushButton('기준 잡기…')
+        self.calib_btn.setToolTip('경계에 있는 후보 입자를 밝기 9개, 크기 9개 보여 드립니다. "여기부터 입자"를 '
+                                  '고르면 자동 검출 기준이 그 입자를 겨우 잡는 값으로 맞춰집니다.')
+        self.calib_btn.clicked.connect(self.start_calibration)
+        self.crit_clear = hig_widgets.IconButton('arrow.counterclockwise', '기본 기준 (통계)으로 되돌리기')
+        self.crit_clear.clicked.connect(self.clear_criterion)
+        self._crit_row = QWidget()
+        self._crit_row.setProperty('hig_no_reflow', True)
+        crl = QHBoxLayout(self._crit_row)
+        crl.setContentsMargins(0, 0, 0, 0)
+        crl.setSpacing(8)
+        crl.addStretch(1)
+        crl.addWidget(self.crit_clear)
+        crl.addWidget(self.calib_btn)
+        pl.addRow('입자 기준', self._crit_row)
+        self.crit_state = theme.StatusLabel(kind='info')
+        self.crit_state.setWordWrap(True)
+        pl.addRow(self.crit_state)
+        self.noise = QDoubleSpinBox()
+        self.noise.setRange(0.05, 20.0)
+        self.noise.setDecimals(2)
+        self.noise.setSingleStep(0.1)
+        self.noise.setValue(0.5)
+        self.noise.setToolTip('이미지 한 장에서 잡음이 입자로 잡힐 기대 개수. 클수록 흐린 입자까지 찾고 '
+                              '(k가 작아짐), 작을수록 뚜렷한 입자만 찾습니다.')
+        self.noise_slider = QSlider(Qt.Orientation.Horizontal)
+        self.noise_slider.setRange(0, 1000)
+        self._noise_row = theme.slider_field(self.noise_slider, self.noise)
+        self.noise_slider.valueChanged.connect(
+            lambda v: self.noise.setValue(round(0.05 * (400 ** (v / 1000)), 2)))
+        self.noise.valueChanged.connect(self._noise_changed)
+        pl.addRow('허용 노이즈 입자', self._noise_row)
+        self.k_note = QLabel()
+        self.k_note.setWordWrap(True)
+        theme.hint(self.k_note)
+        pl.addRow(self.k_note)
+        self.criteria = {}      # channel name -> 입자 기준 (particle_calib.CalibPage.criterion)
+        self._asked = set()     # channels asked about a criterion in this session
         self.spot_k = QDoubleSpinBox()
         self.spot_k.setRange(1.0, 20.0)
         self.spot_k.setSingleStep(0.5)
@@ -176,6 +222,8 @@ class ParticlePanel(QWidget):
         pl.addRow('수동 threshold', self._thr_row)
         # the method and the inputs it uses: one group, no lines inside (owner rule 2026-11-04)
         theme.group_rows(self.method_combo, self.spot_k, self.spot_size, self.thr_spin)
+        theme.group_rows(self._crit_row, self.crit_state)
+        theme.group_rows(self.noise, self.k_note)
         self.min_px = QSpinBox()
         self.min_px.setRange(1, 1000000)
         self.min_px.setSuffix(' px')
@@ -257,6 +305,7 @@ class ParticlePanel(QWidget):
         self.within.currentIndexChanged.connect(self._particle_changed)
         self.min_px.valueChanged.connect(self._particle_changed)
         self.spot_k.valueChanged.connect(self._particle_changed)
+        self.part_on.clicked.connect(self._part_on_clicked)
         self.spot_size.valueChanged.connect(self._particle_changed)
         self.thr_spin.valueChanged.connect(self._thr_spin_changed)
         self.thr_slider.valueChanged.connect(self._thr_slider_changed)
@@ -316,6 +365,14 @@ class ParticlePanel(QWidget):
                                   '입자 강도 측정', cells=self.cells_for, rows=self.particle_rows,
                                   key=self.measure_key, summary=True)
         lay.addWidget(self.measure, 1)
+        from .particle_calib import CalibPage
+        self.calib = CalibPage(self)
+        self.calib.hide()
+        self.calib.finished.connect(self._calibration_done)
+        lay.addWidget(self.calib)
+        self._lay = lay
+        self._calib_hidden = []
+        self._noise_changed(self.noise.value())
 
     # ---- helpers ----------------------------------------------------------
 
@@ -453,16 +510,42 @@ class ParticlePanel(QWidget):
 
     def settings(self) -> ParticleSettings:
         name = self.part_channel.currentText().split(': ', 1)[-1]
-        return ParticleSettings(
+        s = ParticleSettings(
             channel=name, index=max(self.part_channel.currentData() or 0, 0),
             within=self.within.currentData(),
-            method='manual' if self.thr_manual.isChecked() else 'auto',
+            method='manual' if self.thr_manual.isChecked() else (
+                'spot' if self.spot_mode.isChecked() else 'auto'),
             manual=self.thr_spin.value(), min_px=self.min_px.value(),
-            k=self.spot_k.value(), size_um=self.spot_size.value())
+            k=self.spot_k.value(), size_um=self.spot_size.value(), noise=self.noise.value())
+        return self.with_criterion(s, self.item)
+
+    def criterion_for(self, item, channel):
+        """The 입자 기준 of a channel if it applies to the image (its scope)."""
+        c = self.criteria.get(channel)
+        if not c or item is None:
+            return None
+        scope = c.get('scope', 'all')
+        if scope == 'group' and (item.group or '') != c.get('group', ''):
+            return None
+        if scope == 'image' and item.image_id != c.get('image'):
+            return None
+        return c
+
+    def with_criterion(self, s, item):
+        """Settings with the criterion that applies to the image (automatic method only)."""
+        if s is None or s.method != 'auto':
+            return s
+        c = self.criterion_for(item, s.channel)
+        k, a = (float(c['k']), float(c.get('area', 0))) if c else (0.0, 0.0)
+        if (s.crit_k, s.crit_area) != (k, a):
+            s = replace(s, crit_k=k, crit_area=a)
+        return s
 
     def particles_for(self, item):
         """Particles of an image's current plane: from its settings, or as loaded."""
-        s = item.particle_settings
+        s = self.with_criterion(item.particle_settings, item)
+        if s is not item.particle_settings:
+            item.particle_settings = s
         cells = self.cells_for(item)
         if s is None:
             return item.particles
@@ -503,9 +586,123 @@ class ParticlePanel(QWidget):
         self._method_auto.setChecked(auto_on)
         self._method_auto.blockSignals(False)
         self.method_combo.blockSignals(True)
-        self.method_combo.setCurrentIndex(0 if auto_on else 1)
+        self.method_combo.setCurrentIndex((1 if self.spot_mode.isChecked() else 0) if auto_on else 2)
         self.method_combo.blockSignals(False)
         self._method_rows()
+
+    def _method_picked(self, i):
+        spot = i == 1
+        changed = spot != self.spot_mode.isChecked()
+        self.spot_mode.setChecked(spot)
+        (self.thr_auto if i < 2 else self.thr_manual).setChecked(True)
+        self._method_rows()
+        if changed:
+            self._particle_changed()
+
+    def _noise_changed(self, v):
+        import math
+        sl = self.noise_slider
+        sl.blockSignals(True)
+        sl.setValue(int(round(1000 * math.log(max(v, 0.05) / 0.05) / math.log(400))))
+        sl.blockSignals(False)
+        self._k_text()
+        self._particle_changed()
+
+    def _k_text(self):
+        """The k actually used (rule: automatic values are shown)."""
+        it = self.item
+        p = it.particles if it is not None else None
+        info = getattr(p, 'info', None) or {}
+        if info.get('k'):
+            self.k_note.setText(f'이미지당 잡음이 입자로 잡힐 기대 개수 · 이 이미지의 k = {info["k"]:.1f}σ '
+                                f'(σ = {info["sigma"]:.3g})')
+        else:
+            self.k_note.setText('이미지당 잡음이 입자로 잡힐 기대 개수 · 이미지가 넓을수록 k가 커집니다')
+        name = self.part_channel.currentText().split(': ', 1)[-1]
+        c = self.criterion_for(it, name)
+        from .particle_calib import criterion_text
+        self.crit_state.set_kind('success' if c else 'info')
+        self.crit_state.setText(criterion_text(c, info.get('k') if not c else None))
+        self.crit_clear.setVisible(c is not None)
+
+    # ---- 입자 기준 잡기 ----------------------------------------------------------
+
+    def _part_on_clicked(self, on):
+        """The first automatic detection of a channel without a criterion asks
+        whether to set one first (user click only)."""
+        name = self.part_channel.currentText().split(': ', 1)[-1]
+        if not on or self.thr_manual.isChecked() or self.spot_mode.isChecked() \
+                or name in self.criteria or name in self._asked or self.item is None:
+            return
+        self._asked.add(name)
+        d = theme.RoundedDialog(self, f'이 채널({name})의 입자 기준을 먼저 잡을까요?',
+                                '경계에 있는 후보를 밝기 9개, 크기 9개 보여 드립니다. "여기부터 입자"인 것을 '
+                                '고르면 자동 검출이 그 입자를 겨우 잡는 값으로 맞춰지고, 그보다 밝고 큰 것은 '
+                                '모두 잡힙니다. 나중에 입자 기준 › 기준 잡기…로 다시 할 수 있습니다.')
+        later = QPushButton('기본 기준으로 검출')
+        go = QPushButton('기준 잡기')
+        later.clicked.connect(d.reject)
+        go.clicked.connect(d.accept)
+        d.button_row(later, go, default=go)
+        d.setFixedWidth(440)
+        if d.exec():
+            self.start_calibration()
+
+    def start_calibration(self):
+        it = self.item
+        c = self.part_channel.currentData()
+        if it is None or c is None or c < 0 or self.calib.isVisible():
+            return
+        if self.thr_manual.isChecked() or self.spot_mode.isChecked():
+            self.method_combo.setCurrentIndex(0)
+        try:
+            ok = self.calib.start(it, c)
+        except Exception as exc:
+            traceback.print_exc()
+            self.status(f'입자 기준 잡기 실패: {exc}')
+            return
+        if not ok:
+            self.status('입자 기준 잡기: 이 채널에서 후보 입자를 찾지 못했습니다.')
+            return
+        self._calib_hidden = []
+        for i in range(self._lay.count()):
+            w = self._lay.itemAt(i).widget()
+            if w is not None and w is not self.calib and not w.isHidden():
+                w.hide()
+                self._calib_hidden.append(w)
+        self.calib.show()
+        self.status(f'입자 기준 잡기 1/3: 밝기 후보 {len(self.calib.shown)}개를 캔버스에 번호 상자로 표시했습니다')
+
+    def _calibration_done(self, crit):
+        self.calib.hide()
+        for w in self._calib_hidden:
+            w.show()
+        self._calib_hidden = []
+        if crit is None:
+            self.status('입자 기준 잡기를 취소했습니다.')
+            return
+        self.set_criterion(crit)
+
+    def set_criterion(self, crit):
+        """Use a 입자 기준 for its channel (and scope) from now on."""
+        self.criteria[crit['channel']] = dict(crit)
+        if not self.part_on.isChecked():
+            self.part_on.setChecked(True)
+        self._particle_changed()
+        n = self.calib.n_after if hasattr(self.calib, 'n_after') else None
+        self.status(f'입자 기준 적용 ({crit["channel"]}): 밝기 ≥ {crit["k"]:.1f}σ · 크기 ≥ '
+                    f'{crit["area"]:.2f} µm²' + (f' · 이 이미지 입자 {n}개' if n is not None else ''))
+        self._detail_rows()
+        self._k_text()
+        self.win.particles_changed()
+
+    def clear_criterion(self):
+        name = self.part_channel.currentText().split(': ', 1)[-1]
+        if self.criteria.pop(name, None) is not None:
+            self.status(f'입자 기준 ({name})을 기본 기준 (통계)으로 되돌렸습니다.')
+            self._particle_changed()
+            self._detail_rows()
+            self._k_text()
 
     def _method_rows(self):
         """Only the chosen method's inputs are shown (owner rule 2026-11-04)."""
@@ -528,12 +725,18 @@ class ParticlePanel(QWidget):
         if not hasattr(self, '_details_row'):
             return
         manual = self.thr_manual.isChecked()
+        spot = not manual and self.spot_mode.isChecked()
+        sig = not manual and not spot
         on = self.detect_auto.isChecked()
         f = self._method_form
+        name = self.part_channel.currentText().split(': ', 1)[-1]
+        crit = self.criterion_for(self.item, name) is not None
         theme.show_rows(f, (self._thr_row,), manual)
-        theme.show_rows(f, (self.spot_k,), not manual)
-        theme.show_rows(f, (self._size_row,), not manual and (not on or self._details_open))
-        theme.show_rows(f, (self._details_row,), on and not manual)
+        theme.show_rows(f, (self.spot_k,), spot)
+        theme.show_rows(f, (self._size_row,), spot and (not on or self._details_open))
+        theme.show_rows(f, (self._details_row,), on and spot)
+        theme.show_rows(f, (self._crit_row, self.crit_state), sig)
+        theme.show_rows(f, (self._noise_row, self.k_note), sig and not crit)
         self.details_btn.setText('세부 설정 숨기기' if self._details_open else '세부 설정…')
         self.details_note.setVisible(on and self._details_open)
         mine = on and abs(self.spot_size.value() - SPOT_SIZE_AUTO) > 1e-9
@@ -694,6 +897,7 @@ class ParticlePanel(QWidget):
                 self.part_info.setText(f'입자 찾기 실패: {exc}')
                 return
         self._particle_info(it)
+        self._k_text()
         self._draw_particles()
 
     def _particle_info(self, it):
@@ -708,7 +912,9 @@ class ParticlePanel(QWidget):
         method = it.particle_settings.method if it.particle_settings is not None else None
         if thr and method == 'otsu':
             txt += f' · 세포별 threshold {min(thr):.4g}–{max(thr):.4g}'
-        elif thr and method == 'auto':
+        elif method == 'auto' and p.info.get('k'):
+            txt += f' · k = {p.info["k"]:.1f}σ ' + ('(사용자 기준)' if p.info.get('source') == 'user' else '(통계)')
+        elif thr and method == 'spot':
             txt += f' · 세포별 입자 하한 {min(thr):.4g}–{max(thr):.4g}'
         elif it.particle_settings is None:
             txt += ' · 파일에서 불러온 입자 ROI'
@@ -731,7 +937,10 @@ class ParticlePanel(QWidget):
                 c = s.channel_for(item)
                 self.part_channel.setCurrentIndex(c if c is not None else 0)
                 self.within.setCurrentIndex(max(0, self.within.findData(s.within)))
+                self.spot_mode.setChecked(s.method == 'spot')
                 (self.thr_manual if s.method == 'manual' else self.thr_auto).setChecked(True)
+                self._method_sync(s.method != 'manual')
+                self.noise.setValue(s.noise)
                 self.min_px.setValue(s.min_px)
                 self.spot_k.setValue(s.k)
                 self.spot_size.setValue(s.size_um)

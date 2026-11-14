@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import csv
 import traceback
+import numpy as np
 from pathlib import Path
 
 from .lut import export_item, item_folder, item_stem, unique_stems
@@ -187,6 +188,12 @@ def run(win, items, out, opts, progress=None) -> Result:
     # ---- FRAP ----
     if _kind_on(opts, 'frap_summary', 'frap_csv', 'frap_plot', 'frap_rois'):
         _try(res, lambda: _frap(win, items, out, opts))
+    # ---- 입자 추적 ----
+    if _kind_on(opts, 'track_csv', 'track_rois', 'track_all'):
+        _try(res, lambda: _tracks(win, items, out, opts, where))
+    # ---- mitoROI ----
+    if _kind_on(opts, 'mito_csv', 'mito_rois', 'mito_all'):
+        _try(res, lambda: _mito(win, items, out, opts, where))
     # ---- 그래프 편집 창 ----
     graphs = opts.get('graphs') or []
     if graphs:
@@ -278,6 +285,62 @@ def _stack(win, folder, stem, opts):
     if opts.get('rotation') and win.stack_panel.mode_3d.isChecked():
         files += win.save_projection('rotation', stem=str(folder / stem), ask=False,
                                      movie=bool(opts.get('stack_mp4')))
+    return files
+
+
+def _mito(win, items, out, opts, where):
+    from . import mito as M
+    from .mito_panel import save_label_rois
+
+    mp = win.mito_panel
+    files = []
+    for it in items:
+        if getattr(it, 'mito', None) is None:
+            continue
+        folder, stem = where(it)
+        if opts.get('mito_csv'):
+            files += mp.save_item(it, folder, stem, rois=False)
+        if opts.get('mito_rois') and it.mito.mlab is not None and np.asarray(it.mito.mlab).max():
+            folder.mkdir(parents=True, exist_ok=True)
+            if save_label_rois(np.asarray(it.mito.mlab), 'm', folder / f'{stem}_mito_RoiSet.zip'):
+                files.append(folder / f'{stem}_mito_RoiSet.zip')
+    if opts.get('mito_all'):
+        ids = {i.image_id for i in items}
+        for (name, _u, rows), fn in zip(mp.data_tables(), ('mito_per_cell.csv', 'mito_per_mito.csv',
+                                                           'mito_green_puncta.csv')):
+            rows = [r for r in rows if r.get('image_id') in ids]
+            if rows and M.write_csv(out / fn, rows):
+                files.append(out / fn)
+    return files
+
+
+def _tracks(win, items, out, opts, where):
+    from . import tracking as tk
+    from .track_panel import save_track_rois
+
+    tp = win.track_panel
+    files = []
+    for it in items:
+        st = it.tracks
+        if st is None or not st.points:
+            continue
+        folder, stem = where(it)
+        if opts.get('track_csv'):
+            files += tp.save_item(it, folder, stem, pt_names=bool(opts.get('track_pt')), rois=False)
+        if opts.get('track_rois') and st.outlines:
+            folder.mkdir(parents=True, exist_ok=True)
+            if save_track_rois(folder / f'{stem}_tracks.zip', st, it.id_properties()):
+                files.append(folder / f'{stem}_tracks.zip')
+    if opts.get('track_all'):
+        names = {'입자 추적 · 시점': 'tracks_points.csv', '입자 추적 · 트랙': 'tracks_summary.csv',
+                 '입자 추적 · 세포 × 시점': 'tracks_cells.csv'}
+        for name, _u, rows in tp.data_tables():
+            if rows and [i for i in items if i.tracks is not None]:
+                ids = {i.image_id for i in items}
+                rows = [r for r in rows if r.get('image_id') in ids]
+                if rows:
+                    tk.write_csv(out / names[name], rows)
+                    files.append(out / names[name])
     return files
 
 

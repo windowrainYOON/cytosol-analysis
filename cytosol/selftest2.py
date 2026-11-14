@@ -362,8 +362,427 @@ def data_display_step(out: Path):
     return f'{n0} rows, stale = 1 image, data list, 열 설명, hover, live box, overview'
 
 
+def _spots_plane(seed=0, n=24, amp=40.0, noise=4.0, size=(240, 320), sigma_px=1.6):
+    rng = np.random.default_rng(seed)
+    h, w = size
+    yy, xx = np.mgrid[:h, :w]
+    img = 100 + rng.normal(0, noise, size)
+    pts = []
+    while len(pts) < n:
+        y, x = int(rng.integers(15, h - 15)), int(rng.integers(15, w - 15))
+        if all((y - a) ** 2 + (x - b) ** 2 > 20 ** 2 for a, b in pts):
+            pts.append((y, x))
+    for k, (y, x) in enumerate(pts):
+        a = amp * (0.6 + 0.8 * k / n)
+        img += a * np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / (2 * sigma_px ** 2))
+    return img.astype(np.float32), pts
+
+
+def particle_criterion_step(out: Path):
+    """v0.65: 자동 = significance (k from the image size, noise alone gives
+    almost nothing), 점 모양 강조 kept, 입자 기준 잡기 (candidates, steps,
+    scope, project round trip), HT (RI) cell ROIs without nuclei, cell IDs
+    linked between frames."""
+    from dataclasses import replace
+
+    from .cellroi import link_cell_frames, segment_ht_cells
+    from .intensity import ParticleSettings, detect_particles, whole_image_cells
+    from .io import Image
+    from .lut import ImageItem
+    from .particle_detect import significance_k
+    from .roi_panel import RoiPanel
+
+    px = 0.1
+    img, pts = _spots_plane()
+    cells = whole_image_cells(img.shape, px)
+    s = ParticleSettings('CH', 0, 'image', 'auto')
+    p = detect_particles(cells, img, s, 16, px)
+    comp = p.components(cells)
+    hit = {int(comp[y, x]) for y, x in pts}
+    if 0 in hit or len(hit) != len(pts) or p.labels.max() > len(pts) + 1:
+        raise AssertionError(f'significance particles: {p.labels.max()} for {len(pts)} spots')
+    if not 3 < p.info['k'] < 6 or p.info['source'] != 'stat':
+        raise AssertionError(f'k {p.info}')
+    flat = np.random.default_rng(3).normal(100, 4, img.shape).astype(np.float32)
+    if detect_particles(cells, flat, s, 16, px).labels.max() > 2:
+        raise AssertionError('noise taken for particles')
+    if significance_k(4_000_000, px, 0.5, 0.4) <= significance_k(40_000, px, 0.5, 0.4):
+        raise AssertionError('k does not grow with the image area')
+    spot = detect_particles(cells, img, replace(s, method='spot'), 16, px)
+    if spot.labels is None or not spot.mask.any():
+        raise AssertionError('점 모양 강조 (Hessian) gone')
+    strict = detect_particles(cells, img, replace(s, crit_k=20.0), 16, px)
+    if not 0 < strict.labels.max() < p.labels.max() or strict.info['source'] != 'user':
+        raise AssertionError('user criterion k not used')
+    back = ParticleSettings.from_properties(replace(s, crit_k=5.5, crit_area=0.1, noise=1.0).properties())
+    if (back.crit_k, back.crit_area, back.noise) != (5.5, 0.1, 1.0):
+        raise AssertionError('criterion not kept in ROI properties')
+
+    # the calibration page on an image
+    app, win = _window()
+    win.show()
+    image = Image(img[None, None], ['CH'], {'Z': None, 'Y': px, 'X': px}, colors=[(0.2, 1, 0.3)],
+                  metadata={'image_id': 'SPOTS'})
+    item = ImageItem(path=out / 'spots.tif', image=image, label='spots')
+    item.reset_luts()
+    win._add_item(item)
+    win.file_list.setCurrentRow(0)
+    win.show_tab('particle_tab')
+    pp = win.particle_panel
+    pp.within.setCurrentIndex(pp.within.findData('image'))
+    pp.part_on.setChecked(True)
+    app.processEvents()
+    if not pp.calib_btn.isVisibleTo(pp) or '기본 기준' not in pp.crit_state.text():
+        raise AssertionError('입자 기준 row')
+    pp.start_calibration()
+    cal = pp.calib
+    if not cal.isVisible() or len(cal.shown) < 5 or not cal._scene or pp.measure.isVisible():
+        raise AssertionError('calibration page / canvas boxes')
+    snrs = [c['snr'] for c in cal.shown]
+    if snrs != sorted(snrs) or cal.next_btn.isEnabled():
+        raise AssertionError('brightness candidates not faint -> bright')
+    cal.choose(2)
+    cal.next()
+    areas = [c['area'] for c in cal.shown]
+    if cal.step != 1 or areas != sorted(areas) or min(c['snr'] for c in cal.shown) < snrs[2]:
+        raise AssertionError('size candidates')
+    cal.choose(0)
+    cal.next()
+    if cal.step != 2 or cal._scene or '→' not in cal.n_lab.text():
+        raise AssertionError('apply page')
+    cal.scope['image'].setChecked(True)
+    cal.next()
+    app.processEvents()
+    crit = pp.criteria.get('CH')
+    if cal.isVisible() or not pp.measure.isVisibleTo(pp) or crit is None or crit['scope'] != 'image' \
+            or abs(crit['k'] - snrs[2] * 0.98) > 1e-2:
+        raise AssertionError(f'criterion {crit}')
+    pp.refresh()
+    if item.particle_settings.crit_k != crit['k'] or item.particles.info.get('source') != 'user' \
+            or '사용자 기준' not in pp.crit_state.text() or pp.noise.isVisibleTo(pp):
+        raise AssertionError('criterion not applied to the image')
+    other = ImageItem(path=out / 'spots2.tif', image=image, label='spots2')
+    other.image = Image(img[None, None], ['CH'], {'Z': None, 'Y': px, 'X': px}, metadata={'image_id': 'OTHER'})
+    if pp.criterion_for(other, 'CH') is not None:
+        raise AssertionError('scope 이 이미지만 used on another image')
+    proj = out / 'criterion.cyproj'
+    win.write_project_to(proj)
+    pp.criteria = {}
+    win.open_project(proj, settings_only=True)
+    if win.particle_panel.criteria.get('CH', {}).get('k') != crit['k']:
+        raise AssertionError('criterion not kept in the project')
+    win.particle_panel.clear_criterion()
+    if win.particle_panel.criteria:
+        raise AssertionError('criterion reset')
+    _close(win)
+
+    # HT (RI): cells from RI alone, routed by the RI values, no nuclei
+    yy, xx = np.mgrid[:200, :300]
+    ri = np.full((200, 300), 1.337, np.float32) + np.random.default_rng(1).normal(0, 0.0005, (200, 300))
+    for cx, cy in ((60, 100), (150, 90), (240, 110)):
+        ri[(xx - cx) ** 2 + (yy - cy) ** 2 < 32 ** 2] += 0.02
+    ri = ri.astype(np.float32)
+    rois = segment_ht_cells(ri, 0.2)
+    if len(rois) != 3 or rois.nuclei is not None:
+        raise AssertionError(f'HT cells: {len(rois)}')
+    from .cellroi import RoiParams
+    via = RoiPanel._run_planes([ri], 0.2, {'bg': 0, 'nuc': None}, RoiParams(), False, 0, 0)
+    if len(via) != 3:
+        raise AssertionError('RI channel not routed to the HT detection')
+    man = RoiPanel._run_planes([ri], 0.2, {'bg': 0, 'nuc': None}, RoiParams(), True, 1.347, 0)
+    if len(man) != 3:
+        raise AssertionError('manual RI threshold')
+    # cell IDs between frames
+    a = rois.labels
+    b = np.roll(a, 3, axis=1)
+    b = np.where(b > 0, 4 - b, 0)          # same cells, numbered the other way round
+    linked = link_cell_frames([a, b])
+    for cx, cy in ((60, 100), (150, 90), (240, 110)):
+        if linked[0][cy, cx] != linked[1][cy, cx + 3]:
+            raise AssertionError('cell IDs not linked between frames')
+    return (f'{p.labels.max()} spots (k {p.info["k"]:.1f}σ), criterion {crit["k"]:.1f}σ, '
+            f'HT cells {len(rois)}, linked frames')
+
+
+def _moving_spots(T=12, n=14, size=(200, 260), seed=0):
+    """(T, C=2, Y, X) frames: n spots drifting 1.5 px a frame, channel B rising
+    over time; plus the true positions per frame."""
+    rng = np.random.default_rng(seed)
+    h, w = size
+    y0 = rng.uniform(25, h - 25, n)
+    x0 = rng.uniform(25, w - 60, n)
+    yy, xx = np.mgrid[:h, :w]
+    frames, truth = [], []
+    for t in range(T):
+        a = rng.normal(100, 3, size).astype(np.float32)
+        b = rng.normal(100, 3, size).astype(np.float32)
+        pos = []
+        for i in range(n):
+            y, x = y0[i] + 0.3 * t, x0[i] + 1.5 * t
+            g = np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / (2 * 1.6 ** 2))
+            a += 60 * g
+            b += (10 + 5 * t) * g
+            pos.append((y, x))
+        frames.append(np.stack([a, b])[:, None])
+        truth.append(pos)
+    return np.stack(frames), truth
+
+
+def tracking_step(out: Path):
+    """v0.66 입자 추적: detection on every frame with the 입자 ROI settings,
+    LAP linking (cell movement / pattern / velocity predictions), tracks of
+    the moving spots kept whole, ratio over time, track table, canvas
+    drawing, graph source + data list, export, batch step, project round
+    trip, ParticleTracker CSV loaded back."""
+    from . import batch
+    from . import tracking as tk
+    from .exporter import run as export_run
+    from .io import Image
+    from .lut import ImageItem
+
+    T, n = 12, 14
+    frames, truth = _moving_spots(T, n)
+    px = 0.155
+    image = Image(frames[0].copy(), ['A', 'B'], {'Z': None, 'Y': px, 'X': px}, colors=[(0, 1, 0), (1, 0, 1)],
+                  metadata={'image_id': 'TRACKS'}, times=[30.0 * t for t in range(T)],
+                  loader=lambda t: frames[t].copy())
+    item = ImageItem(path=out / 'tracks.tif', image=image, label='tracks')
+    item.reset_luts()
+    app, win = _window()
+    win.show()
+    win._add_item(item)
+    win.file_list.setCurrentRow(0)
+    win.show_tab('track_tab')
+    pp, tp = win.particle_panel, win.track_panel
+    pp.part_channel.setCurrentIndex(0)
+    pp.within.setCurrentIndex(pp.within.findData('image'))
+    tp.cell_mode.setCurrentIndex(tp.cell_mode.findData('none'))
+    tp.ratio_b.setCurrentIndex(tp.ratio_b.findData('B'))
+    tp.ratio_a.setCurrentIndex(tp.ratio_a.findData('A'))
+    app.processEvents()
+    st = tp.run_current()
+    if st is None or not st.points:
+        raise AssertionError('no tracks')
+    tracks = st.tracks()
+    whole = [v for v in tracks.values() if len(v) == T]
+    if len(whole) < n - 2:
+        raise AssertionError(f'{len(whole)} of {n} spots tracked over all {T} frames ({len(tracks)} tracks)')
+    # each whole track follows one true spot
+    for v in whole:
+        first = min(range(n), key=lambda i: (truth[0][i][0] - v[0]['y']) ** 2 + (truth[0][i][1] - v[0]['x']) ** 2)
+        for p in v:
+            ty, tx = truth[p['frame'] - 1][first]
+            if (ty - p['y']) ** 2 + (tx - p['x']) ** 2 > 4:
+                raise AssertionError('a track jumped to another spot')
+    if st.ratio != 'ratio_B_A':
+        raise AssertionError(f'ratio column {st.ratio}')
+    r0 = np.nanmean([v[0][st.ratio] for v in whole])
+    r1 = np.nanmean([v[-1][st.ratio] for v in whole])
+    if not r1 > 3 * r0:
+        raise AssertionError(f'ratio over time {r0:.2f} -> {r1:.2f}')
+    if tp.table.rowCount() < n - 2 or not tp._scene:
+        raise AssertionError('track table / canvas tails')
+    tp.table.selectRow(0)
+    app.processEvents()
+    if not tp.selected_points():
+        raise AssertionError('track selection')
+    # data list, graph source, badge
+    names = [e['name'] for e in win.data_entries() if e['key'] == 'track']
+    if '입자 추적 · 시점' not in names or '입자 추적 · 트랙' not in names:
+        raise AssertionError(f'data list {names}')
+    data = win.graph_sources()['track'][2]()
+    if data is None or data.spec.series[0].y != 'ratio_B_A' or len(data.tables) < 2:
+        raise AssertionError(f'track graph source {data and (data.spec.series[0].y, len(data.tables), data.tables[0].columns[:40])}')
+    win.live_box.refresh()
+    if not win.live_box.isVisible() or win.live_box.values().get('트랙') != len(tracks):
+        raise AssertionError(f'live box {win.live_box.values()}')
+    # export
+    res = export_run(win, [item], out / 'export', {'per_image': True, 'track_csv': True, 'track_rois': True,
+                                                   'track_all': True})
+    names = {Path(f).name for f in res.files}
+    need = {'tracks_tracks_points.csv', 'tracks_tracks_summary.csv', 'tracks_tracks.zip', 'tracks_points.csv'}
+    if not need <= names or res.errors:
+        raise AssertionError(f'export {sorted(names)} {res.errors}')
+    pts_csv = next(Path(f) for f in res.files if Path(f).name == 'tracks_tracks_points.csv')
+    # ParticleTracker-named CSV loads back onto the image
+    res2 = export_run(win, [item], out / 'export_pt', {'per_image': False, 'track_csv': True, 'track_pt': True})
+    pt_csv = next(Path(f) for f in res2.files if Path(f).name.endswith('_tracks_points.csv'))
+    if not tk.is_pt_points(pt_csv) or not tk.is_pt_points(pts_csv):
+        raise AssertionError('points CSV not recognised')
+    n_pts = len(st.points)
+    item.tracks = None
+    win.import_paths([pts_csv])
+    if item.tracks is None or len(item.tracks.points) != n_pts or len(item.tracks.tracks()) != len(tracks):
+        raise AssertionError('own points CSV not loaded back')
+    item.tracks = None
+    win.import_paths([pt_csv])
+    if item.tracks is None or len(item.tracks.tracks()) != len(tracks) or item.tracks.source != 'ParticleTracker':
+        raise AssertionError('ParticleTracker CSV not loaded')
+    # project round trip
+    from .project import item_files, restore_item_files
+    item.tracks = st
+    files = {}
+    names = item_files(item, 0, None, files, out)
+    item.tracks = None
+    restore_item_files(item, names, files, out, [])
+    back = item.tracks
+    if back is None or len(back.points) != n_pts or not back.outlines:
+        raise AssertionError('tracks not kept in the project')
+    # batch step
+    win.batch.steps = ['track']
+    win.batch.groups = ['']
+    errs = batch.run(win, win.batch, win.items)
+    if errs or not str(win.batch.results.get('tracks', {}).get('track', '')).startswith('트랙'):
+        raise AssertionError(f'batch {errs} {win.batch.results}')
+    win.batch = batch.BatchState()
+    _close(win)
+    return (f'{len(tracks)} tracks, {len(whole)}/{n} whole over {T} frames, ratio {r0:.2f} → {r1:.2f}, '
+            f'{len(res.files)} files, PT CSV loaded, project, batch')
+
+
+def _mito_field(seed=7, n=320):
+    """Mito (tubules), POI (on mito in cell 1, faint in cell 2), nuclei: three
+    channels and the cell labels."""
+    from scipy import ndimage as ndi
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[:n, :n]
+    centres = [(90, 90), (90, 230), (230, 160)]
+    lab = np.zeros((n, n), np.int32)
+    for i, (cy, cx) in enumerate(centres, 1):
+        lab[(yy - cy) ** 2 + (xx - cx) ** 2 < 62 ** 2] = i
+    nucm = np.zeros((n, n), bool)
+    for cy, cx in centres:
+        nucm |= ((yy - cy) / 20) ** 2 + ((xx - cx) / 16) ** 2 < 1
+    red = np.zeros((n, n), np.float32)
+    for i, (cy, cx) in enumerate(centres, 1):
+        m = (lab == i) & ~nucm
+        ys, xs = np.nonzero(ndi.binary_erosion(m, iterations=3))
+        for _ in range(60):
+            k = rng.integers(len(ys))
+            y, x, a = float(ys[k]), float(xs[k]), rng.uniform(0, 2 * np.pi)
+            for _ in range(25):
+                iy, ix = int(round(y)), int(round(x))
+                if not (0 <= iy < n and 0 <= ix < n) or not m[iy, ix]:
+                    break
+                red[iy, ix] = 1
+                a += rng.normal(0, 0.3)
+                y += 1.4 * np.sin(a)
+                x += 1.4 * np.cos(a)
+    red = ndi.gaussian_filter(red, 1.0)
+    red = red / red.max() * 200
+    green = np.where(lab == 1, red * 0.6 + 8, 0) + np.where(lab == 2, 1.0, 0)
+    for cy, cx in ((70, 60), (110, 120), (60, 100)):
+        green += 120 * np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / 8.0)
+    cells = lab > 0
+    red += cells * 7 + rng.normal(0, 1.5, red.shape)
+    green += cells * 2 + rng.normal(0, 1.0, green.shape)
+    nuc = np.where(nucm, 160, 0) + cells * 4 + rng.normal(0, 1.5, red.shape)
+    planes = np.stack([np.clip(c, 0, 255) for c in (red, green, nuc)]).astype(np.float32)
+    return planes, lab, nucm
+
+
+def mito_step(out: Path):
+    """v0.67 mitoROI: Mito Analyzer's measurements on the app's cell ROIs
+    (MiNA skeleton, mito objects, POI on / off mito, puncta, green+ / −),
+    canvas layers, tables + column sets for the graph window (상관 행렬),
+    export with Mito Analyzer's file names, results loaded back, project,
+    batch."""
+    from . import batch
+    from . import mito as M
+    from .cellroi import CellRois
+    from .exporter import run as export_run
+    from .io import Image
+    from .lut import ImageItem
+    from .project import item_files, restore_item_files
+
+    planes, lab, nucm = _mito_field()
+    px = 0.099
+    image = Image(planes[:, None].copy(), ['Mito', 'POI', 'DAPI'], {'Z': None, 'Y': px, 'X': px},
+                  colors=[(1, 0, 1), (0, 1, 0), (0, 0, 1)], metadata={'image_id': 'MITO-1'})
+    item = ImageItem(path=out / 'mito_cells.tif', image=image, label='mito_cells')
+    item.reset_luts()
+    item.cells = CellRois(lab, np.where(nucm, lab, 0).astype(np.int32), px)
+    app, win = _window()
+    win.show()
+    win._add_item(item)
+    win.file_list.setCurrentRow(0)
+    win.show_tab('mito_tab')
+    mp = win.mito_panel
+    app.processEvents()
+    if mp.mito_ch.currentData() != 'Mito' or mp.poi_ch.currentData() != 'POI':
+        raise AssertionError(f'channels {mp.mito_ch.currentData()} / {mp.poi_ch.currentData()}')
+    r = mp.run_current()
+    if r is None or len(r.cells) != 3:
+        raise AssertionError(f'cells {r and len(r.cells)}')
+    by = {c['cell']: c for c in r.cells}
+    if not all(c['n_branches'] > 10 and 0 < c['footprint_fraction'] < 0.6 for c in r.cells):
+        raise AssertionError('MiNA values')
+    if by['cell01']['green_status'] != 'positive' or by['cell02']['green_status'] != 'negative':
+        raise AssertionError(f'green+ / −: {[c["green_status"] for c in r.cells]}')
+    if not by['cell01']['green_enrichment_on_mito'] > 2 or not r.puncta or len(r.mito) < 30:
+        raise AssertionError('POI on mito / puncta / mito objects')
+    if not mp._scene or '미토 조각' not in mp.mito_state.text() or mp.table.rowCount() != 3:
+        raise AssertionError('canvas layers / state / table')
+    # MiNA classic and a manual threshold
+    mp.method_btns['otsu'].setChecked(True)
+    r2 = mp.run(item)
+    if r2.used.get('mito_threshold_range') is None or not r2.cells:
+        raise AssertionError('MiNA classic')
+    mp.method_btns['split'].setChecked(True)
+    # data list + graph source with column sets
+    names = [e['name'] for e in win.data_entries() if e['key'] == 'mito']
+    if names[:3] != ['mitoROI · 세포', 'mitoROI · 미토 조각', 'mitoROI · 점']:
+        raise AssertionError(f'data list {names}')
+    data = win.graph_sources()['mito'][2]()
+    t = data.tables[0]
+    if data.spec.chart != 'corr' or len(t.column_sets.get('미토 형태', [])) < 10 \
+            or t.labels.get('footprint_fraction') != 'Mito footprint fraction':
+        raise AssertionError('graph source')
+    d = mp.open_graph('corr')
+    if d is None or win.graph_win.spec.chart != 'corr':
+        raise AssertionError('상관 히트맵 button')
+    # export (Mito Analyzer names) and loading back
+    res = export_run(win, [item], out / 'mito_export', {'per_image': False, 'mito_csv': True, 'mito_rois': True,
+                                                        'mito_all': True})
+    got = {Path(f).name for f in res.files}
+    need = {'mito_cells_per_cell.csv', 'mito_cells_per_mito.csv', 'mito_cells_green_puncta.csv',
+            'mito_cells_correlations.csv', 'mito_cells_mito_RoiSet.zip', 'mito_per_cell.csv'}
+    if not need <= got or res.errors:
+        raise AssertionError(f'export {sorted(got)} {res.errors}')
+    keep = r
+    item.mito = None
+    win.import_paths([out / 'mito_export' / 'mito_cells_per_cell.csv'])
+    if item.mito is None or item.mito.source != 'Mito Analyzer' or len(item.mito.cells) != 3 \
+            or len(item.mito.mito) != len(keep.mito):
+        raise AssertionError('Mito Analyzer CSV not loaded')
+    if abs(item.mito.cells[0]['footprint_fraction'] - keep.cells[0]['footprint_fraction']) > 1e-3:
+        raise AssertionError('loaded values')
+    # project
+    item.mito = keep
+    files = {}
+    names = item_files(item, 0, None, files, out)
+    item.mito = None
+    restore_item_files(item, names, files, out, [])
+    if item.mito is None or len(item.mito.mito) != len(keep.mito):
+        raise AssertionError('mitoROI not kept in the project')
+    # batch
+    win.batch.steps = ['mito']
+    win.batch.groups = ['']
+    errs = batch.run(win, win.batch, win.items)
+    if errs or win.batch.results.get('mito_cells', {}).get('mito') != '세포 3':
+        raise AssertionError(f'batch {errs} {win.batch.results}')
+    win.batch = batch.BatchState()
+    _close(win)
+    c1 = by['cell01']
+    return (f'3 cells, {len(r.mito)} mito objects, {len(r.puncta)} puncta, cell01 green+ '
+            f'(enrichment {c1["green_enrichment_on_mito"]:.1f}), {len(res.files)} files, loaded back, batch')
+
+
 STEPS = [
     ('image stacking', stacking_step),
     ('graph correlation', graph_corr_step),
     ('data display', data_display_step),
+    ('particle criterion + HT cells', particle_criterion_step),
+    ('particle tracking', tracking_step),
+    ('mitoROI', mito_step),
 ]

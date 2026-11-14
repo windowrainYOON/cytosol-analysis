@@ -348,15 +348,20 @@ def run(out_dir) -> int:
             # 자동 / 수동 modes: a switch, only the chosen inputs shown
             win.show_tab('particle_tab')
             pp = win.particle_panel
-            pp.method_combo.setCurrentIndex(1)
+            pp.method_combo.setCurrentIndex(2)
             app.processEvents()
             if not pp.thr_manual.isChecked() or pp.spot_k.isVisibleTo(pp) \
-                    or not pp.thr_spin.isVisibleTo(pp):
+                    or not pp.thr_spin.isVisibleTo(pp) or pp.noise.isVisibleTo(pp):
                 raise AssertionError('particle 수동: only the threshold row should show')
             pp.method_combo.setCurrentIndex(0)
             app.processEvents()
-            if pp.thr_spin.isVisibleTo(pp) or not pp.spot_k.isVisibleTo(pp):
-                raise AssertionError('particle 자동: only the automatic rows should show')
+            if pp.thr_spin.isVisibleTo(pp) or pp.spot_k.isVisibleTo(pp) \
+                    or not pp.noise.isVisibleTo(pp) or not pp.calib_btn.isVisibleTo(pp):
+                raise AssertionError('particle 자동 (유의성): noise + 기준 rows only')
+            pp.method_combo.setCurrentIndex(1)
+            app.processEvents()
+            if pp.thr_spin.isVisibleTo(pp) or not pp.spot_k.isVisibleTo(pp) or pp.noise.isVisibleTo(pp):
+                raise AssertionError('particle 점 모양 강조: only the spot rows should show')
             # particle 검출 자동화: the diameter only behind 세부 설정
             if pp.spot_size.isVisibleTo(pp) or not pp.details_btn.isVisibleTo(pp):
                 raise AssertionError('particle 검출 자동화: diameter shown / no 세부 설정')
@@ -368,6 +373,7 @@ def run(out_dir) -> int:
                 raise AssertionError('particle diameter set by hand: no reset glyph')
             pp.size_reset.click()
             pp.set_details_open(False)
+            pp.method_combo.setCurrentIndex(0)
             rpn = win.roi_panel
             rpn.mode_combo.setCurrentIndex(1)
             if not rpn.manual_mode():
@@ -778,7 +784,7 @@ def run(out_dir) -> int:
             spots += [(cx - 30, cy, 400), (cx - 30, cy + 4, 400), (cx + 30, cy, 60)]
         for x, y, a in spots:
             img += a * np.exp(-((xx - x) ** 2 + (yy - y) ** 2) / (2 * 1.5 ** 2))
-        sa = ParticleSettings('GFP', 1, 'cyto', 'auto', min_px=3, k=4.0)
+        sa = ParticleSettings('GFP', 1, 'cyto', 'spot', min_px=3, k=4.0)
         pa = detect_particles(cells, img, sa, 16, item.pixel_um)
         ca = pa.counts(cells)
         if any(ca.get(l) != 3 for l in cells.ids()):
@@ -1248,7 +1254,7 @@ def run(out_dir) -> int:
         menus = [a.text() for a in win.menuBar().actions()]
         tools = [a.text() for a in win.tool_menu.actions() if a.menu()]
         want = ['LUT', '마커', '세포질 ROI', '입자 ROI', '강도 측정', '등거리 띠', 'Coloc 2',
-                '라인 프로파일', 'FRAP 측정', '스택']
+                '라인 프로파일', 'FRAP 측정', '입자 추적', 'mitoROI', '스택']
         if menus != ['파일', 'Tool', 'View', '그래프', 'Figure'] or tools != want \
                 or 'marker_tab' in win.tab_pages:
             raise AssertionError(f'menus: {menus} / Tool: {tools}')
@@ -1838,6 +1844,10 @@ def run(out_dir) -> int:
         pm.view.setCurrentIndex(0)
         # particles over the whole image of an image without cell ROIs
         bare = _synthetic_item()
+        gy, gx = np.mgrid[0:256, 0:256]
+        for cy, cx in ((60, 60), (80, 190), (170, 110), (190, 130)):  # a few particles in the GFP cells
+            bare.image.data[1, 0] += (300 * np.exp(-((gy - cy) ** 2 + (gx - cx) ** 2) / 4.5)).astype(np.uint16)
+        bare._planes = None  # the spots added after the planes were cached
         win._add_item(bare)
         win.file_list.setCurrentRow(len(win.items) - 1)
         win.show_tab('particle_tab')
@@ -1849,7 +1859,7 @@ def run(out_dir) -> int:
         pp.refresh()
         pp.measure.refresh(force=True)
         if bare.particles is None or not bare.particles.mask.any():
-            raise AssertionError('no particles over the whole image')
+            raise AssertionError(f'no particles over the whole image {pp.settings()} {bare.particles and bare.particles.info}')
         if len(pp.measure.rows) != 2 or pp.measure.rows[0]['roi'] != 'image':
             raise AssertionError(f'whole-image particle rows: {pp.measure.rows}')
         res = pp.measure.measure_items(win.items)

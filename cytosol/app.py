@@ -1742,6 +1742,12 @@ class MainWindow(QMainWindow):
         # 핵 → 세포막 등거리 띠: own tab (owner request 2026-11-09; v0.57–0.59 in 세포질 ROI)
         from .bands_panel import BandsPanel
         self.bands_panel = BandsPanel(self)
+        # 입자 추적 (v0.66, particle-tracking proposal)
+        from .track_panel import TrackPanel
+        self.track_panel = TrackPanel(self)
+        # mitoROI (v0.67, Mito Analyzer measurements)
+        from .mito_panel import MitoPanel
+        self.mito_panel = MitoPanel(self)
         self.live_box.adopt_plots()  # FRAP curve, profile, Coloc 2 plots under the canvas (v0.64)
         self.info_panel = InfoPanel()
         # inspector: capsule chips switch the pages (hig_widgets.ChipTabs)
@@ -1763,6 +1769,8 @@ class MainWindow(QMainWindow):
             'coloc_tab': (scrolled(self.coloc_panel), 'Coloc 2'),
             'profile_tab': (self.profile_panel, '라인 프로파일'),
             'frap_tab': (scrolled(self.frap_panel), 'FRAP 측정'),
+            'track_tab': (scrolled(self.track_panel), '입자 추적'),
+            'mito_tab': (scrolled(self.mito_panel), 'mitoROI'),
             'stack_tab': (scrolled(self.stack_panel), '스택'),
         }
         self.canvas.lineDrawn.connect(self._line_drawn)
@@ -1930,6 +1938,19 @@ class MainWindow(QMainWindow):
         tab_action(sub, 'frap_tab')
         load_action(sub, 'FRAP ROI 불러오기…', 'frap')
 
+        sub = tools.addMenu('입자 추적')
+        tab_action(sub, 'track_tab')
+        pt_act = sub.addAction('트랙 불러오기 (ParticleTracker)…')
+        pt_act.setToolTip('ParticleTracker 결과 폴더의 tracks_points CSV를 현재 이미지에 불러옵니다.')
+        pt_act.triggered.connect(lambda: self.track_panel.load_dialog())
+
+        sub = tools.addMenu('mitoROI')
+        tab_action(sub, 'mito_tab')
+        ma_act = sub.addAction('Mito Analyzer 결과 불러오기…')
+        ma_act.setToolTip('Mito Analyzer 결과 폴더의 <이름>_per_cell.csv를 이름이 같은 이미지(없으면 현재 이미지)에 '
+                          '불러옵니다.')
+        ma_act.triggered.connect(lambda: self.mito_panel.load_dialog())
+
         sub = tools.addMenu('스택')
         tab_action(sub, 'stack_tab')
         for sub in tools.findChildren(QMenu):  # no trailing separator after the tab item
@@ -1997,6 +2018,10 @@ class MainWindow(QMainWindow):
                         '라인 프로파일 탭에서 이미지 위에 선을 먼저 그리세요.'),
             'frap': ('FRAP', 'frap_tab', lambda: S.frap(self.frap_panel),
                      'FRAP 측정 탭에서 시간축이 있는 이미지를 먼저 측정하세요.'),
+            'track': ('입자 추적', 'track_tab', lambda: S.track(self.track_panel),
+                      '입자 추적 탭에서 시간축이 있는 이미지를 먼저 추적하세요.'),
+            'mito': ('mitoROI', 'mito_tab', lambda: S.mito(self.mito_panel),
+                     'mitoROI 탭에서 먼저 분석하세요.'),
         }
 
     def data_entries(self) -> list[dict]:
@@ -2019,6 +2044,14 @@ class MainWindow(QMainWindow):
         if n:
             out.append({'feature': 'Coloc 2', 'name': 'Coloc 2 · ROI', 'unit': 'ROI', 'rows': n, 'state': 'ok',
                         'key': 'coloc', 'table': 'Coloc 2 결과'})
+        for name, unit, rows in self.mito_panel.data_tables():
+            if rows:
+                out.append({'feature': 'mitoROI', 'name': name, 'unit': unit, 'rows': len(rows), 'state': 'ok',
+                            'key': 'mito', 'table': name})
+        for name, unit, rows in self.track_panel.data_tables():
+            if rows:
+                out.append({'feature': '입자 추적', 'name': name, 'unit': unit, 'rows': len(rows), 'state': 'ok',
+                            'key': 'track', 'table': name})
         for feat, key, unit in (('라인 프로파일', 'profile', '선 위 점'), ('FRAP', 'frap', '시점')):
             try:
                 data = self.graph_sources()[key][2]()
@@ -2048,6 +2081,14 @@ class MainWindow(QMainWindow):
         n = sum(len(it.coloc or []) for it in self.items)
         if n:
             have['coloc_tab'] = f'측정값 있음 — Coloc 2 · ROI {n}행'
+        parts = [f'{name.split(" · ", 1)[-1]} {len(rows):,}행' for name, _u, rows in self.track_panel.data_tables()
+                 if rows] if hasattr(self, 'track_panel') else []
+        if parts:
+            have['track_tab'] = '측정값 있음 — 입자 추적 · ' + ', '.join(parts)
+        parts = [f'{name.split(" · ", 1)[-1]} {len(rows):,}행' for name, _u, rows in self.mito_panel.data_tables()
+                 if rows] if hasattr(self, 'mito_panel') else []
+        if parts:
+            have['mito_tab'] = '측정값 있음 — mitoROI · ' + ', '.join(parts)
         rt = self.right_tabs
         for name, (page, _title) in self.tab_pages.items():
             i = rt.indexOf(page)
@@ -2351,6 +2392,11 @@ class MainWindow(QMainWindow):
         for p in batches:
             self.load_batch_settings(p)
         paths = [p for p in paths if p not in batches]
+        from .tracking import is_pt_points
+        from .mito import is_per_cell_csv
+        tracks = [p for p in paths if p.suffix.lower() == '.csv' and is_pt_points(p)]
+        mito_csv = [p for p in paths if p.suffix.lower() == '.csv' and p not in tracks and is_per_cell_csv(p)]
+        paths = [p for p in paths if p not in tracks and p not in mito_csv]
         folders = [p for p in paths if p.is_dir()]
         presets = [p for p in paths if p.suffix.lower() == '.json' and self._is_preset(p)]
         markers = [p for p in paths if p.suffix.lower() == '.json' and self._is_marker_file(p)]
@@ -2363,6 +2409,20 @@ class MainWindow(QMainWindow):
             self.add_files(files, pair=True, explicit=True)
         for p in presets:
             self._load_preset_file(p)
+        for p in mito_csv:  # Mito Analyzer _per_cell.csv (v0.67)
+            try:
+                n = self.mito_panel.load_results(p, self.current)
+                self.statusBar().showMessage(f'Mito Analyzer 결과: 세포 {n}개 ({p.name})')
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                QMessageBox.warning(self, '불러오기 실패', f'{p.name}: {exc}')
+        for p in tracks:  # ParticleTracker / 입자 추적 points CSV (v0.66)
+            try:
+                n = self.track_panel.load_pt(p, self.current)
+                self.statusBar().showMessage(f'트랙 불러오기: {n}개 점 ({p.name})')
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                QMessageBox.warning(self, '트랙 불러오기 실패', f'{p.name}: {exc}')
         self.file_list.rebuild(self.items)  # crop rows of every image
         self._refresh_crop_list(select=0)
         if self.current is not None:
@@ -2429,7 +2489,7 @@ class MainWindow(QMainWindow):
             'intensity': self.intensity_panel, 'intensity_measure': self.intensity_panel.measure,
             'intensity_bands': self.bands_panel.bands_measure, 'bands': self.bands_panel,
             'coloc': self.coloc_panel, 'profile': self.profile_panel, 'markers': self.markers,
-            'frap': self.frap_panel,
+            'frap': self.frap_panel, 'track': self.track_panel, 'mito': self.mito_panel,
             'stack': self.stack_panel,
         }
 
@@ -2519,6 +2579,7 @@ class MainWindow(QMainWindow):
             data['graphs'] = dict(self.graph_specs) | (self.graph_win.states() if self.graph_win else {})
             data['log'] = self.worklog.entries
             data['batch'] = self.batch.to_dict()
+            data['particle_criterion'] = dict(self.particle_panel.criteria)
             write_project(path, data, files)
 
     def new_project(self):
@@ -2550,6 +2611,7 @@ class MainWindow(QMainWindow):
             box.rows = []
             box.set_channels_off(())
             box._fill_table()
+        self.particle_panel.criteria = {}
         self.batch = BatchState()
         if self.batch_win is not None:
             self.batch_win.close()
@@ -2577,6 +2639,8 @@ class MainWindow(QMainWindow):
                 self.hide_tab(name)
         b = BatchState.from_dict(data.get('batch'))
         self.batch.steps, self.batch.groups, self.batch.redo = b.steps, b.groups, b.redo
+        self.particle_panel.criteria = {k: dict(v) for k, v in (data.get('particle_criterion') or {}).items()
+                                        if isinstance(v, dict) and 'k' in v}
         # graph editor settings: used when that graph window opens (open ones take them as style)
         graphs = data.get('graphs') or {}
         if isinstance(graphs, dict):
@@ -3344,6 +3408,8 @@ class MainWindow(QMainWindow):
             self.profile_panel.bind(None)
             self.coloc_panel.bind(None)
             self.frap_panel.bind(None)
+            self.track_panel.bind(None)
+            self.mito_panel.bind(None)
             self.particle_panel.bind(None)
             self.intensity_panel.bind(None)
             self.info_panel.bind(None)
@@ -3390,6 +3456,8 @@ class MainWindow(QMainWindow):
         self.profile_panel.bind(it)
         self.coloc_panel.bind(it)
         self.frap_panel.bind(it)
+        self.track_panel.bind(it)
+        self.mito_panel.bind(it)
         self.particle_panel.bind(it)
         self.intensity_panel.bind(it)
         self.info_panel.bind(it)
@@ -3877,6 +3945,8 @@ class MainWindow(QMainWindow):
         self.roi_panel.draw_overlay(hidden=only)
         self._draw_profile_line()
         self.draw_frap()
+        self.track_panel.draw()
+        self.mito_panel.draw()
         if not light:
             self.profile_panel.schedule()
 

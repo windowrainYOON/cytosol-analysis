@@ -107,6 +107,22 @@ image (nucleus + background channel), 0.8 – 1.1 s with size fitting on, and
 2 – 4 s for a 1058 × 1058 TCF fluorescence MIP (4-core cloud machine; a Mac
 is usually faster).
 
+
+### Cells from the HT (RI) channel (v0.65)
+
+When the **배경 신호** (background signal) channel is a Tomocube HT channel
+(refractive index, 1.33 – 1.45), automatic detection finds cells from **RI
+alone**, without a nucleus stain: small high-RI particles (lipid droplets,
+vesicles) are removed by an opening (1 µm) and the result smoothed; cells
+are the area above **medium RI + 4σ** (from the medium values below Otsu:
+median and MAD); thin protrusions / bridges are cut (opening 1.5 µm), and
+cells are split by a watershed from **every cell centre** (the place farthest
+from the border) that stands 3 µm above the saddle to its neighbour. There
+are no nucleus ROIs; the cytosol is the whole cell. Size ranges, frame
+handling and the editing tools (cut C, merge M) work as before. The manual
+threshold mode is **RI ≥ threshold = cell**. On a real TCF HT MIP (1058 ×
+1058) it separated 7 cells.
+
 ## 3. 확인 · 수정 (Check and edit)
 
 All editing tools are icon buttons; hover one to see its name and shortcut.

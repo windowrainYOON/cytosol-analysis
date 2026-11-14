@@ -97,6 +97,26 @@ KINDS: dict = {
             ('frap_rois', 'FRAP ROI (.zip)', '', True),
         ]),
     ]),
+    'track': ('입자 추적', [
+        ('이미지마다', [
+            ('track_csv', '트랙 시점 CSV + 트랙 요약 CSV', '<이름>_tracks_points.csv, <이름>_tracks_summary.csv', True),
+            ('track_rois', '트랙 ROI (.zip: 프레임마다 입자 + 트랙 경로)', '', True),
+            ('track_pt', 'ParticleTracker 열 이름으로 (x_fl, y_fl, roi_label, ratio_BA …)', '', False),
+        ]),
+        ('모든 이미지', [
+            ('track_all', 'tracks_points.csv · tracks_summary.csv · tracks_cells.csv', '', True),
+        ]),
+    ]),
+    'mito': ('mitoROI', [
+        ('이미지마다 (Mito Analyzer 파일 이름)', [
+            ('mito_csv', '세포 · 미토 조각 · 점 · 상관 CSV', '<이름>_per_cell.csv, _per_mito.csv, _green_puncta.csv, '
+             '_correlations.csv', True),
+            ('mito_rois', '미토 조각 ROI (_mito_RoiSet.zip)', '', True),
+        ]),
+        ('모든 이미지', [
+            ('mito_all', 'mito_per_cell.csv · mito_per_mito.csv · mito_green_puncta.csv', '', True),
+        ]),
+    ]),
     'stack': ('스택 투영', [
         ('현재 이미지의 투영', [
             ('projection', '현재 투영 (스택 탭 설정)', '', True),

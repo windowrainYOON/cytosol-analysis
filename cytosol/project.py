@@ -451,6 +451,18 @@ def item_files(it, n: int, panel_particles, files: dict, tmpdir: Path) -> dict:
         save_bleach_rois(f, it._bleach, it.id_properties())
         files[pre + 'bleach_rois.zip'] = f.read_bytes()
         names['bleach'] = pre + 'bleach_rois.zip'
+    if getattr(it, 'tracks', None) is not None and it.tracks.points:
+        try:
+            files[pre + 'tracks.pkl'] = pickle.dumps(it.tracks)
+            names['tracks'] = pre + 'tracks.pkl'
+        except Exception:
+            pass
+    if getattr(it, 'mito', None) is not None:
+        try:
+            files[pre + 'mito.pkl'] = pickle.dumps(it.mito)
+            names['mito'] = pre + 'mito.pkl'
+        except Exception:
+            pass
     if it.coloc:
         try:
             files[pre + 'coloc.pkl'] = pickle.dumps(it.coloc)
@@ -486,6 +498,16 @@ def restore_item_files(it, names: dict, files: dict, tmpdir: Path, notes: list):
             it.bleach_rois = load_bleach_rois(f)
         except Exception as exc:
             notes.append(f'{it.label}: bleach ROI 복원 실패 ({exc})')
+    if names.get('tracks') in files:
+        try:
+            it.tracks = pickle.loads(files[names['tracks']])
+        except Exception as exc:
+            notes.append(f'{it.label}: 입자 추적 결과 복원 실패 ({exc})')
+    if names.get('mito') in files:
+        try:
+            it.mito = pickle.loads(files[names['mito']])
+        except Exception as exc:
+            notes.append(f'{it.label}: mitoROI 결과 복원 실패 ({exc})')
     if names.get('coloc') in files:
         try:
             it.coloc = pickle.loads(files[names['coloc']])

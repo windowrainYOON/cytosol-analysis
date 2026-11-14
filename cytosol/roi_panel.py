@@ -46,7 +46,9 @@ from .cellroi import (
     ThresholdPreview,
     image_size_range,
     merged_preview,
+    is_ri,
     segment_cells,
+    segment_ht_cells,
     threshold_cells,
 )
 from .imageid import roi_id
@@ -1005,6 +1007,8 @@ class RoiPanel(QWidget):
         if manual:
             return threshold_cells(bg, nuc, px_um, man_cell,
                                    man_nuc if nuc is not None else None, p)
+        if is_ri(bg):  # HT (RI) channel: cells from RI alone, no nuclei (v0.65)
+            return segment_ht_cells(bg, px_um, p)
         return segment_cells(bg, nuc, px_um, p)
 
     def _run(self, item: ImageItem, roles: dict, p: RoiParams) -> CellRois:

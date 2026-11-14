@@ -907,6 +907,101 @@ def segment_cells(bg: np.ndarray, nuc: np.ndarray | None, px_um: float | None,
     return rois
 
 
+def is_ri(plane) -> bool:
+    """A Tomocube HT plane: refractive index values (about 1.33 – 1.45)."""
+    if not np.issubdtype(np.asarray(plane).dtype, np.floating):
+        return False
+    v = np.asarray(plane)[::8, ::8]
+    med, hi = float(np.median(v)), float(np.percentile(v, 99.9))
+    return 1.2 < med < 1.7 and hi < 2.0
+
+
+def segment_ht_cells(ri: np.ndarray, px_um: float | None, p: RoiParams | None = None,
+                     open_um=1.0, smooth_um=0.6, bridge_um=1.5, split_um=3.0) -> 'CellRois':
+    """Cell ROIs from the HT (RI) channel alone (v0.65; no nucleus stain).
+
+    Small high-RI particles (lipid droplets, vesicles) are removed by an
+    opening and the result smoothed; cell area = medium RI + 4 σ (medium =
+    the values below Otsu, σ from their MAD); thin protrusions / bridges are
+    cut by an opening of ``bridge_um``; cells are split by a watershed from
+    every cell centre (the place farthest from the border) whose distance
+    stands ``split_um`` above the saddle to its neighbour. No nuclei: the
+    cytosol is the whole cell."""
+    p = p or RoiParams()
+    px = px_um or 0.1
+    H, W = ri.shape
+    k = max(1, int(round(0.3 / px)))          # work at about 0.3 µm per pixel
+    a = ri.astype(np.float32)
+    if k > 1:
+        h, w = (H // k) * k, (W // k) * k
+        a = a[:h, :w].reshape(h // k, k, w // k, k).mean((1, 3))
+    wpx = px * k
+    body = ndi.gaussian_filter(morphology.opening(a, morphology.disk(max(1, round(open_um / wpx)))),
+                               smooth_um / wpx)
+    otsu = float(filters.threshold_otsu(body))
+    bgv = body[body < otsu]
+    med = float(np.median(bgv)) if bgv.size else float(np.median(body))
+    low = med + 4 * 1.4826 * float(np.median(np.abs(bgv - med))) if bgv.size else otsu
+    if p.cell_threshold:
+        low = float(p.cell_threshold)
+    m = body > low
+    m = morphology.remove_small_objects(m, max(1, int(min(p.min_cell_um2, 60.0) / wpx ** 2)))
+    m = ndi.binary_fill_holes(morphology.closing(m, morphology.disk(max(1, round(0.6 / wpx)))))
+    m = ndi.binary_opening(m, morphology.disk(max(1, round(bridge_um / wpx))))
+    dist = ndi.gaussian_filter(ndi.distance_transform_edt(m), 2 / wpx)
+    seeds = measure.label(morphology.h_maxima(dist, split_um / wpx) & m)
+    lab = segmentation.watershed(-dist, seeds, mask=m).astype(np.int32)
+    if k > 1:
+        lab = np.kron(lab, np.ones((k, k), np.int32))
+        out = np.zeros((H, W), np.int32)
+        out[:lab.shape[0], :lab.shape[1]] = lab
+        if lab.shape[0] < H:
+            out[lab.shape[0]:, :lab.shape[1]] = lab[-1:]
+        if lab.shape[1] < W:
+            out[:, lab.shape[1]:] = out[:, lab.shape[1] - 1:lab.shape[1]]
+        lab = _smooth_labels(out, max(1, k // 2 + 1))
+    lo, hi = p.min_cell_um2 / px ** 2, p.max_cell_um2 / px ** 2
+    drop = [r.label for r in measure.regionprops(lab) if r.area < lo or (hi and r.area > hi)]
+    if drop:
+        lab[np.isin(lab, drop)] = 0
+    lab = segmentation.relabel_sequential(lab)[0].astype(np.int32)
+    rois = CellRois(lab, None, px_um)
+    rois.cell_threshold = float(low)
+    rois.ht = True
+    rois.apply_edge_mode(p.edge_mode, p.edge_margin_um, p.min_cell_um2)
+    return rois
+
+
+def link_cell_frames(labs, overlap: float = 0.3) -> list:
+    """Cell labels detected frame by frame, renumbered so that one cell keeps
+    its ID: a cell that overlaps the previous frame's cell by at least
+    ``overlap`` of its area takes that cell's ID (the most overlapping one),
+    others get new IDs (ParticleTracker cells.segment_cells)."""
+    out, nxt, prev = [], 1, None
+    for lab in labs:
+        lab = np.asarray(lab)
+        cur = np.zeros(lab.shape, np.int32)
+        used = set()
+        for r in measure.regionprops(lab):
+            m = lab[r.slice] == r.label
+            if prev is not None:
+                ov = prev[r.slice][m]
+                ov = ov[ov > 0]
+                if ov.size > overlap * r.area:
+                    v, cn = np.unique(ov, return_counts=True)
+                    best = int(v[cn.argmax()])
+                    if best not in used:
+                        cur[r.slice][m] = best
+                        used.add(best)
+                        nxt = max(nxt, best + 1)
+                        continue
+            cur[r.slice][m] = nxt
+            nxt += 1
+        out.append(cur)
+        prev = cur
+    return out
+
+
 def size_range(areas, fence=1.5) -> tuple[float, float] | None:
     """(smallest, largest) of the areas once outliers are set aside: Tukey
     fences on log area, so debris and clumps of touching cells do not set the

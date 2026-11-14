@@ -251,12 +251,15 @@ class ParticleSettings:
     channel: str            # channel name (matched by name on other images)
     index: int = 0          # channel index when no channel has that name
     within: str = 'cyto'    # 'cyto', 'cell' or 'image' (whole image, no cell ROIs needed)
-    method: str = 'auto'    # 'auto' (spot detection), 'manual' or 'otsu' (v0.13)
+    method: str = 'auto'    # 'auto' (significance, v0.65), 'spot' (Hessian spots), 'manual' or 'otsu'
     manual: float = 0.0     # threshold when method == 'manual' (raw value)
     min_px: int = 1         # smallest particle kept (pixels)
     k: float = 3.0          # auto: spot centres above median + k × MAD
     size_um: float = 0.4    # auto: typical spot diameter
-    frac: float = 0.3       # auto: spot extent down to this fraction of its peak
+    frac: float = 0.3       # spot: extent down to this fraction of its peak
+    noise: float = 0.5      # auto: noise peaks allowed per image (sets k from the image size)
+    crit_k: float = 0.0     # auto: 입자 기준 brightness in σ (0 = statistical k)
+    crit_area: float = 0.0  # auto: 입자 기준 smallest half-max area, µm² (0 = none)
 
     def channel_for(self, item) -> int | None:
         if self.channel in item.channels:
@@ -277,7 +280,8 @@ class ParticleSettings:
                        within=d.get('within', 'cyto'), method=d.get('method', 'otsu'),
                        manual=float(d.get('manual', 0)), min_px=int(d.get('min_px', 1)),
                        k=float(d.get('k', 3.0)), size_um=float(d.get('size_um', 0.4)),
-                       frac=float(d.get('frac', 0.3)))
+                       frac=float(d.get('frac', 0.3)), noise=float(d.get('noise', 0.5)),
+                       crit_k=float(d.get('crit_k', 0)), crit_area=float(d.get('crit_area', 0)))
         except ValueError:
             return None
 
@@ -293,6 +297,7 @@ class Particles:
     plane_key: object = None             # (z, t) the mask was made on
     labels: np.ndarray | None = None     # particle numbers when not just connectivity
     outline: str = 'pixel'               # 'pixel' or 'iso-contour <level>' (contour_particles)
+    info: dict = field(default_factory=dict)  # auto: k, sigma, source ('stat' / 'user')
 
     def components(self, cells) -> np.ndarray:
         """Particle number image: each 8-connected piece within one cell, or
@@ -413,14 +418,19 @@ def detect_particles(cells, plane: np.ndarray, s: ParticleSettings, depth: int,
                      px_um: float | None = None) -> Particles:
     lab = cells.labels
     region = base_masks(cells)['cyto' if s.within == 'cyto' else 'cell']
-    if s.method == 'auto':
-        parts, thr = spot_particles(plane, lab, region, s, px_um)
+    if s.method in ('auto', 'spot'):
+        info = {}
+        if s.method == 'auto':
+            from .particle_detect import significance_particles
+            parts, thr, info = significance_particles(plane, lab, region, s, px_um)
+        else:
+            parts, thr = spot_particles(plane, lab, region, s, px_um)
         if s.min_px > 1 and parts.any():
             size = np.bincount(parts.ravel())
             small = size < s.min_px
             small[0] = False
             parts[small[parts]] = 0
-        return Particles(parts > 0, s, thr, labels=parts)
+        return Particles(parts > 0, s, thr, labels=parts, info=info)
     if s.method == 'manual':
         thr = {l: float(s.manual) for l in cells.ids()}
     else:

@@ -7,6 +7,7 @@ hiddenimports = (
     + collect_submodules('czifile')
     + collect_submodules('oirfile')
     + collect_submodules('skimage')
+    + collect_submodules('cytosol')  # lazily imported panels (track, mitoROI)
     + ['h5py', 'tifffile', 'xarray', 'roifile',
        # figure export picks the backend by file type at save time
        'matplotlib.backends.backend_pdf', 'matplotlib.backends.backend_svg',

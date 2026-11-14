@@ -25,12 +25,19 @@ feature is added; keep the bracketed words only when the 입자 ROI tab's
 > mode: within those contours] and shape descriptors computed from sub-pixel
 > iso-intensity contours (marching squares) at 50% of each particle's height
 > above its local background;
-> particles were detected within each cell ROI as spots whose scale-normalised
-> Hessian response (as in the FeatureJ Hessian plugin) exceeded the cell's
-> median + 3 × MAD, and delineated by marker-controlled watershed (as in the
-> MorphoLibJ plugin) on the background-subtracted image (grey opening, as in
-> ImageJ's Subtract Background) down to 30% of each spot's peak (or by a
-> manual threshold); FRAP recovery was quantified as the mean intensity of
+> particles were detected within each cell ROI on the image smoothed by a
+> 1-pixel Gaussian minus a 2.8 µm Gaussian background (difference of
+> Gaussians) as peaks exceeding k times the noise standard deviation
+> (estimated from the lower half of the values), with k set so that the
+> expected number of noise peaks per image (Euler characteristic of a smooth
+> Gaussian field) was 0.5 [or k chosen from user-selected borderline
+> particles], delineated down to k/2 by marker-controlled watershed (as in
+> the MorphoLibJ plugin) from h-maxima seeds (3 σ) [alternatively: spots
+> whose scale-normalised Hessian response (as in the FeatureJ Hessian
+> plugin) exceeded the cell's median + 3 × MAD, grown down to 30% of each
+> spot's peak; or a manual threshold]; cell ROIs on holotomography images
+> were the regions above the medium refractive index + 4 σ after a
+> morphological opening, split by a distance-transform watershed; FRAP recovery was quantified as the mean intensity of
 > the bleached region relative to an unbleached reference region (a
 > neighbouring condensate whose intensity varied least over the series, or
 > the unbleached part of the bleached condensate), each after subtracting a
@@ -41,7 +48,22 @@ feature is added; keep the bracketed words only when the 입자 ROI tab's
 > cross-correlation with a key frame (as in Fiji's Correct 3D Drift plugin),
 > and fitted with ImageJ's Curve Fitter "Exponential recovery" function
 > y = a(1 − e^(−kt)) + c to give the mobile fraction a/(1 − c) and the
-> half-time t½ = ln 2/k; groups were compared with the test given in each
+> half-time t½ = ln 2/k; particles were tracked between frames by
+> linear assignment (frame-to-frame linking and gap closing as in the
+> TrackMate LAP tracker, Jaqaman et al., 2008) with the cost of distance from
+> a predicted position (cell motion by TV-L1 optical flow, neighbourhood
+> template matching and an α-β velocity filter), intensity and area changes,
+> and the per-channel particle intensity taken as the ROI mean minus the
+> median of a surrounding ring; mitochondrial networks were analysed per
+> cell as in MiNA (Valente et al., 2017), with the mitochondria segmented by
+> a local adaptive threshold and a watershed split of touching objects (as in
+> Mitochondria Analyzer, Chaudhry et al., 2020; or Otsu's threshold per cell)
+> and skeletonised and measured as with the ImageJ Skeletonize and
+> AnalyzeSkeleton plugins (Arganda-Carreras et al., 2010), protein-of-interest
+> puncta found by a white top-hat filter with one threshold per image, and
+> colocalisation given by Pearson's and Manders' coefficients; correlations
+> between groups were compared with Fisher's z test and Cochran's Q;
+> groups were compared with the test given in each
 > figure legend (chosen from Shapiro-Wilk normality and Levene's
 > equal-variance tests: Student's or Welch's t-test, Mann-Whitney U, one-way
 > ANOVA with Tukey's, Welch's ANOVA with Games-Howell or Kruskal-Wallis with
@@ -290,8 +312,52 @@ A GUI for working on a whole set of images at once:
     with their centre in the band, particle area fraction and particle mean)
     → `<name>_bands.csv` / `bands.csv`, and a graph with any two measured
     columns as axes (cells grey, mean ± SD per band red).
+- **mitoROI** (v0.67, `mito.py`, `mito_panel.py`, `mitoan/` = Mito Analyzer
+  1.8.0's `mina.py`, `mito_objects.py`, `green.py`, `green_cells.py`,
+  `stats.py` unchanged): per cell of the 세포질 ROI tab (edge cells and
+  weak-border neighbours optionally left out), mito objects by an adaptive
+  threshold (rolling ball 1.5 µm, local mean AND 0.5 × Otsu, h-maxima
+  watershed) or MiNA's Otsu per cell or a manual threshold; Lee
+  skeletonisation and an AnalyzeSkeleton-like graph (branches, junctions,
+  end points, networks, donuts, population SD); POI channel: background from
+  the dark gaps, on / off mito means, enrichment, Pearson, Manders, top-hat
+  puncta with one threshold per image (max(Otsu, median + 6 MAD) ×
+  sensitivity), green+ / − by the bright-green cytoplasm fraction. Same
+  numbers as Mito Analyzer for the same ROIs (checked on its synthetic set).
+  Canvas layers, tables 세포 / 미토 조각 / 점 with Mito Analyzer's column
+  names and column sets (상관 행렬 default), export with its file names,
+  `_per_cell.csv` loaded back, batch step.
+- **입자 추적** (v0.66, `tracking.py`, `track_panel.py`; ported from
+  ParticleTracker): the 입자 ROI tab's detection on every frame (cell ROIs as
+  they are, detected per frame with IDs linked by overlap, or none), linked
+  frame to frame by a linear assignment (cost = distance from the predicted
+  position / unit 0.155 µm + 3 |ln intensity ratio| + 1.5 |ln area ratio| +
+  2 × cell change + neighbour-motion term; the prediction from the cell
+  motion (TV-L1 flow of the cell channel), template matching of the
+  particle's neighbourhood (1.7 µm, refined 0.56 µm) and an α-β velocity
+  filter whose residual widens the track's gate from 1.55 up to 2.5 µm),
+  gaps of 1 frame closed by a second assignment, merged / covered frames
+  flagged (area × 1.8 or intensity × 1.6). Measured per channel: ROI mean −
+  ring median (3–8 px, other particles left out), ratio B / A; tracks
+  classed 세포 안 (≥ 50 % of frames in a cell) / 밖 / 짧은 (< 10 frames).
+  Track table, tails on the canvas, tables 입자 추적 · 시점 / 트랙 / 세포 ×
+  시점 for the graph window, export (`<name>_tracks_points.csv`,
+  `_tracks_summary.csv`, `_tracks.zip` with one ROI per particle and frame
+  plus the path; ParticleTracker column names optional), batch step,
+  ParticleTracker `tracks_points` CSVs loaded by 불러오기.
 - **입자 ROI** in each cell's cytosol (or whole cell) of one channel, with a
-  minimum size: **자동 (점 검출)** (v0.14)
+  minimum size: **자동 (유의성)** (v0.65, default; `particle_detect.py`) takes the
+  plane smoothed by a 1 px Gaussian minus a 2.8 µm Gaussian background, the
+  noise σ from the lower half of its values in the region, seeds = h-maxima
+  (3 σ) at least k σ above the median, particles grown by watershed down to
+  k/2 σ, pieces under half a diffraction spot dropped. k gives 0.5 expected
+  noise peaks per image (**허용 노이즈 입자**; Euler characteristic of a
+  Gaussian field with the noise's own smoothness Λ), so it grows with the
+  image area (real TCF fluorescence 1464²: 116 particles, ParticleTracker
+  128, the Hessian mode 1 900). **입자 기준 잡기** sets k (SNR of the faintest
+  particle × 0.98) and a minimum half-max area from nine borderline
+  candidates each, saved per channel name with a scope (all / group / image).
+  **점 모양 강조** is the former automatic mode (v0.14):
   finds spot centres where the scale-normalised Hessian's smaller curvature
   (high for round spots, not for cell or nucleus edges) and the
   background-subtracted intensity both exceed the cell's median + k × MAD

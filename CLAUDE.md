@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.64.0)
+## Window structure (v0.67.0)
 
 - **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
   v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
@@ -81,7 +81,7 @@ owner writes in Korean, so reply in Korean.
   일괄 적용 on top, 채널 표시, the channel LUTs; no inner scroll), `마커`
   (`marker_tab`) and `이미지 정보` are always present. The other tabs
   live in `MainWindow.tab_pages` (roi_tab, particle_tab,
-  intensity_tab, bands_tab, coloc_tab, profile_tab, frap_tab, stack_tab) and are shown / hidden
+  intensity_tab, bands_tab, coloc_tab, profile_tab, frap_tab, track_tab, mito_tab, stack_tab) and are shown / hidden
   by the "… 탭 열기" check action in each feature's menu (`tool_actions`,
   `show_tab`, `hide_tab`, `tab_open`, `tab_current`; no Crop tab since v0.58). Panels ask
   `win.tab_current('<name>')` to know whether they are the visible tab
@@ -121,7 +121,7 @@ owner writes in Korean, so reply in Korean.
     **LUT** (LUT 프리셋 저장/불러오기),
     **마커** (설정 저장/불러오기, JSON with `format: cytosol-viewer-markers`),
     **세포질 ROI**, **입자 ROI**, **강도 측정**, **등거리 띠**, **Coloc 2**,
-    **라인 프로파일**, **FRAP 측정**, **스택**. Each holds its tab
+    **라인 프로파일**, **FRAP 측정**, **입자 추적**, **mitoROI**, **스택**. Each holds its tab
     action and its loads (`import_kind_dialog(kind)`, kinds in
     `IMPORT_KINDS`; it only pre-filters the file chooser, `import_paths`
     still detects by content).
@@ -317,6 +317,7 @@ per-widget style sheets.
 | `cellroi.py`, `roi_panel.py` | Cell / nucleus / cytosol ROI detection, editing, ImageJ ROI I/O (세포질 ROI tab) |
 | `intensity.py` | ImageJ Measure values, particle detection (Otsu / Hessian spot seeds + watershed), shape (iso-contours), logic regions |
 | `particle_panel.py` | 입자 ROI tab, per-cell and per-particle measurement, summaries |
+| `particle_detect.py`, `particle_calib.py` | 자동 (유의성) particle detection, 입자 기준 잡기 candidates and the calibration page |
 | `intensity_panel.py` | 강도 측정 tab (regions from expressions like `cyto - particle`) |
 | `bands_panel.py`, `radial.py` | 핵 → 세포막 등거리 띠 tab (`bands_tab`; distance bands from the nucleus, per-band measurement, graph) |
 | `measure_box.py` | 측정 항목 + 데이터 cards shared by the measuring tabs (data names, state per image, re-measure changed images) |
@@ -325,6 +326,8 @@ per-widget style sheets.
 | `coloc.py`, `coloc_panel.py` | Fiji Coloc 2 port, per cell |
 | `lineprofile.py`, `profile_panel.py` | Line profile (ImageJ RGB Profiler) |
 | `frap.py`, `frap_panel.py` | FRAP 측정 tab: bleach / control / background ROIs (`FrapState` per image in `ImageItem.frap`, auto placement, dragged on the canvas via `Canvas.show_frap` / `frapMoved`), (B−BG)/(C−BG) curves, ImageJ-equal ROI masks, exponential recovery fit, drift correction (ROIs follow each frame's movement, `track_drift`), group means, summary CSV / figures |
+| `tracking.py`, `track_panel.py` | 입자 추적 tab (`track_tab`, v0.66): per-frame detections with the 입자 ROI settings, LAP linking ported from ParticleTracker (cell flow / pattern / velocity predictions, gap closing), ring-background intensities, ratio, track classes, `TrackState` in `ImageItem.tracks` (pickled in projects), canvas tails, track table, ParticleTracker CSV import (`is_pt_points`, `from_pt`), export kind `track`, batch step `track`, graph source `track` |
+| `mito.py`, `mito_panel.py`, `mitoan/` | mitoROI tab (`mito_tab`, v0.67): Mito Analyzer 1.8.0's measurement code copied unchanged into `mitoan/` (MiNA skeleton, mito objects, POI / puncta, green+ / −, correlation stats), `mito.analyze` on the app's cell ROIs → `MitoResult` in `ImageItem.mito` (pickled in projects), canvas layers, tables + column sets (graph source `mito`, 상관 행렬), export kind `mito` (Mito Analyzer file names), batch step `mito`, `_per_cell.csv` import |
 | `stack.py`, `stack_panel.py` | Z projections (2D) and 3D rotation views |
 | `marker_panel.py` | Scale bar, time stamp, bleach ROI display |
 | `figure.py`, `figure_window.py` | Figure window (image table, insets, scale bars, per-cell / per-inset brightness, PNG/TIFF/PDF/SVG; drag and drop: `FigureTable` + `FigureWindow.drop_on` / `move_cell` / `place`, `move_whole` 행/열 전체 옮기기). v0.59: regions sidebar (`fig_list`, `FigureWindow.figures` = [[name, FigureSpec]], `new_figure` / `duplicate_figure` (`copy_spec`) / `show_figure` / `remove_figure`, `export_all`) | canvas box (table + preview) | inspector of fixed width (`INSPECTOR_W`, `flow.reflow(right, min_n=2)`, never clipped); table: one extra ＋ row / column (`add_at_end`), `FigureHeader` (hover red × beside the title, title drag with a blue line = `move_label`); projects keep `figures` (+ `figure` for older versions) |
@@ -485,3 +488,6 @@ not affected.
 | dev branch | 0.62.0 | Owner request (2026-11-14, proposals mito-tracking ch. 이미지 묶기): 이미지 묶기 (`stacking.py`, `stack_dialog.py`): Red/Green/Blue TIFF triplets stacked on load, 이미지 묶기… dialog (C / Z / T, row order by drag, channel per file, name / colour, size check with refuse / crop / pad, same naming pattern), stacked rows `name (3채널)` with greyed source rows (`image_tree.SOURCE`), 묶음 풀기, projects rebuild stacks from the sources; `theme.RoundedDialog` (radius 18, shadow) for new windows; `selftest2.py` holds the new steps |
 | dev branch | 0.63.0 | Owner request (2026-11-14, proposal mito-tracking ch. 6): graph window correlation tools for any table: `graph_calc.py` (Mito Analyzer `stats.py` functions: regression, Spearman, corr matrix, Fisher z, Cochran Q, Holm / FDR, why_nan, group summary, sample means), `Table.labels` / `column_sets`, `Mapping.unit` (점 하나 = 행 / 이미지 평균 / 그룹 평균, `graph.view_tables`), chart kinds 상관 행렬 / 상관 비교 (`GraphSpec.calc` = `graph.Calc`; 상관 계산 card in `MappingEditor._calc_rows`; cell hover r · n · p, click = scatter with regression `GraphWindow.open_scatter`), XY 회귀 · 사분면 card (`RegressionEditor`), 편집 › 여러 열 그룹 요약표 |
 | dev branch | 0.64.0 | Owner request + decisions (2026-11-14, data-display proposal): measuring tabs end with **측정 항목** + **데이터** cards (`MeasureBox`: no inspector result table, no auto refresh; data names 「기능 · 점 하나」 `data_name` / `data_tables`; 설정 바뀜 per image `stale_items` / `_measured`, `update_stale`, 모든 이미지 측정 / 현재 이미지만), ROI hover values (`RoiPanel.hover_values`), red dot on tab chips (`ChipTabs.set_badge`, `MainWindow.update_tab_badges`), 실시간 값 박스 under the canvas (`live_box.LiveBox`; FRAP / profile / Coloc 2 plots moved there, band graph only in the graph window), graph window 데이터 list (`MainWindow.data_entries`, `GraphWindow.start_data` re-measures changed images; chips hidden) + 열 설명 (`columns_doc.py`) + table header, 측정 현황 · 일괄 분석 window (`batch.BatchResults` rewritten; View menu); docs `20-data.md` |
+| dev branch | 0.65.0 | Owner request + decisions (2026-11-13/14, particle-tracking proposal ch. 9–11): 입자 ROI **자동 (유의성)** (`particle_detect.py`: DoG image, σ from the lower half, k from the image area and noise smoothness for 0.5 noise peaks per image, h-maxima split 3 σ, extent k/2; `ParticleSettings.noise / crit_k / crit_area`, `Particles.info`), the Hessian mode kept as **점 모양 강조** (method `spot`), **입자 기준 잡기** (`particle_calib.CalibPage`: 밝기 / 크기 / 적용 steps in the tab, numbered boxes on the canvas, scope all / group / image, `ParticlePanel.criteria` saved as `particle_criterion`, asked on the first user switch-on), HT (RI) cell ROIs without nuclei (`cellroi.is_ri`, `segment_ht_cells`, routed in `RoiPanel._run_planes`), `cellroi.link_cell_frames` (cell IDs between frames, for 입자 추적) |
+| dev branch | 0.66.0 | Owner request + decisions (2026-11-13/14, particle-tracking proposal): **입자 추적** tab (`track_panel.py`, `tracking.py`): 입자 ROI detection on every frame, cell ROIs as they are / per frame with IDs linked (`link_cell_frames`) / none, LAP linking (cost: predicted-position distance, intensity, area, cell change, neighbours; predictions from TV-L1 cell flow, neighbourhood template matching, α-β velocity with an adaptive gate 1.55–2.5 µm), gap closing, merged frames flagged, ring-median background per channel, ratio B / A, track classes inside / outside / short, track table + canvas tails, live box, data tables 입자 추적 · 시점 / 트랙 / 세포 × 시점 + graph source, export kind `track` (points / summary CSV, ROI zip, ParticleTracker column names), batch step, ParticleTracker `tracks_points` CSV import (불러오기 and Tool › 입자 추적), tracks in projects; docs `21-tracking.md` |
+| dev branch | 0.67.0 | Owner request + decisions (2026-11-13/14, mitoROI proposal ch. 1–5, 9): **mitoROI** tab (`mito_panel.py`, `mito.py`, `mitoan/` = Mito Analyzer's `mina`, `mito_objects`, `green`, `green_cells`, `stats` unchanged; same numbers for the same ROIs): cards 채널 · 세포 (edge cells / weak-border neighbours), 미토 분할 (조각 분할 / MiNA 기본, threshold [value][자동] + slider, minimum object), 관심 단백질 (background, green+ 기준, puncta sensitivity / threshold), 표시 (layer chips on the canvas), 결과 (cells / objects / puncta table, 상관 히트맵 › / 그룹 비교 › into the graph window, Mito Analyzer results loaded); tables with labels and column sets, export kind `mito`, batch step, import of `_per_cell.csv`, live box, projects; docs `22-mito.md` |

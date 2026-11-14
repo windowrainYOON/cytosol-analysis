@@ -20,29 +20,68 @@ whenever the ROIs or settings change.
    - **이미지 전체 (세포 ROI 없이)** (whole image, no cell ROIs needed;
      preselected for images without cell ROIs).
 4. **검출 자동화** (automatic detection) switch and **검출 방식** (detection
-   method) pop-up (v0.58): **점 검출 (자동)** (spot detection) or **threshold**;
-   only the chosen method's settings show. With 검출 자동화 on (default) the
-   detail value **입자 지름** (particle diameter) uses its automatic value
-   (0.4 µm) and is hidden; **세부 설정…** (Details…) shows it, editable, and an
-   edited value gets **· 수정됨** and a reset glyph ↺. Off shows every
-   setting. **자동 민감도 (k)** and the threshold are the basic sensitivity
-   and always shown.
-   - **자동 (점 검출)** (Automatic, spot detection): spot centres are found
-     where the scale-normalised Hessian (high for round spots, not for cell
-     or nucleus edges) and the background-subtracted intensity both exceed
-     the cell's median + k × MAD. Each spot is then grown by watershed on the
-     background-subtracted image down to 30 % of its own peak, so touching
-     spots stay apart and dim spots next to bright ones are kept.
-     - **자동 민감도 (k)** (Sensitivity, default 3): smaller finds dimmer spots.
-     - **입자 지름** (Particle diameter, default 0.4 µm, under 세부 설정): typical size of
-       the particles; sets the filter scale. Images without a pixel size are
-       taken as 0.1 µm/px.
+   method) pop-up: **자동 (유의성)** (automatic, significance; default since v0.65),
+   **점 모양 강조 (작은 점 많을 때)** (spot emphasis, for many small spots) or
+   **threshold**; only the chosen method's settings show.
+   - **자동 (유의성)** (v0.65): on the smoothed image minus its background
+     (Gaussian 2.8 µm), the noise σ comes from the lower half of the values
+     (particles only add to the upper half) and a peak k σ above the median is
+     a particle seed. Particles reach down to k/2 σ (covering the whole
+     particle), touching ones are split only where the valley between them is
+     3 σ deep, pieces smaller than half a diffraction spot (about 0.5 µm
+     across) are dropped. k follows the **image area and the smoothness of its
+     noise**: the expected number of noise peaks taken for particles in one
+     image is **허용 노이즈 입자** (allowed noise particles, default 0.5; Euler
+     characteristic of a Gaussian field), so a larger image gets a larger k.
+     The k used is always shown. On a real TCF fluorescence image (1464 ×
+     1464) the former automatic mode found 1 900 particles, mostly noise; this
+     one finds 116 (ParticleTracker 128).
+     - **허용 노이즈 입자** (slider + field): larger finds dimmer particles.
+     - **입자 기준** (particle criterion): the criterion in use (default =
+       statistical / user: date, channel, scope) and **기준 잡기…** (set
+       criterion). A user criterion replaces the allowed noise particles; ↺
+       goes back to the default. See [Particle criterion](#particle-criterion).
+   - **점 모양 강조**: the former automatic mode. Spot centres where the
+     scale-normalised Hessian (high for round spots, not for cell or nucleus
+     edges) and the background-subtracted intensity both exceed the cell's
+     median + k × MAD, each grown by watershed down to 30 % of its peak.
+     - **자동 민감도 (k)** (default 3): smaller finds dimmer spots.
+     - **입자 지름** (particle diameter, default 0.4 µm; under 세부 설정 while
+       검출 자동화 is on): the filter scale. An edited value gets **· 수정됨**
+       and ↺. Images without a pixel size are taken as 0.1 µm/px.
    - **threshold**: pixels at or above the **수동 threshold** value
      (slider or the number field beside it) in every cell, split into 8-connected particles (like
      ImageJ Analyze Particles).
 5. **최소 입자 크기** (Minimum particle size, px): smaller particles are dropped.
 6. **이미지에 입자 경계 표시** (Show particle outlines): pixel ROIs in magenta,
    iso-contours in orange.
+
+### Particle criterion
+
+The statistical default cannot know where "a particle" starts in every
+experiment, so you can pick it from borderline candidates (v0.65). The first
+time **이 이미지에서 입자 ROI 정의** is switched on with 자동 (유의성) and the
+channel has no criterion, the app asks whether to set one first (**기준 잡기** /
+**기본 기준으로 검출**). **입자 기준 › 기준 잡기…** sets it again at any time.
+Three steps replace the tab's settings:
+
+1. **밝기** (brightness): nine candidates of a permissive run (seeds ≥ 2σ)
+   with nothing brighter around them, faint → bright (3σ → 15σ, log steps),
+   as tiles sharing one display range and as numbered boxes on the canvas.
+   Click the faintest one that is still a particle; it and the brighter ones
+   get a ✓.
+2. **크기** (size): nine candidates at least that bright, small → large (half-max
+   area); click the smallest particle.
+3. **적용** (apply): the new criterion (brightness ≥ the picked SNR × 0.98, size
+   ≥ the picked half-max area), the particle count before → after, and the
+   images it is used for: all images with that channel name, the same group
+   only, or this image only. **기준 적용** removes the boxes and detects again.
+
+If all nine are particles (or none is), **더 흐린 / 더 밝은 후보** (smaller /
+larger in the size step) picks nine others. Brightness is in noise σ, so it
+means the same on images with another exposure. Criteria are saved in the
+project per channel name (`particle_criterion`); threshold and spot-emphasis
+images are not changed.
 
 ### Shape from iso-intensity contours
 
@@ -134,8 +173,9 @@ described in [the measurement table](09-intensity.md#the-measurement-table).
 
 ## Tips
 
-- Raise **자동 민감도 (k)** if background noise is picked up; lower it if dim
-  particles are missed. Set **입자 지름** (under 세부 설정) close to the real particle size.
+- With 자동 (유의성), if dim particles are missed or noise is picked up, set a
+  criterion with **기준 잡기…** or change **허용 노이즈 입자**. Spot emphasis uses
+  **자동 민감도 (k)** and **입자 지름**.
 - Use **수동 threshold** when you need exactly the same intensity cut-off
   across images.
 - For condensate morphology, keep iso-contour shape on and report the level

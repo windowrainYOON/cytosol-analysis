@@ -58,13 +58,17 @@ STEPS = [
     ('coloc', 'Coloc 2', 'coloc_tab', 'Coloc 2 탭에서 고른 두 채널과 ROI 종류로 계산합니다.'),
     ('frap', 'FRAP 측정', 'frap_tab',
      '시간축이 있는 이미지마다 bleach / control / background ROI를 놓고 회복 곡선을 맞춥니다.'),
+    ('track', '입자 추적', 'track_tab',
+     '시간축이 있는 이미지마다 입자 추적 탭의 설정으로 입자를 찾고 프레임 사이를 잇습니다.'),
+    ('mito', 'mitoROI', 'mito_tab',
+     '세포 ROI가 있는 이미지마다 mitoROI 탭의 설정으로 미토콘드리아와 관심 단백질을 측정합니다.'),
 ]
 TITLES = {k: t for k, t, _, _ in STEPS}
 TABS = {k: tab for k, _, tab, _ in STEPS}
 DETECT = ('cells', 'particles')
 # panel objects (MainWindow._panel_objects keys) whose settings a batch settings file keeps
 PANELS = ('roi', 'roi_measure', 'particle', 'particle_measure', 'intensity',
-          'intensity_measure', 'intensity_bands', 'bands', 'coloc', 'frap')
+          'intensity_measure', 'intensity_bands', 'bands', 'coloc', 'frap', 'track', 'mito')
 
 
 @dataclass
@@ -213,6 +217,37 @@ def run(win, state: BatchState, items, detect=True) -> list[str]:
         for it in items:
             if it.nt < 2:
                 res[it.label]['frap'] = 'T 없음'
+    if 'track' in steps:
+        tp = win.track_panel
+        for it in items:
+            if it.nt < 2:
+                res[it.label]['track'] = 'T 없음'
+                continue
+            if not detect and it.tracks is not None:
+                res[it.label]['track'] = f'트랙 {len(it.tracks.tracks())}'
+                continue
+            try:
+                it.tracks = tp.run(it)
+                res[it.label]['track'] = f'트랙 {len(it.tracks.tracks())}'
+            except Exception as exc:
+                traceback.print_exc()
+                errors.append(f'{it.label} 입자 추적: {exc}')
+            _release(win, it)
+        tp.refresh()
+    if 'mito' in steps:
+        mp = win.mito_panel
+        for it in items:
+            if it.cells is None or not len(it.cells):
+                res[it.label]['mito'] = '세포 ROI 없음'
+                continue
+            try:
+                it.mito = mp.run(it)
+                res[it.label]['mito'] = f'세포 {len(it.mito.cells)}'
+            except Exception as exc:
+                traceback.print_exc()
+                errors.append(f'{it.label} mitoROI: {exc}')
+            _release(win, it)
+        mp.refresh()
     state.results.update(res)
     state.errors = errors
     win.coloc_panel.bind(win.current)
@@ -234,7 +269,8 @@ def columns(state) -> list[tuple[str, str]]:
     """(result key, header) of the results table."""
     heads = {'cells': '세포 ROI', 'particles': '입자', 'roi_measure': '세포질 ROI 측정 (행)',
              'particle_measure': '입자 측정 (행)', 'intensity': '강도 측정 (행)',
-             'bands': '등거리 띠 (행)', 'coloc': 'Coloc 2 (ROI)', 'frap': 'FRAP'}
+             'bands': '등거리 띠 (행)', 'coloc': 'Coloc 2 (ROI)', 'frap': 'FRAP',
+             'track': '입자 추적', 'mito': 'mitoROI'}
     return [(k, heads[k]) for k, *_ in STEPS if k in state.steps]
 
 
@@ -374,6 +410,22 @@ def save_results(win, out, state=None) -> tuple[list[str], list[str]]:
             traceback.print_exc()
             errors.append(f'FRAP: {exc}')
         win.frap_panel.forget()
+    if 'track' in steps:
+        for it in items:
+            if it.tracks is not None and it.tracks.points:
+                try:
+                    files += win.track_panel.save_item(it, out / item_folder(it), item_stem(it))
+                except Exception as exc:
+                    traceback.print_exc()
+                    errors.append(f'{it.label} 입자 추적: {exc}')
+    if 'mito' in steps:
+        for it in items:
+            if getattr(it, 'mito', None) is not None:
+                try:
+                    files += [str(f) for f in win.mito_panel.save_item(it, out / item_folder(it), item_stem(it))]
+                except Exception as exc:
+                    traceback.print_exc()
+                    errors.append(f'{it.label} mitoROI: {exc}')
     if write_groups(out / GROUP_FILE, items):
         files.append(str(out / GROUP_FILE))
     if write_rows(out / 'batch_summary.csv', table_rows(win, state)):

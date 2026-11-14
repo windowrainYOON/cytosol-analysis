@@ -240,6 +240,56 @@ def bands(panel) -> G.GraphData | None:
     return G.GraphData('강도 측정 · 등거리 띠', [t], spec, _stem(it, 'bands'), _folder(it))
 
 
+def track(panel) -> G.GraphData | None:
+    """입자 추적: the three tables (시점 / 트랙 / 세포 × 시점); the default graph
+    is the ratio (or the particle channel's intensity) of the long tracks over
+    time, one thin line per track and the mean ± SD."""
+    tabs = [(name, rows) for name, _u, rows in panel.data_tables() if rows]
+    if not tabs:
+        return None
+    tables = [G.Table.from_dicts(name, rows) for name, rows in tabs]
+    t = tables[0]
+    cols = t.columns
+    y = next((c for c in cols if c.startswith('ratio_') and not c.endswith('_unfiltered')), '') \
+        or next((c for c in cols if c.startswith('I_') and not c.endswith('_raw')), '')
+    if not y:
+        return None
+    x = 'time_min' if 'time_min' in cols else 'frame'
+    spec = G.GraphSpec(chart='xy', grid=False)
+    spec.series.append(G.Series(table=t.name, x=x, y=y, split='track', style='line', marker='none',
+                                line_width=0.6, color='#999999', alpha=0.5, legend=False, label='tracks'))
+    spec.series.append(G.Series(table=t.name, x=x, y=y, agg='mean', agg_by=x, agg_err='sd', err_style='band',
+                                style='line', marker='none', line_width=2.0, color='#d62728', label='mean ± SD'))
+    spec.x.label, spec.y.label = ('time (min)' if x == 'time_min' else 'frame'), y
+    it = panel.win.current
+    return G.GraphData('입자 추적', tables, spec, _stem(it, 'tracks') if it else 'tracks',
+                       _folder(it) if it else '')
+
+
+def mito(panel) -> G.GraphData | None:
+    """mitoROI: 세포 / 미토 조각 / 점 tables with Mito Analyzer's column names
+    and sets; the default graph is the 상관 행렬 of 미토 형태 × 관심 단백질."""
+    from . import mito as M
+    tabs = [(name, rows) for name, _u, rows in panel.data_tables() if rows]
+    if not tabs:
+        return None
+    lab = M.labels()
+    tables = []
+    for name, rows in tabs:
+        kind = 'cell' if name.endswith('세포') else 'mito' if name.endswith('조각') else ''
+        t = G.Table.from_dicts(name, rows)
+        t.labels = {c: lab[c] for c in t.columns if c in lab}
+        t.column_sets = {k: [c for c in v if c in t.columns] for k, v in M.column_sets(kind).items()}
+        tables.append(t)
+    t = tables[0]
+    poi = any(c in t.columns for c in ('green_mean_on_mito', 'n_green_puncta'))
+    spec = G.GraphSpec(chart='corr')
+    spec.mapping = G.Mapping(on=True, table=t.name, x='', x_cat=False)
+    spec.calc = G.Calc(table=t.name, method='rho', xset='미토 형태', yset='관심 단백질' if poi else '@x')
+    it = panel.win.current
+    return G.GraphData('mitoROI', tables, spec, _stem(it, 'mito') if it else 'mito', _folder(it) if it else '')
+
+
 # ---- measurement tables ---------------------------------------------------------------------------
 
 def measure(box, title) -> G.GraphData | None:

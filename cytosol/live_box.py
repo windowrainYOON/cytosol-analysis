@@ -27,7 +27,8 @@ from . import theme
 TITLES = {'roi_tab': '세포질 ROI · 현재 이미지', 'particle_tab': '입자 ROI · 현재 이미지',
           'intensity_tab': '강도 측정 · 현재 이미지', 'bands_tab': '등거리 띠 · 현재 이미지',
           'frap_tab': 'FRAP · 현재 이미지', 'profile_tab': '라인 프로파일 · 현재 선',
-          'coloc_tab': 'Coloc 2 · 고른 ROI'}
+          'coloc_tab': 'Coloc 2 · 고른 ROI', 'track_tab': '입자 추적 · 현재 이미지',
+          'mito_tab': 'mitoROI · 현재 이미지'}
 BORROWED = {'frap_tab': 'frap_panel', 'profile_tab': 'profile_panel', 'coloc_tab': 'coloc_panel'}
 PLOT_H = 150
 
@@ -314,6 +315,57 @@ class LiveBox(QGroupBox):
             for s in ('top', 'right'):
                 ax.spines[s].set_visible(False)
         return tiles, ('', None), draw
+
+    def _mito_tab(self, it):
+        from .mito_panel import mito_live
+        got = mito_live(self.win.mito_panel)
+        if got is None:
+            return [], ('분석 실행을 누르면 세포 · 조각 · 점 수가 여기 나옵니다.', 'info'), None
+        tiles, r = got
+        fp = [x.get('footprint_fraction') for x in r.cells]
+
+        def draw(fig):
+            ax = fig.add_subplot(111)
+            v = [x for x in fp if isinstance(x, float) and x == x]
+            if v:
+                ax.hist(v, bins=min(20, max(5, len(v))), color='#c040c0')
+            ax.set_xlabel('footprint fraction', fontsize=8)
+            ax.set_ylabel('cells', fontsize=8)
+            ax.tick_params(labelsize=7)
+            for s_ in ('top', 'right'):
+                ax.spines[s_].set_visible(False)
+        return tiles, ('', None), draw
+
+    def _track_tab(self, it):
+        from .track_panel import track_live
+        tp = self.win.track_panel
+        got = track_live(tp)
+        if got is None:
+            return [], ('추적 실행을 누르면 트랙 수와 속도가 여기 나옵니다.' if it.nt > 1 else '', 'info'), None
+        tiles, sel, ratio = got
+        st = it.tracks
+        y = ratio or next((k for k in (st.points[0] if st.points else {}) if k.startswith('I_')
+                           and not k.endswith('_raw')), '')
+        f_now = it.t + 1
+
+        def draw(fig):
+            ax = fig.add_subplot(111)
+            tracks = st.tracks()
+            pick = [sel] if sel else [v for _k, v in sorted(tracks.items(), key=lambda kv: -len(kv[1]))[:12]]
+            for pts in pick:
+                xs = [p['time_min'] for p in pts]
+                ys = [p.get(y, np.nan) for p in pts]
+                ax.plot(xs, ys, color='#d62728' if sel else '#999999', lw=1.5 if sel else 0.7)
+            now = next((p['time_min'] for p in st.points if p['frame'] == f_now), None)
+            if now is not None:
+                ax.axvline(now, color='#555555', lw=0.6, ls=':')
+            ax.set_xlabel('time (min)', fontsize=8)
+            ax.set_ylabel(y, fontsize=8)
+            ax.tick_params(labelsize=7)
+            for s_ in ('top', 'right'):
+                ax.spines[s_].set_visible(False)
+        note = (f'선택한 트랙 T{sel[0]["track_id"]:03d} · {len(sel)} 프레임', 'info') if sel else ('', None)
+        return tiles, note, draw if y else None
 
     def _frap_tab(self, it):
         fp = self.win.frap_panel
