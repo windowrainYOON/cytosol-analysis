@@ -84,7 +84,7 @@ class TrackPanel(QWidget):
         self.run_btn.clicked.connect(lambda: self.run_current())
         self.all_btn = QPushButton('모든 이미지에 실행')
         self.all_btn.clicked.connect(lambda: self.run_all())
-        lay.addWidget(_row(self.run_btn, self.all_btn, None))
+        # the run buttons live in the inspector's 측정 바 (MainWindow.measure_bar, v0.68)
 
         # 1 검출
         det = QGroupBox('1  검출')
@@ -220,7 +220,10 @@ class TrackPanel(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setMinimumHeight(220)
         self.table.itemSelectionChanged.connect(self._picked)
-        v.addWidget(self.table)
+        self.table.hide()  # v0.68: the tables are in the graph window, no table in the page
+        from .measure_bar import DataRows
+        self.data_rows = DataRows(win, self.data_tables)
+        v.addWidget(self.data_rows)
         self.show_tracks = QCheckBox('이미지에 트랙 표시 (최근 8 프레임 꼬리)')
         self.show_tracks.setChecked(True)
         self.show_tracks.toggled.connect(lambda _: self.draw())
@@ -528,9 +531,20 @@ class TrackPanel(QWidget):
                                    (f' · 세포 {st.cells}개' if getattr(st, 'cells', 0) else ''))
         else:
             self.det_state.set_kind('info')
-            self.det_state.setText('추적 실행을 누르면 모든 프레임에서 입자를 찾고 잇습니다.')
+            self.det_state.setText('아래 측정 버튼을 누르면 모든 프레임에서 입자를 찾고 잇습니다.')
         self._fill_table()
+        self.data_rows.refresh()
         self.draw()
+
+    def bar_status(self):
+        """One line for the 측정 바."""
+        ok = [it for it in self.win.items if it.nt >= 2]
+        done = [it for it in ok if it.tracks is not None]
+        if not ok:
+            return '시간축이 있는 이미지가 없습니다.', None
+        if not done:
+            return f'시간축이 있는 이미지 {len(ok)}개 · 아직 추적하지 않았습니다.', None
+        return f'{len(ok)} 이미지 중 {len(done)}개 추적됨', 'success' if len(done) >= len(ok) else None
 
     def _class_ok(self, row):
         k = row['class']

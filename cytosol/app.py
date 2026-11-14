@@ -1785,8 +1785,33 @@ class MainWindow(QMainWindow):
             reflow(page)
             inner = page.widget() if isinstance(page, QScrollArea) else page
             theme.unify(inner)
+            if isinstance(page, QScrollArea) and inner.layout() is not None:
+                inner.layout().addSpacing(16)  # the last card scrolls fully above the 측정 바
+        # no scroll area inside a scrolling page (owner request 2026-11-15)
+        from .measure_bar import grow_to_content
+        grow_to_content(self.roi_panel.cell_list)
+        grow_to_content(self.frap_panel.group_table)
         inspector = hig_widgets.inspector(right)
         self.inspector = inspector
+        # 측정 바: the two measure buttons fixed at the bottom of the inspector,
+        # only on tabs that measure (owner request 2026-11-15, v0.68)
+        from .measure_bar import MeasureBar, Measurer, box_measurer
+        self.measure_bar = MeasureBar(self)
+        inspector.layout().addWidget(self.measure_bar)
+        fp = self.frap_panel
+        self.measurers = {
+            'roi_tab': box_measurer(self.roi_panel.measure),
+            'particle_tab': box_measurer(self.particle_panel.measure),
+            'intensity_tab': box_measurer(self.intensity_panel.measure),
+            'bands_tab': box_measurer(self.bands_panel.bands_measure),
+            'coloc_tab': Measurer(self.coloc_panel.run_current, self.coloc_panel.run_all,
+                                  self.coloc_panel.bar_status),
+            'frap_tab': Measurer(self._frap_measure_current, self._frap_measure_all, self._frap_status),
+            'track_tab': Measurer(lambda: self.track_panel.run_current(), self.track_panel.run_all,
+                                  self.track_panel.bar_status),
+            'mito_tab': Measurer(lambda: self.mito_panel.run_current(), self.mito_panel.run_all,
+                                 self.mito_panel.bar_status),
+        }
         inspector.setMinimumWidth(RIGHT_MIN_W)
 
         # the file list and the tools keep their widths; only the preview
@@ -3756,6 +3781,36 @@ class MainWindow(QMainWindow):
         self.intensity_panel.schedule()
         self.live_box.schedule()
         self.update_tab_badges()
+        self._bind_measure_bar()
+
+    def _bind_measure_bar(self):
+        bar = getattr(self, 'measure_bar', None)
+        if bar is None:
+            return
+        page = self.right_tabs.currentWidget()
+        name = self._tab_name(page) if page is not None else None
+        bar.bind(self.measurers.get(name), page)
+
+    def _frap_measure_current(self):
+        fp = self.frap_panel
+        if self.current is None:
+            return
+        fp.forget(self.current)
+        fp.refresh()
+        self.statusBar().showMessage(f'FRAP: {self.current.label} 다시 측정했습니다.')
+
+    def _frap_measure_all(self):
+        gs = self.frap_panel.groups(progress=True)
+        n = sum(len(g.members) for g in gs if g is not None)
+        self.frap_panel.refresh()
+        self.statusBar().showMessage(f'FRAP: 이미지 {n}개를 측정했습니다.' if n else 'FRAP: 측정할 이미지가 없습니다.')
+        self.update_tab_badges()
+
+    def _frap_status(self):
+        n = sum(1 for it in self.items if it.nt >= 2)
+        if not n:
+            return '시간축이 있는 이미지가 없습니다.', None
+        return f'시간축이 있는 이미지 {n}개 · 곡선은 바로 계산됩니다.', None
 
     def rois_changed(self, hidden=False):
         """The cell ROIs or the shown plane changed: particles and every

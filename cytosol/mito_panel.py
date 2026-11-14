@@ -148,7 +148,7 @@ class MitoPanel(QWidget):
         self.run_btn.clicked.connect(lambda: self.run_current())
         self.all_btn = QPushButton('모든 이미지에 실행')
         self.all_btn.clicked.connect(lambda: self.run_all())
-        lay.addWidget(_row(self.run_btn, self.all_btn, None))
+        # the run buttons live in the inspector's 측정 바 (MainWindow.measure_bar, v0.68)
 
         # 1 채널 · 세포
         box = QGroupBox('1  채널 · 세포')
@@ -283,6 +283,7 @@ class MitoPanel(QWidget):
             fl.addWidget(b)
         self.table_btns['cells'].setChecked(True)
         v.addWidget(chips)
+        chips.hide()  # the tables are in the graph window (데이터); v0.68: no table in the page
         self.table = QTableWidget(0, 6)
         self.table.verticalHeader().hide()
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -291,7 +292,10 @@ class MitoPanel(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setMinimumHeight(200)
         self.table.itemSelectionChanged.connect(self._picked)
-        v.addWidget(self.table)
+        self.table.hide()
+        from .measure_bar import DataRows
+        self.data_rows = DataRows(win, self.data_tables)
+        v.addWidget(self.data_rows)
         self.corr_btn = QPushButton('상관 히트맵 ›')
         self.corr_btn.setToolTip('그래프 편집 창에서 mitoROI · 세포 표로 상관 행렬 그래프를 만듭니다.')
         self.corr_btn.clicked.connect(lambda: self.open_graph('corr'))
@@ -435,7 +439,7 @@ class MitoPanel(QWidget):
                                     f'{u.get("n_edge", 0)}, 경계 약한 이웃 {u.get("n_weak", 0)})')
         else:
             self.cell_state.set_kind('info')
-            self.cell_state.setText(f'세포 {n}개 · 분석 실행을 누르세요.')
+            self.cell_state.setText(f'세포 {n}개 · 아래 측정 버튼을 누르세요.')
         if r is not None:
             u = r.used
             self.thr_mito.show_used(u.get('mito_threshold') if isinstance(u.get('mito_threshold'), float) else None)
@@ -493,6 +497,18 @@ class MitoPanel(QWidget):
             self.state.set_kind('success')
             self.state.setText(f'세포 {len(r.cells)} · 미토 조각 {len(r.mito):,} · 점 {len(r.puncta):,}' +
                                (' · 불러옴 (Mito Analyzer)' if r.source != 'app' else ''))
+        if hasattr(self, 'data_rows'):
+            self.data_rows.refresh()
+
+    def bar_status(self):
+        """One line for the 측정 바."""
+        ok = [it for it in self.win.items if it.cells is not None and len(it.cells)]
+        done = [it for it in ok if getattr(it, 'mito', None) is not None]
+        if not ok:
+            return '세포 ROI가 있는 이미지가 없습니다.', None
+        if not done:
+            return f'세포 ROI가 있는 이미지 {len(ok)}개 · 아직 분석하지 않았습니다.', None
+        return f'{len(ok)} 이미지 중 {len(done)}개 분석됨', 'success' if len(done) >= len(ok) else None
 
     def _picked(self):
         rows = self.table.selectionModel().selectedRows()

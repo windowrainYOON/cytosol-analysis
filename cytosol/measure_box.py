@@ -151,7 +151,11 @@ class MeasureBox(QWidget):
         b.setToolTip('지금 보는 이미지만 다시 재서 데이터에 넣습니다.')
         b.clicked.connect(self.measure_current)
         row.addWidget(b, 1)
-        tl.addLayout(row)
+        self.one_btn = b
+        # v0.68 (owner request 2026-11-15): the two buttons live in the inspector's
+        # 측정 바 (MainWindow.measure_bar), always visible at the bottom of the tab
+        self.all_btn.hide()
+        self.one_btn.hide()
         self.all_t = QCheckBox('일괄 측정에 모든 시점 포함')
         tl.addWidget(self.all_t)
         # saving is in the menu of each tab; with_roi: also <name>_RoiSet.zip,

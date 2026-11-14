@@ -320,7 +320,7 @@ class LiveBox(QGroupBox):
         from .mito_panel import mito_live
         got = mito_live(self.win.mito_panel)
         if got is None:
-            return [], ('분석 실행을 누르면 세포 · 조각 · 점 수가 여기 나옵니다.', 'info'), None
+            return [], ('인스펙터 아래의 측정 버튼을 누르면 세포 · 조각 · 점 수가 여기 나옵니다.', 'info'), None
         tiles, r = got
         fp = [x.get('footprint_fraction') for x in r.cells]
 
@@ -341,7 +341,7 @@ class LiveBox(QGroupBox):
         tp = self.win.track_panel
         got = track_live(tp)
         if got is None:
-            return [], ('추적 실행을 누르면 트랙 수와 속도가 여기 나옵니다.' if it.nt > 1 else '', 'info'), None
+            return [], ('인스펙터 아래의 측정 버튼을 누르면 트랙 수와 속도가 여기 나옵니다.' if it.nt > 1 else '', 'info'), None
         tiles, sel, ratio = got
         st = it.tracks
         y = ratio or next((k for k in (st.points[0] if st.points else {}) if k.startswith('I_')

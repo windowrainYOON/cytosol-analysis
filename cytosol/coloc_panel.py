@@ -262,7 +262,10 @@ class ColocPanel(QWidget):
         run_all.clicked.connect(self.run_all)
         row.addWidget(run_one, 2)
         row.addWidget(run_all, 1)
-        lay.addLayout(row)
+        self.run_one, self.run_all_btn = run_one, run_all
+        # v0.68: the run buttons live in the inspector's 측정 바 (MainWindow.measure_bar)
+        run_one.hide()
+        run_all.hide()
 
         res = QGroupBox('결과')
         vl = QVBoxLayout(res)
@@ -274,6 +277,10 @@ class ColocPanel(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.itemSelectionChanged.connect(self._row_selected)
         vl.addWidget(self.table, 1)
+        self.table.hide()  # v0.68: the table is in the graph window (데이터), no table in the page
+        from .measure_bar import DataRows
+        self.data_rows = DataRows(win, self.data_tables)
+        vl.addWidget(self.data_rows)
 
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
         from matplotlib.figure import Figure
@@ -292,6 +299,7 @@ class ColocPanel(QWidget):
         self.values.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.values.setMinimumHeight(220)
         vl.addWidget(self.values)
+        self.values.hide()  # the values: ROI hover / 실시간 값 박스 / graph window
         self.warn = theme.StatusLabel(kind='warning')
         vl.addWidget(self.warn)
         lay.addWidget(res, 1)
@@ -499,7 +507,23 @@ class ColocPanel(QWidget):
 
     # ---- results ----------------------------------------------------------------
 
+    def data_tables(self):
+        rows = [{'image_id': it.image_id, 'image': it.label} for it in self.win.items for _r in (it.coloc or [])]
+        return [('Coloc 2 · ROI', 'ROI', rows)]
+
+    def bar_status(self):
+        """One line for the 측정 바."""
+        ok = [it for it in self.win.items if (it.cells is not None and len(it.cells)) or self.whole.isChecked()]
+        done = [it for it in ok if it.coloc]
+        if not ok:
+            return 'ROI가 있는 이미지가 없습니다.', None
+        if not done:
+            return f'ROI가 있는 이미지 {len(ok)}개 · 아직 계산하지 않았습니다.', None
+        return f'{len(ok)} 이미지 중 {len(done)}개 계산됨', 'success' if len(done) >= len(ok) else None
+
     def _fill_table(self):
+        if hasattr(self, 'data_rows'):
+            self.data_rows.refresh()
         heads = ['ROI', '시점'] + [h for h, _ in SUMMARY] + ['경고']
         self.table.blockSignals(True)
         self.table.clear()

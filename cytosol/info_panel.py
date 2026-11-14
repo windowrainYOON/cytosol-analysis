@@ -38,6 +38,8 @@ def _table(columns) -> QTableWidget:
     t.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
     t.setWordWrap(True)
     t.setAlternatingRowColors(True)
+    from .measure_bar import grow_to_content
+    grow_to_content(t)  # the page scrolls, the table does not (owner request 2026-11-15)
     return t
 
 
@@ -56,11 +58,11 @@ class InfoPanel(QWidget):
 
         lay.addWidget(theme.section_header('채널별 획득 설정'))
         self.chan = _table(['항목'])
-        lay.addWidget(self.chan, 1)
+        lay.addWidget(self.chan)
         lay.addWidget(theme.section_header('이미지 · 장비 · Bleaching'))
         self.gen = _table(['구분', '항목', '값'])
         self.gen.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        lay.addWidget(self.gen, 2)
+        lay.addWidget(self.gen)
         note = QLabel(NOTE)
         note.setWordWrap(True)
         theme.secondary(note)
@@ -71,10 +73,11 @@ class InfoPanel(QWidget):
         self.copy_btn.setToolTip('두 표를 탭으로 구분된 글로 복사합니다 (엑셀에 붙여넣기).')
         self.copy_btn.clicked.connect(self.copy)
         row.addWidget(self.copy_btn)
-        hint = QLabel('저장: 메뉴 막대의 이미지 정보')
+        hint = QLabel('저장: 파일 › 내보내기…')
         theme.hint(hint)
         row.addWidget(hint, 1)
         lay.addLayout(row)
+        lay.addStretch(1)
         self._enable(False)
 
     def _enable(self, on):
@@ -119,6 +122,7 @@ class InfoPanel(QWidget):
         t.resizeColumnToContents(0)
         t.resizeColumnToContents(1)
         t.resizeRowsToContents()
+        getattr(t, '_fit', lambda: None)()
 
     def _fill_channels(self, s: InfoSummary):
         t = self.chan
@@ -140,6 +144,7 @@ class InfoPanel(QWidget):
                 t.setItem(r, c, cell)
         t.resizeColumnsToContents()
         t.resizeRowsToContents()
+        getattr(t, '_fit', lambda: None)()
 
     # ---- export ---------------------------------------------------------
 
