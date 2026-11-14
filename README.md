@@ -627,6 +627,29 @@ that lays images out as a table with row and column labels:
 
 From Python: `cytosol.figure` (`FigureSpec`, `fill_row_by_channels`, `save_figure`).
 
+### 통합 데이터 (integrated data) and the measure bar (v0.68)
+
+Every measurement is merged by itself into one table per category
+(`cytosol/integrate.py`): per image, per cell, per cell × distance band, per
+particle, per mito fragment and per timepoint. Columns are `feature › column`
+after the key columns (image, image_id, group, cell, band, particle, mito,
+frame); objects (particles, mito fragments, junctions, end points, puncta) get
+their cell and band from their position, and band rows count and average the
+objects inside. Nothing is measured again: the tables are built from the tabs'
+own results, so they equal the original tables. They head the graph editor's
+data list (correlation matrix over the column sets of several features) and are
+exported as `integrated_<category>.csv` + `integrated_columns.csv`. Measuring
+tabs share two buttons fixed at the bottom of the inspector (이 이미지만 측정 /
+전체 이미지 측정, `cytosol/measure_bar.py`); inspector pages never nest a
+scrolling list in the scrolling page.
+
+The UI language (Preferences › 일반 › 언어 / Language: system, 한국어,
+English) switches every open window at once (`cytosol/i18n.py`: the Qt text
+setters pass Korean source text through the table in `cytosol/i18n_en.py`;
+getters return the Korean source so code keys never change). File, image,
+group, channel and ROI names, CSV columns and exported file names are never
+translated, and the language is not saved in projects.
+
 ### 그래프 편집 창 (graph editor)
 
 `그래프 › 현재 탭의 그래프 편집 창` (`Ctrl+G`) or `그래프 › (feature)` opens a tab's graph

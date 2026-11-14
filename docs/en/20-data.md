@@ -3,6 +3,19 @@
 Tabs are where you choose what to measure and measure it; the graph window is where the data is
 looked at.
 
+## Measure bar at the bottom of the inspector (v0.68)
+
+Tabs that measure (세포질 ROI, 입자 ROI, 강도 측정, 등거리 띠, Coloc 2, FRAP, 입자 추적, mitoROI) show two
+buttons fixed at the bottom of the inspector: **이 이미지만 측정** (Measure This Image) and **전체 이미지
+측정** (Measure All Images). They stay put while the page scrolls; one line above them shows the tab's
+state. Tabs without measurement (LUT, markers, image info, line profile, stack) hide the bar. The
+measure / run buttons inside the tabs moved to this bar.
+
+An inspector page scrolls as one page only: lists and tables inside it (cell list, FRAP group table,
+image info tables) grow to their rows instead of scrolling on their own, and the result tables of
+mitoROI, 입자 추적 and Coloc 2 became 「그래프 ›」 rows in the data card (the whole table is in the graph
+window's data list).
+
 ## The two cards of a measuring tab
 
 The 세포질 ROI, 입자 ROI, 강도 측정 and 등거리 띠 tabs end with the same two cards.

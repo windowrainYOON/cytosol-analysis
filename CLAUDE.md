@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.67.0)
+## Window structure (v0.68.0)
 
 - **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
   v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
@@ -215,6 +215,35 @@ owner writes in Korean, so reply in Korean.
   `bands_tab`; band edges drawn only while the tab is shown. Projects keep it
   as panel `bands` + `intensity_bands`, older projects' band keys under
   `intensity` are read via `bands_panel.LEGACY_KEYS`.
+- **측정 바** (owner request 2026-11-15, v0.68; `measure_bar.MeasureBar` =
+  `MainWindow.measure_bar`): 이 이미지만 측정 / 전체 이미지 측정 fixed at the
+  bottom of the inspector box, shown only for tabs in `MainWindow.measurers`
+  (`Measurer(current, all, status)`; `box_measurer(MeasureBox)`; bound in
+  `_bind_measure_bar` on tab change). Panels keep no measure / run buttons of
+  their own. Inspector pages scroll as one page: lists / tables inside them use
+  `measure_bar.grow_to_content` (no inner scroll), result tables of mitoROI /
+  입자 추적 / Coloc 2 became `DataRows` (name, size, 그래프 ›).
+- **통합 데이터** (owner request 2026-11-15, design v4, v0.68; `integrate.py`):
+  `Integrator.build()` turns the tabs' existing results into per-category rows
+  (`CATEGORIES`: 이미지별, 세포별, 세포 × 띠별, 입자별, 미토 조각별, 시점별),
+  columns `기능 › 열` after `KEYS`; `integrate.tables(win)` → graph `Table`s
+  with column sets per feature, first in `MainWindow.data_entries()` /
+  the graph window's data list (other tables folded under 기능별 표 (원본)),
+  graph source `integrated`, export kind `integrated` (`write_csv`). A new
+  measuring feature adds its rows in `Integrator.build` and its categories in
+  `FEEDS`.
+- **화면 언어** (owner request 2026-11-15, v0.68; `i18n.py`, design system
+  Language): Preferences › 일반 › 언어 / Language (`ui/language` = system / ko
+  / en). `i18n.install()` (in `main` and the self-test, before any window)
+  wraps the Qt text setters so Korean text goes through `i18n.tr()`
+  (`i18n_en.EN` exact texts, `TEMPLATES` f-string templates with `{}`), and
+  the Python getters (`text()`, `currentText()`, `itemText()`, `findText()`,
+  `title()`, `toolTip()`, item `text()`, `tabText()`) return the Korean source,
+  so code keeps comparing Korean keys; `i18n.shown()` gives the text on screen.
+  `QPainter.drawText` is translated too; long check boxes get a word-wrapping
+  label when shown (`_maybe_wrap`). Keep writing UI text in Korean; add its
+  English to `i18n_en.py` (run a coverage check over new strings). Never
+  translate user data, CSV keys or file names; the self-test runs in Korean.
 - **Status bar**: `LoggingStatusBar` (`worklog.py`); every lasting message
   (`showMessage` without timeout) goes into the `WorkLog` and marks the
   project dirty. Use `statusBar().showMessage(...)` for anything the user
@@ -347,6 +376,9 @@ per-widget style sheets.
 | `batch.py` | 일괄 분석: steps × groups run on all images, results window, batch-only save, batch settings JSON |
 | `selftest.py` | Headless smoke test of the whole app (CI and built apps; `CYTOSOL_SELFTEST_ONLY='step name,…'` runs only some steps) |
 | `version.py` | `__version__`, the single version source |
+| `measure_bar.py` | 측정 바 at the bottom of the inspector (`MeasureBar`, `Measurer`), `DataRows`, `grow_to_content` |
+| `integrate.py` | 통합 데이터: per-category tables from every measurement, column notes, `integrated_*.csv` |
+| `i18n.py`, `i18n_en.py` | 화면 언어 (한국어 / English): Qt setter / getter wrapping, translation tables |
 | `app.py` | `MainWindow`, `Canvas`, menus, loading (`import_paths`, `add_files`, `_attach_file`), projects |
 
 ## Project files (`.cyproj`)
@@ -490,4 +522,5 @@ not affected.
 | dev branch | 0.64.0 | Owner request + decisions (2026-11-14, data-display proposal): measuring tabs end with **측정 항목** + **데이터** cards (`MeasureBox`: no inspector result table, no auto refresh; data names 「기능 · 점 하나」 `data_name` / `data_tables`; 설정 바뀜 per image `stale_items` / `_measured`, `update_stale`, 모든 이미지 측정 / 현재 이미지만), ROI hover values (`RoiPanel.hover_values`), red dot on tab chips (`ChipTabs.set_badge`, `MainWindow.update_tab_badges`), 실시간 값 박스 under the canvas (`live_box.LiveBox`; FRAP / profile / Coloc 2 plots moved there, band graph only in the graph window), graph window 데이터 list (`MainWindow.data_entries`, `GraphWindow.start_data` re-measures changed images; chips hidden) + 열 설명 (`columns_doc.py`) + table header, 측정 현황 · 일괄 분석 window (`batch.BatchResults` rewritten; View menu); docs `20-data.md` |
 | dev branch | 0.65.0 | Owner request + decisions (2026-11-13/14, particle-tracking proposal ch. 9–11): 입자 ROI **자동 (유의성)** (`particle_detect.py`: DoG image, σ from the lower half, k from the image area and noise smoothness for 0.5 noise peaks per image, h-maxima split 3 σ, extent k/2; `ParticleSettings.noise / crit_k / crit_area`, `Particles.info`), the Hessian mode kept as **점 모양 강조** (method `spot`), **입자 기준 잡기** (`particle_calib.CalibPage`: 밝기 / 크기 / 적용 steps in the tab, numbered boxes on the canvas, scope all / group / image, `ParticlePanel.criteria` saved as `particle_criterion`, asked on the first user switch-on), HT (RI) cell ROIs without nuclei (`cellroi.is_ri`, `segment_ht_cells`, routed in `RoiPanel._run_planes`), `cellroi.link_cell_frames` (cell IDs between frames, for 입자 추적) |
 | dev branch | 0.66.0 | Owner request + decisions (2026-11-13/14, particle-tracking proposal): **입자 추적** tab (`track_panel.py`, `tracking.py`): 입자 ROI detection on every frame, cell ROIs as they are / per frame with IDs linked (`link_cell_frames`) / none, LAP linking (cost: predicted-position distance, intensity, area, cell change, neighbours; predictions from TV-L1 cell flow, neighbourhood template matching, α-β velocity with an adaptive gate 1.55–2.5 µm), gap closing, merged frames flagged, ring-median background per channel, ratio B / A, track classes inside / outside / short, track table + canvas tails, live box, data tables 입자 추적 · 시점 / 트랙 / 세포 × 시점 + graph source, export kind `track` (points / summary CSV, ROI zip, ParticleTracker column names), batch step, ParticleTracker `tracks_points` CSV import (불러오기 and Tool › 입자 추적), tracks in projects; docs `21-tracking.md` |
+| dev branch | 0.68.0 | Owner request + decisions (2026-11-15, data-join v4, measure-bar mockups, design system Language): 측정 바 (이 이미지만 측정 / 전체 이미지 측정 fixed under the inspector for measuring tabs), no nested scroll areas in inspector pages (lists grow, result tables → 데이터 rows), **통합 데이터** (`integrate.py`: per image / cell / cell × band / particle / mito fragment / timepoint tables filled by every measurement, objects placed in cells and bands, graph window data list head, correlation matrix over features, export kind `integrated`), **화면 언어** 한국어 / English in Preferences › 일반 (`i18n.py`, `i18n_en.py`, switches open windows at once); docs `23-integrated.md` |
 | dev branch | 0.67.0 | Owner request + decisions (2026-11-13/14, mitoROI proposal ch. 1–5, 9): **mitoROI** tab (`mito_panel.py`, `mito.py`, `mitoan/` = Mito Analyzer's `mina`, `mito_objects`, `green`, `green_cells`, `stats` unchanged; same numbers for the same ROIs): cards 채널 · 세포 (edge cells / weak-border neighbours), 미토 분할 (조각 분할 / MiNA 기본, threshold [value][자동] + slider, minimum object), 관심 단백질 (background, green+ 기준, puncta sensitivity / threshold), 표시 (layer chips on the canvas), 결과 (cells / objects / puncta table, 상관 히트맵 › / 그룹 비교 › into the graph window, Mito Analyzer results loaded); tables with labels and column sets, export kind `mito`, batch step, import of `_per_cell.csv`, live box, projects; docs `22-mito.md` |

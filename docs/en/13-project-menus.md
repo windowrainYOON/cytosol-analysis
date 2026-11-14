@@ -131,6 +131,19 @@ Windows: 파일 › Preferences…) is stored on the computer as soon as it is
 changed and used again at the next start (macOS: the app's preferences file,
 Windows: the registry).
 
+**General** (v0.68)
+
+- **Language** (언어 / Language): **Use System Setting** (default), **한국어**, **English**.
+  Following the system gives Korean on a Korean system and English otherwise. Every open
+  window (menus, tabs, buttons, help text, status bar, alerts) changes as soon as you pick one.
+  Text inside graphs and some windows already open change only when reopened; then
+  **Reopen…** appears (it asks to save an unsaved project first).
+- Never translated: file, image, group, channel and ROI names, CSV and table column names,
+  exported file names. ImageJ terms (Mean, IntDen, Feret …) are English in both languages.
+  The language belongs to the computer and is not saved in projects.
+- Long check box texts are shown in a word-wrapping label beside the box, so the inspector
+  does not grow wider in English.
+
 **이미지 불러오기** (loading)
 
 - **TCF: HT와 FL을 정렬해 한 이미지로** (on by default): the option that used to

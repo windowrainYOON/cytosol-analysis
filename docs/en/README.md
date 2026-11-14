@@ -48,6 +48,7 @@ appears on screen, followed by its meaning in parentheses, e.g.
 | [Image stacking](19-stacking.md) | Stack files saved per channel, Z or time into one image, RGB TIFFs stacked on load, unstack |
 | [Viewing measured data](20-data.md) | 측정 항목 / 데이터 cards, values on ROIs, tab chip dots, the live box, the graph window data list and column notes, the measurement overview |
 | [Particle tracking tab](21-tracking.md) | Particles found on every frame, linked between frames (cell motion, neighbourhood pattern, track velocity), channel ratio, track table and tails, ParticleTracker results loaded |
+| [Integrated data](23-integrated.md) | Every measurement merged by itself into per-category tables (image, cell, cell × band, particle, mito fragment, timepoint), graphs and correlation heat maps from them, integrated_*.csv export |
 | [mitoROI tab](22-mito.md) | Per-cell mitochondria segmentation, MiNA skeleton, mito objects, POI on / off mito, puncta, colocalisation, green+ / −, correlation heat map, Mito Analyzer results loaded |
 | [Export window](17-export.md) | File › Export: images, crops, ROIs, tables, graphs, info, batch results and the project saved from one window |
 | [Output files](12-output-files.md) | Every file the program writes, and folder loading |
