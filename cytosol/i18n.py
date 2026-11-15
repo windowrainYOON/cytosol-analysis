@@ -685,7 +685,7 @@ def _maybe_wrap(box):
     elif isinstance(host, QBoxLayout):
         i = host.indexOf(box)
         st = host.stretch(i)
-        host.takeAt(i)
+        host.removeWidget(box)  # (no Python wrapper of the layout item)
         row.addWidget(box, 0, Qt.AlignmentFlag.AlignTop)
         row.addWidget(label, 1)
         host.insertLayout(i, row, st)
@@ -790,8 +790,11 @@ def retranslate():
     app = QApplication.instance()
     if app is None:
         return
+    from PySide6.QtWidgets import QWidget
     seen = set()
     for w in app.allWidgets():
+        if not isinstance(w, QWidget):
+            continue  # a stale wrapper (spacer item) at a reused address
         _reapply(w)
         for a in w.actions():
             if id(a) not in seen:
@@ -834,6 +837,8 @@ def retranslate():
         _reapply(a)
     from PySide6.QtWidgets import QAbstractButton
     for w in app.allWidgets():
+        if not isinstance(w, QWidget):
+            continue
         if isinstance(w, QAbstractButton) and w.isVisible():
             try:
                 _maybe_wrap(w)  # a text that grew longer in this language

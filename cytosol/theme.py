@@ -555,7 +555,9 @@ def settings_rows(form: QFormLayout):
         for role in (QFormLayout.ItemRole.LabelRole, QFormLayout.ItemRole.SpanningRole):
             it = form.itemAt(r, role)
             w = it.widget() if it is not None else None
-            if w is not None and not w.property('hig_hint') \
+            if not isinstance(w, QWidget):
+                continue  # (a stale wrapper of a spacer item can come back on macOS)
+            if not w.property('hig_hint') \
                     and w.minimumHeight() < SETTINGS_ROW_H and w.sizeHint().height() < SETTINGS_ROW_H:
                 w.setMinimumHeight(SETTINGS_ROW_H)  # one row height in the card
     for r in range(form.rowCount()):
