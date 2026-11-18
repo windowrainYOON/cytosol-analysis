@@ -32,6 +32,7 @@ LUT 프리셋, 마커 설정, 일괄 분석 설정 저장은 예전처럼 Tool /
 | Coloc 2 | 결과 CSV, ROI마다 PDF 리포트 |
 | 라인 프로파일 | 현재 이미지의 선: CSV, 그래프, 선 ROI + 그림 |
 | FRAP | 요약 CSV + 그룹 그래프, 이미지마다 곡선 CSV / 그래프 / ROI |
+| 입자 추적 | 이미지마다 트랙 시점 · 요약 CSV, 트랙 ROI, **ParticleTracker 결과 폴더** (`<이름>_ParticleTracker/`: ParticleTracker와 같은 파일 이름 · 열 · 반올림, 그래프 PNG, 영상 MP4 고르기), 모든 이미지 합친 CSV |
 | 스택 투영 | 현재 투영, 3D 회전 시리즈(TIFF 또는 MP4) |
 | 그래프 | 그래프 편집 창의 그래프들(고르기), 형식(PNG / TIFF / PDF / SVG), 데이터 CSV, 설정 JSON |
 | 이미지 정보 | 획득 정보 CSV, 원본 메타데이터 |

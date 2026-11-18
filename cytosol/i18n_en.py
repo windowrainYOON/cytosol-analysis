@@ -4362,3 +4362,12 @@ TEMPLATES.update({
     ' · threshold {} (ParticleTracker 방식)': ' · threshold {} (ParticleTracker method)',
     'ParticleTracker 방식 · {} ({})': 'ParticleTracker method · {} ({})',
 })
+
+# v0.71: ParticleTracker 결과 폴더
+EN.update({
+    'ParticleTracker 결과 폴더 (이미지마다 <이름>_ParticleTracker)': 'ParticleTracker result folder (per image <name>_ParticleTracker)',
+    'ParticleTracker와 같은 파일 · 열 (tracks_points_A_B_HT.csv, tracks_summary_A_B_HT.csv, particles_all_slices.csv, registration.csv, cell_intensity.csv …)':
+        "ParticleTracker's files and columns (tracks_points_A_B_HT.csv, tracks_summary_A_B_HT.csv, particles_all_slices.csv, registration.csv, cell_intensity.csv …)",
+    '그래프 PNG (ParticleTracker 그래프 단계)': 'Graph PNGs (ParticleTracker figures stage)',
+    '영상 MP4 (ParticleTracker 영상 단계, 오래 걸림)': 'Movies MP4 (ParticleTracker movies stage, slow)',
+})

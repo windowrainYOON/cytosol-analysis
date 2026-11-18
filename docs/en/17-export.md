@@ -35,6 +35,7 @@ in projects).
 | Coloc 2 | Results CSV, PDF report per ROI |
 | 라인 프로파일 | Line of the current image: CSV, graph, line ROI + picture |
 | FRAP | Summary CSV + group graphs; per image curve CSV / graph / ROIs |
+| 입자 추적 | Per image track points / summary CSV, track ROIs, the **ParticleTracker result folder** (`<name>_ParticleTracker/`: ParticleTracker's file names, columns and rounding; graph PNGs and movies MP4 optional); CSVs of all images |
 | 스택 투영 | Current projection, 3D rotation series (TIFF or MP4) |
 | 그래프 | The graphs of the graph editor (pick them), format (PNG / TIFF / PDF / SVG), data CSV, settings JSON |
 | 이미지 정보 | Acquisition CSV, raw metadata |

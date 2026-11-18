@@ -1,4 +1,4 @@
-# 입자 추적 탭 (v0.66, Z 투영 v0.69, ParticleTracker 방식 v0.70)
+# 입자 추적 탭 (v0.66, Z 투영 v0.69, ParticleTracker 방식 v0.70, 결과 폴더 v0.71)
 
 시간축이 있는 이미지에서 입자 ROI 탭의 검출 설정을 모든 프레임에 적용하고, 프레임 사이 같은 입자를 이어
 트랙을 만듭니다. ParticleTracker 앱의 연결 · 측정 방법을 그대로 옮겼습니다.
@@ -116,3 +116,23 @@ RI 채널이 있으면 (Tomocube TCF) ParticleTracker처럼 **두 번 연결**�
 | ParticleTracker 1.11 | 142초 | 7 206 | 1 793 | 103 / 117 |
 | ParticleTracker와 같게 | 136초 | 7 206 | 1 793 | 103 / 117 (모든 점 같음) |
 | 끔 + 입자 ROI ParticleTracker 방식 | 68초 | 7 089 | 1 758 | 100 / 113 |
+
+## ParticleTracker 결과 폴더 (v0.71)
+
+파일 › 내보내기 › 입자 추적 › **ParticleTracker 결과 폴더**(기본 켜짐)는 이미지마다 `<이름>_ParticleTracker/`에
+ParticleTracker가 결과 폴더에 쓰는 것과 같은 파일을 같은 이름 · 열 · 반올림으로 씁니다. 그래서 ParticleTracker의
+통합 분석 · 특이 입자 · 그룹 비교 탭이나 그 CSV를 읽던 스크립트에 그대로 넣을 수 있습니다.
+
+| 파일 | ParticleTracker와 같게 | 이 앱 방식 |
+|---|---|---|
+| `tracks_points_A_B_HT.csv` (트랙 × 시점, 40열) | 같음 (바이트까지) | 같은 열 (형광 좌표 = 화면 좌표, 정합 · 퍼진 세포막 · 분열 · HT 확인 열은 빈 값 / False) |
+| `tracks_summary_A_B_HT.csv` (트랙 요약) | 같음 | 같은 열 (ParticleTracker의 요약 코드로 계산) |
+| `particles_all_slices.csv`, `summary_per_slice.csv` (검출) | 같음 | 같은 열 (둘레 · 최대 · 최소 밝기, threshold는 빈 값) |
+| `particles_per_cell.csv` | 같음 | 같은 열 (세포 면적은 빈 값) |
+| `registration.csv`, `footprint_per_frame.csv`, `cell_stats_mitosis.csv`, `cell_intensity.csv`, `particle_labels.tif`, `tracking_appearance_weights.json` | 같음 | 없음 (이 방식에는 없는 단계) |
+| `dataset.json`, `config_used.yaml` | 같은 형식 | 같은 이름 (이 앱 설정) |
+| 그래프 PNG 9종 (`ratio_timecourse_inside.png` …) | ParticleTracker 그래프 코드 그대로 | 없음 |
+| 영상 MP4 7종 (`movie_reference_inside.mp4` …, 기본 꺼짐) | ParticleTracker 영상 코드 그대로 | 없음 |
+
+ParticleTracker의 `_cache/` 폴더(다시 실행용 중간 결과)는 쓰지 않습니다. 그래프와 영상은 TCF 파일을 다시 읽어
+만듭니다.

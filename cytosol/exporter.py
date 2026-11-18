@@ -189,7 +189,7 @@ def run(win, items, out, opts, progress=None) -> Result:
     if _kind_on(opts, 'frap_summary', 'frap_csv', 'frap_plot', 'frap_rois'):
         _try(res, lambda: _frap(win, items, out, opts))
     # ---- 입자 추적 ----
-    if _kind_on(opts, 'track_csv', 'track_rois', 'track_all'):
+    if _kind_on(opts, 'track_csv', 'track_rois', 'track_all', 'track_ptdir'):
         _try(res, lambda: _tracks(win, items, out, opts, where))
     # ---- mitoROI ----
     if _kind_on(opts, 'mito_csv', 'mito_rois', 'mito_all'):
@@ -339,6 +339,14 @@ def _tracks(win, items, out, opts, where):
             folder.mkdir(parents=True, exist_ok=True)
             if save_track_rois(folder / f'{stem}_tracks.zip', st, it.id_properties()):
                 files.append(folder / f'{stem}_tracks.zip')
+        if opts.get('track_ptdir'):
+            from . import pt_engine
+            d = folder / f'{stem}_ParticleTracker'
+            if getattr(st, 'pt', None):
+                files += pt_engine.write_outputs(st.pt, d, stem, figures=bool(opts.get('track_ptfig')),
+                                                 movies=bool(opts.get('track_ptmovie')))
+            elif st.source == 'app':
+                files += pt_engine.write_app_outputs(st, it, tp.summary_of(it), d, stem)
     if opts.get('track_all'):
         names = {'입자 추적 · 시점': 'tracks_points.csv', '입자 추적 · 트랙': 'tracks_summary.csv',
                  '입자 추적 · 세포 × 시점': 'tracks_cells.csv'}

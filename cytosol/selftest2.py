@@ -810,9 +810,33 @@ def tracking_pt_step(out: Path):
         raise AssertionError('outlines / ratio missing')
     if not tp.summary_of(item) or tp.table.rowCount() == 0 and tp.show_in.isChecked() is False:
         raise AssertionError('track summary')
+    # ParticleTracker result folder: its file names and columns
+    from .exporter import run as export_run
+    res = export_run(win, [item], out / 'export_ptdir', {'per_image': False, 'track_ptdir': True, 'track_ptfig': True})
+    names = {Path(f).name for f in res.files}
+    need = set(pt_engine.PT_FILES) | {'tracks_overlay.png', 'qc_detection_and_cells.png'}
+    if res.errors or not need <= names:
+        raise AssertionError(f'ParticleTracker folder {sorted(need - names)} {res.errors}')
+    import csv
+    from .ptcore.measurement import POINT_COLUMNS
+    pts_csv = next(Path(f) for f in res.files if Path(f).name == 'tracks_points_A_B_HT.csv')
+    with open(pts_csv, newline='', encoding='utf-8') as fh:
+        head = next(csv.reader(fh))
+    want = [{'x': 'x_fl', 'y': 'y_fl', 'label': 'roi_label'}.get(c, c) for c in POINT_COLUMNS]
+    if head != want:
+        raise AssertionError(f'ParticleTracker point columns {head}')
     tp.pt_engine.setChecked(False)
     if tp.uses_pt(item):
         raise AssertionError('ParticleTracker 방식 still used when off')
+    # this app's method: the same file names and columns
+    st2 = tp.run_current()
+    res = export_run(win, [item], out / 'export_ptdir_app', {'per_image': False, 'track_ptdir': True})
+    pts_csv = next((Path(f) for f in res.files if Path(f).name == 'tracks_points_A_B_HT.csv'), None)
+    if st2 is None or res.errors or pts_csv is None:
+        raise AssertionError(f'ParticleTracker folder of this app\'s tracks {res.errors}')
+    with open(pts_csv, newline='', encoding='utf-8') as fh:
+        if next(csv.reader(fh)) != want:
+            raise AssertionError('ParticleTracker point columns (this app\'s method)')
     tp.pt_engine.setChecked(True)
     _close(win)
     return f'PT detection {found}/{len(spots)}; TCF {len(whole)}/{n} spots whole over {T} frames, {st.seconds:.1f} s'

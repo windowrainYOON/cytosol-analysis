@@ -547,6 +547,7 @@ class TrackPanel(QWidget):
         st.cells = len({p['cell'] for p in pts if p['cell'] > 0})
         st.engine = 'pt'
         st.appearance = res['appearance']
+        st.pt = res['pt']     # ParticleTracker tables for its result folder (pt_engine.write_outputs)
         return st
 
     def key_of(self, item):

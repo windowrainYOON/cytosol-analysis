@@ -1,4 +1,4 @@
-# Particle tracking tab (v0.66, Z projection v0.69, ParticleTracker method v0.70)
+# Particle tracking tab (v0.66, Z projection v0.69, ParticleTracker method v0.70, result folder v0.71)
 
 On images with a time axis, the 입자 ROI tab's detection settings are applied to every frame and the same
 particle is linked from frame to frame into tracks. The linking and measurement follow the ParticleTracker
@@ -125,3 +125,24 @@ the exclusion of dividing cells and the spread-membrane region are not part of t
 | ParticleTracker 1.11 | 142 s | 7 206 | 1 793 | 103 / 117 |
 | Same as ParticleTracker | 136 s | 7 206 | 1 793 | 103 / 117 (every point equal) |
 | Off + 입자 ROI ParticleTracker method | 68 s | 7 089 | 1 758 | 100 / 113 |
+
+## ParticleTracker result folder (v0.71)
+
+파일 › 내보내기 › 입자 추적 › **ParticleTracker 결과 폴더** (on by default) writes, per image,
+`<name>_ParticleTracker/` with the files ParticleTracker writes to its result folder, under the same names,
+columns and rounding, so ParticleTracker's combine / rise-fall / group comparison tabs and scripts that read
+its CSVs take them as they are.
+
+| File | Same as ParticleTracker | This app's method |
+|---|---|---|
+| `tracks_points_A_B_HT.csv` (track × time point, 40 columns) | equal (byte for byte) | same columns (fluorescence coordinates = image coordinates; registration, spread membrane, mitosis and HT-confirmed columns empty / False) |
+| `tracks_summary_A_B_HT.csv` | equal | same columns (computed by ParticleTracker's summary code) |
+| `particles_all_slices.csv`, `summary_per_slice.csv` | equal | same columns (perimeter, max / min intensity, threshold empty) |
+| `particles_per_cell.csv` | equal | same columns (cell area empty) |
+| `registration.csv`, `footprint_per_frame.csv`, `cell_stats_mitosis.csv`, `cell_intensity.csv`, `particle_labels.tif`, `tracking_appearance_weights.json` | equal | not written (no such step) |
+| `dataset.json`, `config_used.yaml` | same format | same names (this app's settings) |
+| 9 graph PNGs (`ratio_timecourse_inside.png` …) | ParticleTracker's plotting code | not written |
+| 7 movies MP4 (`movie_reference_inside.mp4` …, off by default) | ParticleTracker's movie code | not written |
+
+ParticleTracker's `_cache/` folder (intermediate results for re-runs) is not written. Graphs and movies read
+the TCF file again.

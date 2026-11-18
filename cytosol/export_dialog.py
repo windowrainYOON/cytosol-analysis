@@ -110,6 +110,12 @@ KINDS: dict = {
             ('track_rois', '트랙 ROI (.zip: 프레임마다 입자 + 트랙 경로)', '', True),
             ('track_pt', 'ParticleTracker 열 이름으로 (x_fl, y_fl, roi_label, ratio_BA …)', '', False),
         ]),
+        ('ParticleTracker 결과 폴더 (이미지마다 <이름>_ParticleTracker)', [
+            ('track_ptdir', 'ParticleTracker와 같은 파일 · 열 (tracks_points_A_B_HT.csv, tracks_summary_A_B_HT.csv, '
+             'particles_all_slices.csv, registration.csv, cell_intensity.csv …)', '', True),
+            ('track_ptfig', '그래프 PNG (ParticleTracker 그래프 단계)', '', True),
+            ('track_ptmovie', '영상 MP4 (ParticleTracker 영상 단계, 오래 걸림)', '', False),
+        ]),
         ('모든 이미지', [
             ('track_all', 'tracks_points.csv · tracks_summary.csv · tracks_cells.csv', '', True),
         ]),
