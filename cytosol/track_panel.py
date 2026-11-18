@@ -99,6 +99,14 @@ class TrackPanel(QWidget):
         self.cell_mode.setToolTip('프레임마다 검출: 세포질 ROI 탭의 설정으로 프레임마다 세포를 찾고, 앞 프레임과 30 % 이상 '
                                   '겹치면 같은 세포 번호를 이어 줍니다 (세포가 움직이거나 모양이 바뀔 때).')
         f.addRow('세포 ROI', self.cell_mode)
+        # TCF with RI + fluorescence: ParticleTracker's own pipeline (v0.69, pt_engine)
+        self.pt_engine = QCheckBox('ParticleTracker와 같게 (형광 원본 해상도)')
+        self.pt_engine.setChecked(True)
+        self.pt_engine.setToolTip('Tomocube TCF: ParticleTracker 앱의 코드로 형광 원본 해상도에서 입자를 찾고, 형광 → RI '
+                                  '정합, RI 세포 분할, 세포 흐름, 연결, 측정, 분열 세포 제외까지 같은 순서로 실행합니다. '
+                                  '끄면 입자 ROI 탭과 세포질 ROI 탭의 방법으로 화면의 영상에서 추적합니다.')
+        self.pt_engine.toggled.connect(lambda _: self.refresh())
+        f.addRow('방식', self.pt_engine)
         # Z stacks: project every frame before detecting (v0.69, independent of the viewer's Z slider)
         self.z_proj = QCheckBox('Z 투영 후 추적')
         self.z_proj.setChecked(True)
@@ -166,7 +174,7 @@ class TrackPanel(QWidget):
         f.addRow('최대 gate', self.gate_max)
         self.gap_max = QSpinBox()
         self.gap_max.setRange(0, 10)
-        self.gap_max.setValue(1)
+        self.gap_max.setValue(2)
         self.gap_max.setSuffix(' 프레임')
         self.gap_max.setToolTip('검출이 이만큼의 프레임 동안 빠져도 앞뒤 조각을 같은 트랙으로 잇습니다 (0 = 잇지 않음).')
         f.addRow('누락 프레임 연결', self.gap_max)
@@ -266,6 +274,7 @@ class TrackPanel(QWidget):
             gap_max=self.gap_max.value(), w_int=self.w_int.value(), w_area=self.w_area.value(),
             inside_fraction=self.inside.value() / 100, min_track=self.min_track.value(),
             exclude_merged=self.exclude_merged.isChecked(),
+            engine='pt' if self.pt_engine.isChecked() else 'app',
             z_project=(self.z_method.currentData() or 'mip') if self.z_proj.isChecked() else '',
             ratio_b=self.ratio_b.currentData() or '', ratio_a=self.ratio_a.currentData() or '')
 
@@ -278,8 +287,30 @@ class TrackPanel(QWidget):
             return item.z if item is not None else 'mip'
         return self.settings().z_project or item.z
 
+    def uses_pt(self, item, prm=None) -> bool:
+        """Whether this image is tracked with ParticleTracker's pipeline."""
+        from . import pt_engine
+        prm = prm or self.settings()
+        return item is not None and prm.engine == 'pt' and pt_engine.is_tcf_pair(item) and \
+            (item.nz < 2 or bool(prm.z_project))
+
+    def pt_channels(self, item):
+        """(reference, measure) channel names for ParticleTracker: the 입자 ROI
+        channel (or ratio A) as reference, ratio B (or the other one) as measure."""
+        fl = [c for c in item.channels if str(c).startswith('CH')]
+        s = self._particle_settings(item)
+        ref = s.channel if s.channel in fl else self.ratio_a.currentData() if self.ratio_a.currentData() in fl \
+            else fl[-1]
+        b = self.ratio_b.currentData()
+        mea = b if b in fl and b != ref else next((c for c in fl if c != ref), ref)
+        return ref, mea
+
     def _z_ui(self):
         it = self.item
+        from . import pt_engine
+        tcf = it is not None and pt_engine.is_tcf_pair(it)
+        self._det_form.setRowVisible(self.pt_engine, tcf)
+        self._det_form.setRowVisible(self.cell_mode, not (tcf and self.pt_engine.isChecked()))
         stack = it is not None and it.nz > 1
         self._det_form.setRowVisible(self.z_row, stack)
         self._det_form.setRowVisible(self.z_hint, stack)
@@ -289,7 +320,9 @@ class TrackPanel(QWidget):
             where = '최대 투영 (MIP)' if z == 'mip' else '가운데 Z' if z == 'mid' else f'Z {int(z) + 1}'
             self.z_hint.setText(f'Z {it.nz}장을 프레임마다 투영해 추적합니다. 뷰어의 Z 슬라이더와는 따로입니다.'
                                 if self.z_proj.isChecked() else
-                                f'뷰어의 Z 슬라이더 위치 ({where})의 한 장으로 추적합니다.')
+                                f'뷰어의 Z 슬라이더 위치 ({where})의 한 장으로 추적합니다.' +
+                                (' ParticleTracker 방식은 Z 투영이 켜져 있을 때만 쓰고, 지금은 이 앱의 방식으로 추적합니다.'
+                                 if tcf and self.pt_engine.isChecked() else ''))
 
     def visible_tab(self):
         return self.win.tab_current('track_tab')
@@ -353,6 +386,8 @@ class TrackPanel(QWidget):
         from .cellroi import CellRois, link_cell_frames
         from .intensity import bit_depth, detect_particles, whole_image_cells
         prm = self.settings()
+        if self.uses_pt(item, prm):
+            return self._run_pt(item, frames, progress, prm)
         s = self._particle_settings(item)
         c = s.channel_for(item)
         if c is None:
@@ -382,7 +417,30 @@ class TrackPanel(QWidget):
 
         # cells per frame (IDs linked when detected per frame)
         cell_rois = {}
-        if mode == 'frame':
+        pt_flow = None
+        roles0 = dict(self.win.roi_panel.roles(item))
+        from .cellroi import is_ri
+        ri_cells = mode == 'frame' and roles0.get('bg') is not None and not self.win.roi_panel.manual_mode() \
+            and frames and is_ri(planes_of(frames[0])[roles0['bg']])
+        if ri_cells:
+            # HT (RI) cells as ParticleTracker finds them (ptcore.cells, unchanged): cell body image,
+            # triangle / Otsu thresholds from every 4th frame, IDs linked by overlap; flow of the body images
+            from .ptcore import cells as ptc
+            from .ptcore.config import CellParams
+            cp = CellParams()
+            f = tk.UNIT_UM / px
+            cp.open_radius = max(1, int(round(cp.open_radius * f)))
+            cp.smooth_sigma = cp.smooth_sigma * f
+            cp.min_cell_area = int(round(cp.min_cell_area * f * f))
+            ht = np.stack([planes_of(t)[roles0['bg']] for t in frames]).astype(np.float32)
+            cim = ptc.cell_body_images(ht, cp)
+            CID, _lo, _core = ptc.segment_cells(cim, cp, (lambda fr, m: progress(f'{m} ({item.label})')) if progress else None)
+            if prm.flow:
+                pt_flow = ptc.cell_flow(cim, cp, (lambda fr, m: progress(f'{m} ({item.label})')) if progress else None)
+            del cim, ht
+            for k, t in enumerate(frames):
+                cell_rois[t] = CellRois(CID[k].astype(np.int32), None, item.pixel_um)
+        elif mode == 'frame':
             cp = self._cell_params(item, planes_of, frames)
             raw = {}
             for k, t in enumerate(frames):
@@ -421,7 +479,7 @@ class TrackPanel(QWidget):
                 pt, pr, pplanes = prev
                 if prm.flow and mode != 'none' and pr:
                     try:
-                        fl = tk.cell_flow(pplanes[flow_ch], planes[flow_ch])
+                        fl = pt_flow[k - 1] if pt_flow is not None else tk.cell_flow(pplanes[flow_ch], planes[flow_ch])
                         for q in pr:
                             if q['cell'] > 0:
                                 iy, ix = int(round(q['y'])), int(round(q['x']))
@@ -457,6 +515,38 @@ class TrackPanel(QWidget):
         st.n_det = len(rows)
         st.frames = (frames[0] + 1, frames[-1] + 1) if frames else (0, 0)
         st.cells = len({q['cell'] for q in rows if q['cell'] > 0})
+        return st
+
+    def _run_pt(self, item, frames, progress, prm):
+        """ParticleTracker's own pipeline on the TCF file (pt_engine)."""
+        from . import pt_engine as pe
+        T = item.nt
+        frames = list(frames if frames is not None else range(T))
+        ref, mea = self.pt_channels(item)
+        s = self._particle_settings(item)
+        cfg = pe.config(prm, pt_k=s.pt_k if s.method == 'pt' else None)
+        dt = np.diff(item.image.times) if item.image.times and len(item.image.times) > 1 else None
+        if dt is not None and len(dt):
+            cfg.channel.frame_interval_min = float(np.median(dt)) / 60
+        prm = replace(prm, ratio_a=ref, ratio_b=mea)
+        say = (lambda m: progress(f'ParticleTracker 방식 · {m} ({item.label})')) if progress else None
+        res = pe.run(item.path, pe.tcf_channel(ref), pe.tcf_channel(mea), cfg,
+                     frames=None if frames == list(range(T)) else frames,
+                     zmode=prm.z_project or 'mip', progress=say)
+        f0 = frames[0] if frames else 0
+        pts = pe.to_points(res, item, ref, mea, frame0=f0)
+        outl = pe.outlines(res['LAB'], res['reg'], res['S'], {(p['frame'] - f0, p['label']) for p in pts})
+        st = tk.TrackState(points=pts, outlines={(f + f0, k): v for (f, k), v in outl.items()},
+                           settings=prm.to_dict(), source='app', channels=list(item.channels),
+                           ratio=f'ratio_{mea}_{ref}', n_gap=int(res['n_gap']),
+                           key=(self.key_of(item), tuple(frames)))
+        st.seconds = res['seconds']['total']
+        st.stage_seconds = res['seconds']
+        st.n_det = res['n_det']
+        st.frames = (frames[0] + 1, frames[-1] + 1) if frames else (0, 0)
+        st.cells = len({p['cell'] for p in pts if p['cell'] > 0})
+        st.engine = 'pt'
+        st.appearance = res['appearance']
         return st
 
     def key_of(self, item):
@@ -592,7 +682,12 @@ class TrackPanel(QWidget):
             s = self._particle_settings(it)
             method = {'auto': '자동 (유의성)', 'spot': '점 모양 강조', 'manual': 'threshold', 'otsu': 'Otsu'}.get(s.method, s.method)
             crit = ' · 사용자 기준' if s.method == 'auto' and s.crit_k else ''
-            self.det_info.setText(f'입자 ROI 탭 · {s.channel} · {method}{crit}')
+            if self.uses_pt(it):
+                ref, mea = self.pt_channels(it)
+                k = s.pt_k if s.method == 'pt' else 10.0
+                self.det_info.setText(f'ParticleTracker 방식 · reference {ref} · measure {mea} · k {k:g} × MAD')
+            else:
+                self.det_info.setText(f'입자 ROI 탭 · {s.channel} · {method}{crit}')
         del pp
         st = it.tracks if it is not None else None
         if it is not None and it.nt < 2 and st is None:
@@ -602,6 +697,8 @@ class TrackPanel(QWidget):
             self.det_state.set_kind('success')
             fr = getattr(st, 'frames', None)
             src = '불러옴 (ParticleTracker)' if st.source != 'app' else f'{fr[0]}–{fr[1]} 프레임' if fr else ''
+            if getattr(st, 'engine', '') == 'pt':
+                src += ' · ParticleTracker 방식'
             zp = (st.settings or {}).get('z_project', '') if st.source == 'app' and it.nz > 1 else ''
             src += {'mip': ' · Z 최대 투영', 'mean': ' · Z 평균 투영'}.get(zp, '')
             self.det_state.setText(f'{src} · 입자 {len(st.points):,}개' +
@@ -626,7 +723,7 @@ class TrackPanel(QWidget):
     def _class_ok(self, row):
         k = row['class']
         return (k == 'inside' and self.show_in.isChecked()) or (k == 'outside' and self.show_out.isChecked()) \
-            or (k == 'short' and self.show_short.isChecked())
+            or (k not in ('inside', 'outside') and self.show_short.isChecked())
 
     def _fill_table(self):
         it = self.item

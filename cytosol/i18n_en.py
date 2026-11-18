@@ -4332,3 +4332,33 @@ TEMPLATES.update({
     '1차 연결 {}/{} ({})': 'Pass 1 linking {}/{} ({})',
     '2차 (외형) 연결 {}/{} ({})': 'Pass 2 (appearance) linking {}/{} ({})',
 })
+
+# v0.70: ParticleTracker 방식
+EN.update({
+    'ParticleTracker와 같게 (형광 원본 해상도)': 'Same as ParticleTracker (native fluorescence resolution)',
+    'Tomocube TCF: ParticleTracker 앱의 코드로 형광 원본 해상도에서 입자를 찾고, 형광 → RI 정합, RI 세포 분할, 세포 흐름, 연결, 측정, 분열 세포 제외까지 같은 순서로 실행합니다. 끄면 입자 ROI 탭과 세포질 ROI 탭의 방법으로 화면의 영상에서 추적합니다.':
+        "Tomocube TCF: ParticleTracker's own code finds the particles at the native fluorescence resolution and "
+        'runs fluorescence → RI registration, RI cell segmentation, cell flow, linking, measurement and the '
+        "exclusion of dividing cells in the same order. Off: tracking on the image shown, with the Particle ROI "
+        "and Cytosol ROI tabs' methods.",
+    '방식': 'Method',
+    'ParticleTracker 방식': 'ParticleTracker method',
+    'threshold 배수 (k × MAD)': 'Threshold factor (k × MAD)',
+    '배경을 뺀 영상의 중앙값 + 이 값 × MAD와 triangle threshold 중 큰 값 이상을 입자로 봅니다 (ParticleTracker 기본 10). 작을수록 흐린 입자까지 찾습니다.':
+        'Particles are at or above the larger of median + this × MAD of the background-subtracted image and the '
+        'triangle threshold (ParticleTracker default 10). Smaller finds fainter particles.',
+    ' ParticleTracker 방식은 Z 투영이 켜져 있을 때만 쓰고, 지금은 이 앱의 방식으로 추적합니다.':
+        " The ParticleTracker method needs the Z projection on; this app's method is used now.",
+    ' · ParticleTracker 방식': ' · ParticleTracker method',
+})
+EN['자동: 배경을 뺀 이미지에서 잡음(σ)보다 뚜렷한 봉우리만 입자로 봅니다. 기준 k는 이미지 넓이에 맞춰 정해 노이즈가 입자로 잡히는 일이 드뭅니다 (입자 기준 잡기로 직접 정할 수도 있음).\n점 모양 강조: Hessian 필터로 작고 둥근 점을 찾습니다 (작은 점이 많을 때).\nthreshold: 이 값 이상인 영역이 입자입니다.\nParticleTracker 방식: ParticleTracker 앱과 같은 검출 (배경 σ 2.8 µm를 뺀 영상에서 중앙값 + k × MAD와 triangle 중 큰 값 이상, 봉우리마다 watershed로 나눔).'] = (
+    'Automatic: only peaks clearer than the noise (σ) of the background-subtracted image are particles; k is '
+    'set from the image area so noise is rarely taken (or set it with Set criterion).\nSpot emphasis: a Hessian '
+    'filter finds small round spots (many small spots).\nthreshold: areas at or above this value are particles.\n'
+    'ParticleTracker method: the same detection as the ParticleTracker app (median + k × MAD or the triangle '
+    'threshold, whichever is larger, on the image minus a σ 2.8 µm background; split per peak by a watershed).')
+TEMPLATES.update({
+    'ParticleTracker 방식 · reference {} · measure {} · k {} × MAD': 'ParticleTracker method · reference {} · measure {} · k {} × MAD',
+    ' · threshold {} (ParticleTracker 방식)': ' · threshold {} (ParticleTracker method)',
+    'ParticleTracker 방식 · {} ({})': 'ParticleTracker method · {} ({})',
+})

@@ -58,7 +58,7 @@ class TrackSettings:
     refine_search_um: float = 2.7
     refine_min: float = 0.5
     refine_weight: float = 0.5
-    gap_max: int = 1
+    gap_max: int = 2               # owner 2026-11-18: 2 (ParticleTracker's default is 1)
     gap_penalty: float = 1.0
     ring_in: int = 3               # px; used only when the pixel size is unknown
     ring_out: int = 8
@@ -75,6 +75,7 @@ class TrackSettings:
     exclude_merged: bool = True
     ratio_b: str = ''              # ratio = I_<ratio_b> / I_<ratio_a> (channel names, '' = none)
     ratio_a: str = ''
+    engine: str = 'pt'             # TCF RI + fluorescence: 'pt' = ParticleTracker's own pipeline (pt_engine)
     z_project: str = 'mip'         # Z stacks: 'mip' / 'mean' projection per frame, '' = the viewer's Z
 
     def to_dict(self):
@@ -486,53 +487,7 @@ def build_tracks(D, links, pred, gate_used, prm: TrackSettings, px_um, app_w=Non
     if prm.gap_max == 1 and k > 1:
         _close_one_gap(D, tid, pred, gate_used, prm, px_um, app_w, mp)
     elif prm.gap_max > 1 and k > 1:
-        px = px_um or 0.1
-        s = UNIT_UM / px
-        base = prm.gate_um / UNIT_UM
-        first = {}
-        last = {}
-        for i in np.argsort(D['frame'], kind='stable'):
-            t = tid[i]
-            first.setdefault(t, i)
-            last[t] = i
-        ends = list(last.items())
-        starts = list(first.items())
-        cand = []
-        for ei, (te_id, e) in enumerate(ends):
-            te = D['frame'][e]
-            ve = (pred[e] - np.array([D['y'][e], D['x'][e]]))
-            for si, (ts_id, st) in enumerate(starts):
-                gap = D['frame'][st] - te
-                if ts_id == te_id or not 2 <= gap <= prm.gap_max + 1:
-                    continue
-                gg = min(gate_used[e] * math.sqrt(gap), prm.gate_max_um / UNIT_UM * 1.5)
-                fwd = np.array([D['y'][e], D['x'][e]]) + gap * ve
-                dd = np.linalg.norm(np.array([D['y'][st], D['x'][st]]) - fwd) / s
-                if dd > gg:
-                    continue
-                c = dd * (base / gg) + prm.w_cell * (D['cell'][e] != D['cell'][st]) + prm.gap_penalty * (gap - 1)
-                if app_w:
-                    for kk, w in app_w.items():
-                        col, kind = APPEARANCE[kk]
-                        if w > 0 and col in D:
-                            c += prm.appearance_scale * w * float(
-                                _featdiff(np.array([D[col][e]]), np.array([D[col][st]]), kind)[0])
-                else:
-                    c += prm.w_int * abs(math.log(max(D['mean'][e], 1e-9) / max(D['mean'][st], 1e-9)))
-                    c += prm.w_area * abs(math.log(max(D['area'][e], 1) / max(D['area'][st], 1)))
-                cand.append((ei, si, c))
-        if cand:
-            ne, ns = len(ends), len(starts)
-            big = 1e6
-            M = np.full((ne + ns, ns + ne), big)
-            for ei, si, c in cand:
-                M[ei, si] = min(M[ei, si], c)
-            M[:ne, ns:] = np.where(np.eye(ne) > 0, base + 2, big)
-            M[ne:, :ns] = np.where(np.eye(ns) > 0, base + 2, big)
-            M[ne:, ns:] = np.where(M[:ne, :ns].T < big, 0, big)
-            for i, j in zip(*linear_sum_assignment(M)):
-                if i < ne and j < ns and M[i, j] < big:
-                    mp[starts[j][0]] = ends[i][0]
+        _close_gaps_pt(D, tid, pred, gate_used, prm, px_um, app_w, mp)
 
     def root(x):
         seen = set()
@@ -545,6 +500,29 @@ def build_tracks(D, links, pred, gate_used, prm: TrackSettings, px_um, app_w=Non
     for i in np.argsort(D['frame'], kind='stable'):
         order.setdefault(roots[i], len(order) + 1)
     return np.array([order[r] for r in roots], int), len(mp)
+
+
+def _close_gaps_pt(D, tid, pred, gate_used, prm: TrackSettings, px_um, app_w, mp):
+    """ParticleTracker's close_gaps (u-track style, up to gap_max missing
+    frames: forward and backward extrapolation, gate × √(gap + 1), appearance
+    of the last / first 3 points, one assignment per connected group), run on
+    this app's detections in ParticleTracker's units."""
+    import pandas as pd
+
+    from .ptcore.config import TrackingParams
+    from .ptcore.tracking import close_gaps
+    px = px_um or 0.1
+    s = UNIT_UM / px
+    cols = dict(track_id=np.asarray(tid), frame=D['frame'].astype(int), y_ht=D['y'] / s, x_ht=D['x'] / s,
+                pred_y=pred[:, 0] / s, pred_x=pred[:, 1] / s, gate_used=np.asarray(gate_used, float),
+                cell_id=D['cell'].astype(int), mean_intensity=D['mean'], area_px=D['area'], eccentricity=D['ecc'])
+    if 'ri_max' in D:
+        cols['ht_ri_max'], cols['ht_ri_mean'] = D['ri_max'], D['ri_mean']
+    tp = TrackingParams()
+    tp.gate, tp.gate_max = prm.gate_um / UNIT_UM, max(prm.gate_max_um, prm.gate_um) / UNIT_UM
+    tp.gap_max, tp.gap_penalty, tp.w_cell = int(prm.gap_max), prm.gap_penalty, prm.w_cell
+    tp.w_int, tp.w_area, tp.appearance_scale = prm.w_int, prm.w_area, prm.appearance_scale
+    mp.update({int(k): int(v) for k, v in close_gaps(pd.DataFrame(cols), tp, app_w).items()})
 
 
 def _close_one_gap(D, tid, pred, gate_used, prm: TrackSettings, px_um, app_w, mp):
@@ -698,7 +676,8 @@ def summary(pts, channels, prm: TrackSettings, ratio_col=''):
                    main_cell_id=max(set(cells), key=cells.count) if cells else 0,
                    frac_cytosol=locs.count('cytosol') / n, frac_nucleus=locs.count('nucleus') / n,
                    frac_outside=locs.count('outside') / n,
-                   **{'class': 'short' if n < prm.min_track else ('inside' if inside > prm.inside_fraction else 'outside')},
+                   **{'class': tr[0]['pt_group'] if tr[0].get('pt_group') else
+                      'short' if n < prm.min_track else ('inside' if inside > prm.inside_fraction else 'outside')},
                    path_um=path, net_disp_um=net, straightness=net / path if path > 0 else float('nan'),
                    mean_speed_um_min=path / dur if dur > 0 else float('nan'),
                    mean_area_um2=float(np.mean([p['area_um2'] for p in tr])))

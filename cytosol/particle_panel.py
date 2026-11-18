@@ -134,13 +134,17 @@ class ParticlePanel(QWidget):
         # the former Hessian spots stay as 점 모양 강조 (hidden state spot_mode)
         self.spot_mode = QCheckBox('점 모양 강조')
         self.spot_mode.hide()
+        self.pt_mode = QCheckBox('ParticleTracker 방식')   # v0.69: hidden state like spot_mode
+        self.pt_mode.hide()
         self.method_combo = QComboBox()
-        self.method_combo.addItems(['자동 (유의성)', '점 모양 강조 (작은 점 많을 때)', 'threshold'])
+        self.method_combo.addItems(['자동 (유의성)', '점 모양 강조 (작은 점 많을 때)', 'threshold', 'ParticleTracker 방식'])
         self.method_combo.setToolTip(
             '자동: 배경을 뺀 이미지에서 잡음(σ)보다 뚜렷한 봉우리만 입자로 봅니다. 기준 k는 이미지 '
             '넓이에 맞춰 정해 노이즈가 입자로 잡히는 일이 드뭅니다 (입자 기준 잡기로 직접 정할 수도 있음).\n'
             '점 모양 강조: Hessian 필터로 작고 둥근 점을 찾습니다 (작은 점이 많을 때).\n'
-            'threshold: 이 값 이상인 영역이 입자입니다.')
+            'threshold: 이 값 이상인 영역이 입자입니다.\n'
+            'ParticleTracker 방식: ParticleTracker 앱과 같은 검출 (배경 σ 2.8 µm를 뺀 영상에서 '
+            '중앙값 + k × MAD와 triangle 중 큰 값 이상, 봉우리마다 watershed로 나눔).')
         self.method_combo.currentIndexChanged.connect(self._method_picked)
         pl.addRow('검출 자동화', self.detect_auto)
         pl.addRow('검출 방식', self.method_combo)
@@ -192,6 +196,15 @@ class ParticlePanel(QWidget):
         self.spot_k.setToolTip('점의 중심이 세포 배경의 중앙값 + 이 값 × MAD(잡음)를 넘어야 '
                                '입자로 봅니다. 작을수록 흐린 점까지 찾습니다.')
         pl.addRow('자동 민감도 (k)', self.spot_k)
+        self.pt_k = QDoubleSpinBox()
+        self.pt_k.setRange(1.0, 50.0)
+        self.pt_k.setSingleStep(0.5)
+        self.pt_k.setDecimals(1)
+        self.pt_k.setValue(10.0)
+        self.pt_k.setToolTip('배경을 뺀 영상의 중앙값 + 이 값 × MAD와 triangle threshold 중 큰 값 이상을 입자로 봅니다 '
+                             '(ParticleTracker 기본 10). 작을수록 흐린 입자까지 찾습니다.')
+        self.pt_k.valueChanged.connect(lambda _: self._particle_changed())
+        pl.addRow('threshold 배수 (k × MAD)', self.pt_k)
         self.spot_size = QDoubleSpinBox()
         self.spot_size.setRange(0.05, 20.0)
         self.spot_size.setSingleStep(0.05)
@@ -221,7 +234,7 @@ class ParticlePanel(QWidget):
         self._thr_row = theme.slider_field(self.thr_slider, self.thr_spin)
         pl.addRow('수동 threshold', self._thr_row)
         # the method and the inputs it uses: one group, no lines inside (owner rule 2026-11-04)
-        theme.group_rows(self.method_combo, self.spot_k, self.spot_size, self.thr_spin)
+        theme.group_rows(self.method_combo, self.spot_k, self.pt_k, self.spot_size, self.thr_spin)
         theme.group_rows(self._crit_row, self.crit_state)
         theme.group_rows(self.noise, self.k_note)
         self.min_px = QSpinBox()
@@ -514,9 +527,10 @@ class ParticlePanel(QWidget):
             channel=name, index=max(self.part_channel.currentData() or 0, 0),
             within=self.within.currentData(),
             method='manual' if self.thr_manual.isChecked() else (
-                'spot' if self.spot_mode.isChecked() else 'auto'),
+                'pt' if self.pt_mode.isChecked() else 'spot' if self.spot_mode.isChecked() else 'auto'),
             manual=self.thr_spin.value(), min_px=self.min_px.value(),
-            k=self.spot_k.value(), size_um=self.spot_size.value(), noise=self.noise.value())
+            k=self.spot_k.value(), size_um=self.spot_size.value(), noise=self.noise.value(),
+            pt_k=self.pt_k.value())
         return self.with_criterion(s, self.item)
 
     def criterion_for(self, item, channel):
@@ -586,15 +600,17 @@ class ParticlePanel(QWidget):
         self._method_auto.setChecked(auto_on)
         self._method_auto.blockSignals(False)
         self.method_combo.blockSignals(True)
-        self.method_combo.setCurrentIndex((1 if self.spot_mode.isChecked() else 0) if auto_on else 2)
+        self.method_combo.setCurrentIndex(
+            (3 if self.pt_mode.isChecked() else 1 if self.spot_mode.isChecked() else 0) if auto_on else 2)
         self.method_combo.blockSignals(False)
         self._method_rows()
 
     def _method_picked(self, i):
-        spot = i == 1
-        changed = spot != self.spot_mode.isChecked()
+        spot, pt = i == 1, i == 3
+        changed = spot != self.spot_mode.isChecked() or pt != self.pt_mode.isChecked()
         self.spot_mode.setChecked(spot)
-        (self.thr_auto if i < 2 else self.thr_manual).setChecked(True)
+        self.pt_mode.setChecked(pt)
+        (self.thr_manual if i == 2 else self.thr_auto).setChecked(True)
         self._method_rows()
         if changed:
             self._particle_changed()
@@ -725,14 +741,16 @@ class ParticlePanel(QWidget):
         if not hasattr(self, '_details_row'):
             return
         manual = self.thr_manual.isChecked()
-        spot = not manual and self.spot_mode.isChecked()
-        sig = not manual and not spot
+        pt = not manual and self.pt_mode.isChecked()
+        spot = not manual and not pt and self.spot_mode.isChecked()
+        sig = not manual and not spot and not pt
         on = self.detect_auto.isChecked()
         f = self._method_form
         name = self.part_channel.currentText().split(': ', 1)[-1]
         crit = self.criterion_for(self.item, name) is not None
         theme.show_rows(f, (self._thr_row,), manual)
         theme.show_rows(f, (self.spot_k,), spot)
+        theme.show_rows(f, (self.pt_k,), pt)
         theme.show_rows(f, (self._size_row,), spot and (not on or self._details_open))
         theme.show_rows(f, (self._details_row,), on and spot)
         theme.show_rows(f, (self._crit_row, self.crit_state), sig)
@@ -914,6 +932,8 @@ class ParticlePanel(QWidget):
             txt += f' · 세포별 threshold {min(thr):.4g}–{max(thr):.4g}'
         elif method == 'auto' and p.info.get('k'):
             txt += f' · k = {p.info["k"]:.1f}σ ' + ('(사용자 기준)' if p.info.get('source') == 'user' else '(통계)')
+        elif method == 'pt' and p.info.get('pt_threshold') is not None:
+            txt += f' · threshold {p.info["pt_threshold"]:.4g} (ParticleTracker 방식)'
         elif thr and method == 'spot':
             txt += f' · 세포별 입자 하한 {min(thr):.4g}–{max(thr):.4g}'
         elif it.particle_settings is None:
@@ -938,6 +958,8 @@ class ParticlePanel(QWidget):
                 self.part_channel.setCurrentIndex(c if c is not None else 0)
                 self.within.setCurrentIndex(max(0, self.within.findData(s.within)))
                 self.spot_mode.setChecked(s.method == 'spot')
+                self.pt_mode.setChecked(s.method == 'pt')
+                self.pt_k.setValue(getattr(s, 'pt_k', 10.0))
                 (self.thr_manual if s.method == 'manual' else self.thr_auto).setChecked(True)
                 self._method_sync(s.method != 'manual')
                 self.noise.setValue(s.noise)

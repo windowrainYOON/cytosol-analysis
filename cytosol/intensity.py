@@ -260,6 +260,7 @@ class ParticleSettings:
     noise: float = 0.5      # auto: noise peaks allowed per image (sets k from the image size)
     crit_k: float = 0.0     # auto: 입자 기준 brightness in σ (0 = statistical k)
     crit_area: float = 0.0  # auto: 입자 기준 smallest half-max area, µm² (0 = none)
+    pt_k: float = 10.0      # pt (ParticleTracker 방식): threshold = max(median + pt_k × MAD, triangle)
 
     def channel_for(self, item) -> int | None:
         if self.channel in item.channels:
@@ -281,7 +282,8 @@ class ParticleSettings:
                        manual=float(d.get('manual', 0)), min_px=int(d.get('min_px', 1)),
                        k=float(d.get('k', 3.0)), size_um=float(d.get('size_um', 0.4)),
                        frac=float(d.get('frac', 0.3)), noise=float(d.get('noise', 0.5)),
-                       crit_k=float(d.get('crit_k', 0)), crit_area=float(d.get('crit_area', 0)))
+                       crit_k=float(d.get('crit_k', 0)), crit_area=float(d.get('crit_area', 0)),
+                       pt_k=float(d.get('pt_k', 10.0)))
         except ValueError:
             return None
 
@@ -414,13 +416,49 @@ def whole_image_cells(shape, px_um=None):
     return CellRois(np.ones(shape, np.int32), None, px_um)
 
 
+# ParticleTracker 1.11 detection parameters, in fluorescence px of Tomocube TCF (0.112 µm)
+PT_PX_UM = 0.112
+PT_DETECTION = dict(sigma_bg=25.0, sigma_smooth=1.0, min_distance=3, max_small=3)
+
+
+def pt_particles(plane, lab, region, s, px_um=None):
+    """ParticleTracker's detect_frame (ptcore.detection, unchanged) on the
+    whole plane: Gaussian σ 1 px minus σ 25 px background, threshold =
+    max(median + k × MAD, triangle), peaks ≥ 3 px apart split by a watershed,
+    pieces ≤ 3 px dropped.  Sizes scale with the pixel size (they are set for
+    0.112 µm px); a particle is kept when its brightest pixel lies in the
+    region (cells), the whole ROI then."""
+    from scipy import ndimage as ndi
+    from skimage import segmentation
+
+    from .ptcore.config import DetectionParams
+    from .ptcore.detection import detect_frame
+    f = PT_PX_UM / (px_um or PT_PX_UM)
+    prm = DetectionParams(sigma_bg=PT_DETECTION['sigma_bg'] * f, sigma_smooth=PT_DETECTION['sigma_smooth'] * f,
+                          k_mad=float(s.pt_k), min_distance=max(1, int(round(PT_DETECTION['min_distance'] * f))),
+                          max_small=max(0, int(round(PT_DETECTION['max_small'] * f * f))))
+    plane = np.asarray(plane, np.float32)
+    labels, thr = detect_frame(plane, prm)
+    labels = np.asarray(labels, np.int32)
+    if region is not None and not np.all(region) and labels.max():
+        ids = np.arange(1, int(labels.max()) + 1)
+        keep = np.zeros(len(ids) + 1, bool)
+        for i, (y, x) in zip(ids, ndi.maximum_position(plane, labels, ids)):
+            keep[i] = bool(region[int(y), int(x)])
+        labels = segmentation.relabel_sequential(np.where(keep[labels], labels, 0))[0].astype(np.int32)
+    th = {int(v): float(thr) for v in np.unique(lab) if v > 0} if lab is not None else {}
+    return labels, th, {'pt_threshold': float(thr)}
+
+
 def detect_particles(cells, plane: np.ndarray, s: ParticleSettings, depth: int,
                      px_um: float | None = None) -> Particles:
     lab = cells.labels
     region = base_masks(cells)['cyto' if s.within == 'cyto' else 'cell']
-    if s.method in ('auto', 'spot'):
+    if s.method in ('auto', 'spot', 'pt'):
         info = {}
-        if s.method == 'auto':
+        if s.method == 'pt':
+            parts, thr, info = pt_particles(plane, lab, region, s, px_um)
+        elif s.method == 'auto':
             from .particle_detect import significance_particles
             parts, thr, info = significance_particles(plane, lab, region, s, px_um)
         else:

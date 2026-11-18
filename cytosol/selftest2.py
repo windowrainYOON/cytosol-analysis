@@ -711,6 +711,113 @@ def tracking_z_step(out: Path):
     return f'tracks over ≥ {T - 1} frames: MIP {found["mip"]}, mean {found["mean"]}, viewer Z 1 {found["view"]} of {n}'
 
 
+def _tracking_tcf(path, T=6, n=12, seed=5):
+    """Tomocube-like TCF time series: RI with one large cell (3D + 2DMIP) and
+    two 3DFL channels whose spots drift 1 px a frame inside it."""
+    import h5py
+    rng = np.random.default_rng(seed)
+    H, F = 160, 220
+    S = H / F
+    yy, xx = np.mgrid[:F, :F]
+    hy, hx = np.mgrid[:H, :H]
+    y0 = rng.uniform(70, 150, n)
+    x0 = rng.uniform(60, 140, n)
+    truth = []
+    with h5py.File(path, 'w') as f:
+        ht = f.create_group('Data/3D')
+        ht.attrs.update(SizeX=H, SizeY=H, SizeZ=4, ResolutionX=0.155, ResolutionY=0.155, ResolutionZ=0.5,
+                        RIMin=1.33, RIMax=1.40)
+        mip = f.create_group('Data/2DMIP')
+        mip.attrs.update(SizeX=H, SizeY=H, ResolutionX=0.155, ResolutionY=0.155)
+        fl = f.create_group('Data/3DFL')
+        fl.attrs.update(SizeX=F, SizeY=F, SizeZ=3, ResolutionX=0.155 * S, ResolutionY=0.155 * S,
+                        ResolutionZ=0.6, OffsetZ=0.0)
+        for c, col in enumerate(((0, 255, 0), (255, 0, 255))):
+            g = fl.create_group(f'CH{c}')
+            g.attrs.update(ColorR=col[0], ColorG=col[1], ColorB=col[2], Excitation=0.47 + c / 6,
+                           Emission=0.52 + c / 6)
+        cell = ((hy - 80) ** 2 + (hx - 75) ** 2 < 62 ** 2)
+        for t in range(T):
+            name = f'{t:06d}'
+            ri = (13300 + rng.integers(0, 20, (H, H)) + 220 * cell).astype(np.float64)
+            for i in range(n):   # the particles show in the RI too (fluorescence → RI registration)
+                ry, rx = (y0[i] + 0.4 * t + 0.5) * S - 0.5, (x0[i] + 1.0 * t + 0.5) * S - 0.5
+                ri += 150 * np.exp(-((hy - ry) ** 2 + (hx - rx) ** 2) / (2 * (1.8 * S) ** 2))
+            vol = np.repeat(ri[None], 4, 0).astype(np.uint16)
+            ht.create_dataset(name, data=vol).attrs['Time'] = 60.0 * t
+            mip.create_dataset(name, data=vol.max(0)).attrs['Time'] = 60.0 * t
+            a = rng.normal(100, 3, (F, F))
+            b = rng.normal(100, 3, (F, F))
+            pos = []
+            for i in range(n):
+                y, x = y0[i] + 0.4 * t, x0[i] + 1.0 * t
+                g = np.exp(-((yy - y) ** 2 + (xx - x) ** 2) / (2 * 1.8 ** 2))
+                a += 400 * g
+                b += (40 + 20 * t) * g
+                pos.append(((y + 0.5) * S - 0.5, (x + 0.5) * S - 0.5))
+            truth.append(pos)
+            for c, img in ((0, b), (1, a)):
+                d = fl[f'CH{c}'].create_dataset(name, data=np.repeat(np.clip(img, 0, 65535)[None], 3, 0).astype(np.uint16))
+                d.attrs['Time'] = 60.0 * t
+    return truth
+
+
+def tracking_pt_step(out: Path):
+    """v0.69 ParticleTracker 방식: 입자 ROI 탭의 ParticleTracker 검출, and on a
+    TCF (RI + fluorescence) 입자 추적 runs ParticleTracker's own pipeline
+    (ptcore via pt_engine): every spot tracked whole, PT's numbers."""
+    from . import pt_engine
+    from .intensity import ParticleSettings, pt_particles
+    plane, spots = _spots_plane(seed=2)
+    labels, _thr, info = pt_particles(plane, None, None, ParticleSettings(channel='A'), 0.112)
+    found = sum(1 for y, x in spots if labels[int(round(y)), int(round(x))] > 0)
+    if found < len(spots) - 2 or labels.max() > len(spots) + 4 or 'pt_threshold' not in info:
+        raise AssertionError(f'ParticleTracker detection: {found}/{len(spots)} spots, {labels.max()} particles')
+    T, n = 6, 12
+    path = out / 'pt_track.TCF'
+    truth = _tracking_tcf(path, T, n)
+    app, win = _window()
+    win.show()
+    win.import_paths([path])
+    for _ in range(20):
+        app.processEvents()
+    item = next(it for it in win.items if it.path == path)
+    win.file_list.setCurrentRow(win.items.index(item))
+    win.show_tab('track_tab')
+    tp, pp = win.track_panel, win.particle_panel
+    app.processEvents()
+    if not pt_engine.is_tcf_pair(item) or not tp.pt_engine.isChecked() or not tp.uses_pt(item):
+        raise AssertionError(f'ParticleTracker 방식 not used for a TCF ({item.channels})')
+    ch1 = next(c for c in item.channels if c.startswith('CH1'))
+    pp.part_channel.setCurrentIndex(item.channels.index(ch1))
+    app.processEvents()
+    if tp.pt_channels(item)[0] != ch1:
+        raise AssertionError(f'reference channel {tp.pt_channels(item)}')
+    st = tp.run_current()
+    if st is None or getattr(st, 'engine', '') != 'pt':
+        raise AssertionError('no ParticleTracker tracks')
+    whole = [v for v in st.tracks().values() if len(v) == T]
+    if len(whole) < n - 2:
+        raise AssertionError(f'{len(whole)} of {n} spots tracked over {T} frames ({len(st.tracks())} tracks)')
+    for v in whole:
+        i = min(range(n), key=lambda i: (truth[0][i][0] - v[0]['y']) ** 2 + (truth[0][i][1] - v[0]['x']) ** 2)
+        for p in v:
+            ty, tx = truth[p['frame'] - 1][i]
+            if (ty - p['y']) ** 2 + (tx - p['x']) ** 2 > 9:
+                raise AssertionError(f'a ParticleTracker track jumped to another spot (or is off the RI grid): '
+                                     f'{(round(p["y"], 1), round(p["x"], 1))} vs {(round(ty, 1), round(tx, 1))}')
+    if not st.outlines or not any(v[-1].get(st.ratio) == v[-1].get(st.ratio) for v in whole):
+        raise AssertionError('outlines / ratio missing')
+    if not tp.summary_of(item) or tp.table.rowCount() == 0 and tp.show_in.isChecked() is False:
+        raise AssertionError('track summary')
+    tp.pt_engine.setChecked(False)
+    if tp.uses_pt(item):
+        raise AssertionError('ParticleTracker 방식 still used when off')
+    tp.pt_engine.setChecked(True)
+    _close(win)
+    return f'PT detection {found}/{len(spots)}; TCF {len(whole)}/{n} spots whole over {T} frames, {st.seconds:.1f} s'
+
+
 def _mito_field(seed=7, n=320):
     """Mito (tubules), POI (on mito in cell 1, faint in cell 2), nuclei: three
     channels and the cell labels."""
@@ -935,6 +1042,7 @@ STEPS = [
     ('particle criterion + HT cells', particle_criterion_step),
     ('particle tracking', tracking_step),
     ('particle tracking on a Z projection', tracking_z_step),
+    ('particle tracking (ParticleTracker method)', tracking_pt_step),
     ('mitoROI', mito_step),
     ('language', language_step),
 ]

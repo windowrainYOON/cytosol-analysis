@@ -9,6 +9,7 @@ matplotlib  # preview PNGs, DejaVu font for scale bar labels
 pillow      # scale bar drawing
 PySide6     # desktop app
 scipy
+pandas      # ParticleTracker code (cytosol/ptcore)
 scikit-image  # cell ROI segmentation
 roifile     # ImageJ .roi / RoiSet.zip
 imageio-ffmpeg  # MP4 export (bundled ffmpeg binary)

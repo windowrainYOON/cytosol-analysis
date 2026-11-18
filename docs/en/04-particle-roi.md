@@ -22,7 +22,8 @@ whenever the ROIs or settings change.
 4. **검출 자동화** (automatic detection) switch and **검출 방식** (detection
    method) pop-up: **자동 (유의성)** (automatic, significance; default since v0.65),
    **점 모양 강조 (작은 점 많을 때)** (spot emphasis, for many small spots) or
-   **threshold**; only the chosen method's settings show.
+   **threshold** or **ParticleTracker 방식** (ParticleTracker method, v0.70); only the chosen method's
+   settings show.
    - **자동 (유의성)** (v0.65): on the smoothed image minus its background
      (Gaussian 2.8 µm), the noise σ comes from the lower half of the values
      (particles only add to the upper half) and a peak k σ above the median is
@@ -52,6 +53,13 @@ whenever the ROIs or settings change.
    - **threshold**: pixels at or above the **수동 threshold** value
      (slider or the number field beside it) in every cell, split into 8-connected particles (like
      ImageJ Analyze Particles).
+   - **ParticleTracker 방식** (v0.70): the ParticleTracker app's detection code as it is. The smoothed
+     (σ 1 px) image minus its background (σ 25 px); particles at or above the larger of the whole image's
+     median + **k × MAD** and the triangle threshold, split per peak (≥ 3 px apart) by a watershed, pieces of
+     ≤ 3 px dropped. The pixel values are for Tomocube fluorescence (0.112 µm) and are scaled to keep the
+     same µm on other images (background 2.8 µm, peak spacing 0.34 µm). Particles whose brightest pixel lies
+     in the search region (cells) are kept.
+     - **threshold 배수 (k × MAD)** (default 10, as in ParticleTracker): smaller finds dimmer particles.
 5. **최소 입자 크기** (Minimum particle size, px): smaller particles are dropped.
 6. **이미지에 입자 경계 표시** (Show particle outlines): pixel ROIs in magenta,
    iso-contours in orange.
