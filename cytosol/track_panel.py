@@ -47,6 +47,7 @@ from .flow import FlowLayout
 CELL_MODES = [('static', '세포질 ROI 탭 · 지금 세포 ROI 그대로'), ('frame', '세포질 ROI 탭 · 프레임마다 검출 + ID 연결'),
               ('none', '세포 ROI 없이 (이미지 전체)')]
 TAIL = 8          # frames of track tail drawn
+MEAN_CACHE_BYTES = 1 << 30   # mean-projected frames kept during one run
 PALETTE = [(255, 99, 71), (255, 215, 0), (0, 230, 230), (124, 252, 0), (255, 105, 180), (135, 206, 250),
            (255, 165, 0), (186, 85, 211), (64, 224, 208), (240, 230, 140)]
 
@@ -98,6 +99,22 @@ class TrackPanel(QWidget):
         self.cell_mode.setToolTip('프레임마다 검출: 세포질 ROI 탭의 설정으로 프레임마다 세포를 찾고, 앞 프레임과 30 % 이상 '
                                   '겹치면 같은 세포 번호를 이어 줍니다 (세포가 움직이거나 모양이 바뀔 때).')
         f.addRow('세포 ROI', self.cell_mode)
+        # Z stacks: project every frame before detecting (v0.69, independent of the viewer's Z slider)
+        self.z_proj = QCheckBox('Z 투영 후 추적')
+        self.z_proj.setChecked(True)
+        self.z_proj.setToolTip('프레임마다 Z 스택을 2D로 투영한 영상에서 입자를 찾고 잇습니다 (ParticleTracker와 같은 '
+                               '방식). 끄면 뷰어의 Z 슬라이더에서 고른 위치를 씁니다.')
+        self.z_method = QComboBox()
+        self.z_method.addItem('최대 투영 (MIP)', 'mip')
+        self.z_method.addItem('평균 투영', 'mean')
+        self.z_method.setToolTip('최대 투영: Z마다 가장 밝은 값 (작은 입자가 잘 보임, ParticleTracker 기본). '
+                                 '평균 투영: Z 평균 (잡음이 적고 밝기가 Z 전체를 대표).')
+        self.z_proj.toggled.connect(lambda _: self._z_ui())
+        self.z_row = _row(self.z_proj, None, self.z_method)
+        f.addRow('Z 스택', self.z_row)
+        self.z_hint = _hint('')
+        f.addRow(self.z_hint)
+        self._det_form = f
         self.f_from = QSpinBox()
         self.f_to = QSpinBox()
         for s in (self.f_from, self.f_to):
@@ -145,7 +162,7 @@ class TrackPanel(QWidget):
         self.gate_max.setRange(0.1, 100)
         self.gate_max.setDecimals(2)
         self.gate_max.setSuffix(' µm')
-        self.gate_max.setValue(2.5)
+        self.gate_max.setValue(2.48)
         f.addRow('최대 gate', self.gate_max)
         self.gap_max = QSpinBox()
         self.gap_max.setRange(0, 10)
@@ -182,7 +199,8 @@ class TrackPanel(QWidget):
         self.inside = QSpinBox()
         self.inside.setRange(1, 100)
         self.inside.setValue(50)
-        self.inside.setSuffix(' % 이상의 프레임')
+        self.inside.setSuffix(' % 넘는 프레임')
+        self.inside.setToolTip('트랙 프레임 중 이 비율을 넘게 세포 안(세포질)에 있으면 세포 안 트랙입니다 (ParticleTracker와 같은 기준).')
         f.addRow('세포 안 기준', self.inside)
         self.min_track = QSpinBox()
         self.min_track.setRange(2, 10000)
@@ -246,12 +264,32 @@ class TrackPanel(QWidget):
             pattern=self.use_pattern.isChecked(), velocity=self.use_velocity.isChecked(),
             gate_um=self.gate.value(), gate_max_um=max(self.gate_max.value(), self.gate.value()),
             gap_max=self.gap_max.value(), w_int=self.w_int.value(), w_area=self.w_area.value(),
-            inside_fraction=self.inside.value() / 100 - 1e-9, min_track=self.min_track.value(),
+            inside_fraction=self.inside.value() / 100, min_track=self.min_track.value(),
             exclude_merged=self.exclude_merged.isChecked(),
+            z_project=(self.z_method.currentData() or 'mip') if self.z_proj.isChecked() else '',
             ratio_b=self.ratio_b.currentData() or '', ratio_a=self.ratio_a.currentData() or '')
 
     def status(self, msg):
         self.win.statusBar().showMessage(msg)
+
+    def z_source(self, item):
+        """Which plane of each frame is tracked: 'mip' / 'mean' (Z projection) or the viewer's Z."""
+        if item is None or item.nz < 2:
+            return item.z if item is not None else 'mip'
+        return self.settings().z_project or item.z
+
+    def _z_ui(self):
+        it = self.item
+        stack = it is not None and it.nz > 1
+        self._det_form.setRowVisible(self.z_row, stack)
+        self._det_form.setRowVisible(self.z_hint, stack)
+        self.z_method.setEnabled(self.z_proj.isChecked())
+        if stack:
+            z = it.z
+            where = '최대 투영 (MIP)' if z == 'mip' else '가운데 Z' if z == 'mid' else f'Z {int(z) + 1}'
+            self.z_hint.setText(f'Z {it.nz}장을 프레임마다 투영해 추적합니다. 뷰어의 Z 슬라이더와는 따로입니다.'
+                                if self.z_proj.isChecked() else
+                                f'뷰어의 Z 슬라이더 위치 ({where})의 한 장으로 추적합니다.')
 
     def visible_tab(self):
         return self.win.tab_current('track_tab')
@@ -267,7 +305,7 @@ class TrackPanel(QWidget):
             s = replace(pp.settings(), within='image' if self.cell_mode.currentData() == 'none' else pp.settings().within)
         return pp.with_criterion(s, item)
 
-    def _frame_cells(self, item, planes, mode):
+    def _frame_cells(self, item, planes, mode, p=None):
         """Cell ROIs of one frame: the image's own, detected on this frame, or the whole image."""
         from .intensity import whole_image_cells
         h, w = planes.shape[-2:]
@@ -277,23 +315,43 @@ class TrackPanel(QWidget):
             return item.cells
         rp = self.win.roi_panel
         roles = dict(rp.roles(item))
+        p = p if p is not None else self._cell_params(item)
+        rois = rp._run_planes(planes, item.pixel_um, roles, p, rp.manual_mode(),
+                              rp._man_value('cell'), rp._man_value('nuc'))
+        rois.renumber()
+        return rois
+
+    def _cell_params(self, item, planes_of=None, frames=()):
+        """세포질 ROI tab settings for cells detected on every frame, set once
+        per image as ParticleTracker does: cells at the frame edge kept, and for
+        HT (RI) cells one threshold for all frames (median over every 4th
+        frame), so cells don't come and go with small RI changes."""
+        from .cellroi import is_ri
+        rp = self.win.roi_panel
+        roles = dict(rp.roles(item))
         p = rp.params()
         try:
             if rp._any_size_auto():
                 p = rp._sized(p, rp._auto_sizes(rp._image_sizes(item, roles)))
         except Exception:  # noqa: BLE001
             traceback.print_exc()
-        rois = rp._run_planes(planes, item.pixel_um, roles, p, rp.manual_mode(),
-                              rp._man_value('cell'), rp._man_value('nuc'))
-        rois.renumber()
-        return rois
+        p = replace(p, edge_mode='keep')
+        if planes_of is None or rp.manual_mode() or p.cell_threshold or roles.get('bg') is None:
+            return p
+        thr = []
+        for t in list(frames)[::4]:
+            planes = planes_of(t)
+            if not is_ri(planes[roles['bg']]):
+                return p
+            r = rp._run_planes(planes, item.pixel_um, roles, p, False, None, None)
+            if getattr(r, 'cell_threshold', None):
+                thr.append(float(r.cell_threshold))
+        return replace(p, cell_threshold=float(np.median(thr))) if thr else p
 
     def run(self, item, frames=None, progress=None) -> tk.TrackState | None:
         """Detect, link and measure the particles of one image over its frames."""
         from .cellroi import CellRois, link_cell_frames
         from .intensity import bit_depth, detect_particles, whole_image_cells
-        from .prefetch import plane_at
-
         prm = self.settings()
         s = self._particle_settings(item)
         c = s.channel_for(item)
@@ -308,13 +366,29 @@ class TrackPanel(QWidget):
         depth = bit_depth(item, c)
         mode = prm.cells
 
+        zsel = self.z_source(item)
+        kept, budget = {}, [MEAN_CACHE_BYTES]   # mean projections read every plane: keep them while they fit
+
         def planes_of(t):
-            return np.asarray(plane_at(item.image, t, item.z) if T > 1 else item.planes(), np.float32)
+            if T < 2 and zsel == item.z:
+                return np.asarray(item.planes(), np.float32)
+            if t in kept:
+                return kept[t]
+            p = frame_planes(item, t, zsel)
+            if zsel == 'mean' and budget[0] >= p.nbytes:
+                kept[t] = p
+                budget[0] -= p.nbytes
+            return p
 
         # cells per frame (IDs linked when detected per frame)
         cell_rois = {}
         if mode == 'frame':
-            raw = {t: self._frame_cells(item, planes_of(t), mode) for t in frames}
+            cp = self._cell_params(item, planes_of, frames)
+            raw = {}
+            for k, t in enumerate(frames):
+                raw[t] = self._frame_cells(item, planes_of(t), mode, cp)
+                if progress:
+                    progress(f'입자 추적 세포 {k + 1}/{len(frames)} ({item.label})')
             linked = link_cell_frames([raw[t].labels for t in frames])
             for t, lab in zip(frames, linked):
                 nuc = raw[t].nuclei
@@ -339,7 +413,7 @@ class TrackPanel(QWidget):
                 lab = measure.label(p.mask, connectivity=2)
             r, outs = tk.frame_detections(t + 1, lab, planes, item.channels, c,
                                           cells.labels if mode != 'none' else None,
-                                          getattr(cells, 'nuclei', None) if mode != 'none' else None, prm)
+                                          getattr(cells, "nuclei", None) if mode != "none" else None, prm, item.pixel_um)
             # cell movement between this frame and the next (inside cells only)
             for q in r:
                 q['flow_y'] = q['flow_x'] = 0.0
@@ -510,6 +584,7 @@ class TrackPanel(QWidget):
 
     def refresh(self):
         it = self.item
+        self._z_ui()
         pp = self.win.particle_panel
         if it is None:
             self.det_info.setText('이미지가 없습니다.')
@@ -527,6 +602,8 @@ class TrackPanel(QWidget):
             self.det_state.set_kind('success')
             fr = getattr(st, 'frames', None)
             src = '불러옴 (ParticleTracker)' if st.source != 'app' else f'{fr[0]}–{fr[1]} 프레임' if fr else ''
+            zp = (st.settings or {}).get('z_project', '') if st.source == 'app' and it.nz > 1 else ''
+            src += {'mip': ' · Z 최대 투영', 'mean': ' · Z 평균 투영'}.get(zp, '')
             self.det_state.setText(f'{src} · 입자 {len(st.points):,}개' +
                                    (f' · 세포 {st.cells}개' if getattr(st, 'cells', 0) else ''))
         else:
@@ -741,6 +818,25 @@ class TrackPanel(QWidget):
             if save_track_rois(p3, st, it.id_properties()):
                 out.append(str(p3))
         return out
+
+
+def frame_planes(item, t, z) -> np.ndarray:
+    """(C, Y, X) float32 of timepoint t: plane z, the max ('mip') or the mean ('mean') over Z."""
+    from .prefetch import plane_at
+    img = item.image
+    if z == 'mean':
+        nz = item.nz
+        if nz < 2:
+            return np.asarray(plane_at(img, t, 'mid'), np.float32)
+        if not img.lazy:
+            vol = img.data if t == img.t else img.loader(t)
+            return np.asarray(vol, np.float32).mean(axis=1)
+        acc = None
+        for k in range(nz):
+            p = np.asarray(plane_at(img, t, k), np.float32)
+            acc = p.copy() if acc is None else acc + p
+        return acc / nz
+    return np.asarray(plane_at(img, t, z), np.float32)
 
 
 def _pt_names(r, st):

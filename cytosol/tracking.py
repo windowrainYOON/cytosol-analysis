@@ -40,7 +40,7 @@ class TrackSettings:
     pattern: bool = True           # template matching prediction
     velocity: bool = True          # α-β track velocity + adaptive gate
     gate_um: float = 1.55
-    gate_max_um: float = 2.5
+    gate_max_um: float = 2.48       # ParticleTracker: 16 HT px
     gate_k: float = 4.0
     vel_alpha: float = 0.4
     w_cell: float = 2.0
@@ -60,8 +60,12 @@ class TrackSettings:
     refine_weight: float = 0.5
     gap_max: int = 1
     gap_penalty: float = 1.0
-    ring_in: int = 3
+    ring_in: int = 3               # px; used only when the pixel size is unknown
     ring_out: int = 8
+    ring_in_um: float = 0.34       # ParticleTracker: 3 / 8 fluorescence px of 0.112 µm
+    ring_out_um: float = 0.9
+    appearance: bool = True        # ParticleTracker 2-pass appearance weights (needs an RI channel)
+    appearance_scale: float = 1.0
     min_ia: float = 5.0
     min_track: int = 10
     inside_fraction: float = 0.5
@@ -71,6 +75,7 @@ class TrackSettings:
     exclude_merged: bool = True
     ratio_b: str = ''              # ratio = I_<ratio_b> / I_<ratio_a> (channel names, '' = none)
     ratio_a: str = ''
+    z_project: str = 'mip'         # Z stacks: 'mip' / 'mean' projection per frame, '' = the viewer's Z
 
     def to_dict(self):
         return asdict(self)
@@ -95,7 +100,16 @@ class TrackSettings:
 DET_KEYS = ('frame', 'label', 'y', 'x', 'area', 'mean', 'ecc', 'cell', 'loc')
 
 
-def frame_detections(frame, labels, planes, channels, det_channel, cell_labels, nuclei, prm: TrackSettings):
+def ring_px(prm: TrackSettings, px_um=None):
+    """(inner, outer) background ring in pixels of this image."""
+    if not px_um:
+        return prm.ring_in, prm.ring_out
+    a = max(0, int(round(prm.ring_in_um / px_um)))
+    return a, max(a + 1, int(round(prm.ring_out_um / px_um)))
+
+
+def frame_detections(frame, labels, planes, channels, det_channel, cell_labels, nuclei, prm: TrackSettings,
+                     px_um=None):
     """Detections of one frame (1-based) from its particle label image: centre
     (intensity weighted), area, mean of the detection channel, eccentricity,
     cell and location, and per channel the ROI mean, ring median and their
@@ -110,9 +124,11 @@ def frame_detections(frame, labels, planes, channels, det_channel, cell_labels, 
         return rows, outlines
     det = planes[det_channel].astype(np.float32)
     H, W = labels.shape
-    se_i = np.ones((2 * prm.ring_in + 1,) * 2, bool)
-    se_o = np.ones((2 * prm.ring_out + 1,) * 2, bool)
-    pad = prm.ring_out + 2
+    r_in, r_out = ring_px(prm, px_um)
+    se_i = np.ones((2 * r_in + 1,) * 2, bool)
+    se_o = np.ones((2 * r_out + 1,) * 2, bool)
+    pad = r_out + 2
+    ri = next((c for c, n in enumerate(channels) if str(n).upper() == 'RI'), None)
     occ = ndi.binary_dilation(labels > 0, iterations=2)
     for r in measure.regionprops(labels, intensity_image=det):
         k = r.label
@@ -138,6 +154,9 @@ def frame_detections(frame, labels, planes, channels, det_channel, cell_labels, 
             loc = 'cytosol'
         row = dict(frame=frame, label=k, y=cy, x=cx, area=int(r.area), mean=float(det[r.slice][r.image].mean()),
                    ecc=float(r.eccentricity) if r.area > 2 else 0.0, cell=cell, loc=loc)
+        if ri is not None:   # RI of the ROI (ParticleTracker's appearance features)
+            v = planes[ri][y0:y1, x0:x1][m]
+            row['ri_mean'], row['ri_max'] = float(v.mean()), float(v.max())
         for c, name in enumerate(channels):
             v = planes[c][y0:y1, x0:x1].astype(np.float64)
             raw = float(v[m].mean())
@@ -269,9 +288,20 @@ def _logdiff(a, b):
     return np.nan_to_num(v, nan=0.0, posinf=0.0)
 
 
-def cost_matrix(D, ia, ib, pred, prm: TrackSettings, s, nb=None, gate=None):
+APPEARANCE = {'area': ('area', 'log'), 'cy5': ('mean', 'log'), 'ht_max': ('ri_max', 'lin'),
+              'ht_mean': ('ri_mean', 'lin'), 'ecc': ('ecc', 'lin')}   # ParticleTracker's names
+
+
+def _featdiff(a, b, kind):
+    with np.errstate(divide='ignore', invalid='ignore'):
+        v = np.abs(np.log(a / b)) if kind == 'log' else np.abs(a - b)
+    return np.nan_to_num(v, nan=0.0, posinf=0.0)
+
+
+def cost_matrix(D, ia, ib, pred, prm: TrackSettings, s, nb=None, gate=None, app_w=None):
     """Cost (cost units) and distance (px) between detections ia (with their
-    predicted positions) and ib; s = px per cost unit."""
+    predicted positions) and ib; s = px per cost unit.  app_w: learned
+    appearance weights, used instead of the intensity / area terms."""
     g = np.broadcast_to(np.asarray(prm.gate_um / UNIT_UM if gate is None else gate, float), (len(ia),))[:, None]
     P = pred
     Q = np.stack([D['y'][ib], D['x'][ib]], 1)
@@ -279,8 +309,14 @@ def cost_matrix(D, ia, ib, pred, prm: TrackSettings, s, nb=None, gate=None):
     base = prm.gate_um / UNIT_UM
     c = d * (base / g)
     c += prm.w_cell * (D['cell'][ia][:, None] != D['cell'][ib][None])
-    c += prm.w_int * _logdiff(D['mean'][ia], D['mean'][ib])
-    c += prm.w_area * _logdiff(D['area'][ia], D['area'][ib])
+    if app_w:
+        for k, w in app_w.items():
+            col, kind = APPEARANCE[k]
+            if w > 0 and col in D:
+                c += prm.appearance_scale * w * _featdiff(D[col][ia][:, None], D[col][ib][None], kind)
+    else:
+        c += prm.w_int * _logdiff(D['mean'][ia], D['mean'][ib])
+        c += prm.w_area * _logdiff(D['area'][ia], D['area'][ib])
     if nb is not None:
         disp = (Q[None] - np.stack([D['y'][ia], D['x'][ia]], 1)[:, None]) / s
         dev = np.linalg.norm(disp - nb[:, None, :], axis=2)
@@ -318,7 +354,66 @@ def neighbour_median(D, ia, disp, prm: TrackSettings, px):
     return out
 
 
+def learn_appearance(D, links, s):
+    """ParticleTracker's appearance weights from the sure first-pass links
+    (pattern score ≥ 0.9, cost margin ≥ 2): exponential scales of the change
+    along the same particle (s_same) and against the nearest other candidate
+    (s_other) per feature, w = (1/s_same − 1/s_other) / w_dist, in cost units."""
+    from scipy.spatial import cKDTree
+    L = [(a, b, d / UNIT_UM) for a, b, _c, d, m in links
+         if np.nan_to_num(D['pat_score'][a]) >= 0.9 and m >= 2]
+    if len(L) < 50:
+        return {}, {}
+    pos = np.stack([D['y'], D['x']], 1) / s
+    fr = D['frame']
+    trees = {f: (cKDTree(pos[fr == f]), np.flatnonzero(fr == f)) for f in np.unique(fr)}
+    feats = {k: v for k, v in APPEARANCE.items() if v[0] in D}
+    same = {k: [] for k in feats}
+    other = {k: [] for k in feats}
+    dsame, dother = [], []
+    for a, b, pd_ in L:
+        tr, ids = trees[fr[b]]
+        if len(ids) < 2:
+            continue
+        dd, ii = tr.query(pos[b], k=2)
+        if not np.isfinite(dd[1]):
+            continue
+        o = ids[ii[1]]
+        dsame.append(pd_)
+        dother.append(float(np.linalg.norm(pos[o] - pos[b])) + pd_)
+        for k, (col, kind) in feats.items():
+            same[k].append(float(_featdiff(np.array([D[col][a]]), np.array([D[col][b]]), kind)[0]))
+            other[k].append(float(_featdiff(np.array([D[col][a]]), np.array([D[col][o]]), kind)[0]))
+
+    def sc(x):
+        return max(float(np.nanmean(x)), 1e-6) if len(x) else 1e-6
+    w_dist = 1 / sc(dsame) - 1 / sc(dother)
+    if w_dist <= 0:
+        return {}, {}
+    W = {k: max(0.0, (1 / sc(same[k]) - 1 / sc(other[k])) / w_dist) for k in feats}
+    stats = {k: dict(s_same=sc(same[k]), s_other=sc(other[k]), weight=W[k]) for k in feats}
+    stats['n_links'] = len(dsame)
+    return W, stats
+
+
 def link_frames(D, prm: TrackSettings, px_um, progress=None):
+    """Frame-to-frame links; with prm.appearance and an RI channel two passes
+    as in ParticleTracker: the first pass's sure links teach the appearance
+    weights, the second links with them.  Returns links, pred, gate_used, app_w."""
+    px = px_um or 0.1
+    if not prm.appearance or 'ri_max' not in D:
+        return (*_link_frames(D, prm, px_um, progress), None)
+    half = (lambda f, m: progress(f * 0.5, '1차 ' + m)) if progress else None
+    first = _link_frames(D, prm, px_um, half)
+    W, stats = learn_appearance(D, first[0], UNIT_UM / px)
+    D['_appearance'] = stats
+    if not W:
+        return (*first, None)
+    half = (lambda f, m: progress(0.5 + f * 0.5, '2차 (외형) ' + m)) if progress else None
+    return (*_link_frames(D, prm, px_um, half, app_w=W), W)
+
+
+def _link_frames(D, prm: TrackSettings, px_um, progress=None, app_w=None):
     """Frame-to-frame links (a, b, cost, distance µm, margin) and the prediction / gate used per detection."""
     px = px_um or 0.1
     s = UNIT_UM / px                           # px per cost unit
@@ -345,11 +440,11 @@ def link_frames(D, prm: TrackSettings, px_um, progress=None):
             pred[ia] = np.where(w > 0, w * pat + (1 - w) * pv, pv)
             gate_used[ia] = np.where(has_u[ia], np.clip(prm.gate_k * rms[ia], base, prm.gate_max_um / UNIT_UM), base)
         g = gate_used[ia] if prm.velocity else None
-        c, d = cost_matrix(D, ia, ib, pred[ia], prm, s, gate=g)
+        c, d = cost_matrix(D, ia, ib, pred[ia], prm, s, gate=g, app_w=app_w)
         L1 = lap(c, base + 2)
         dm = {ia[i]: (pos[ib[j]] - pos[ia[i]]) / s for i, j in L1}
         nb = neighbour_median(D, ia, dm, prm, px)
-        c, d = cost_matrix(D, ia, ib, pred[ia], prm, s, nb, gate=g)
+        c, d = cost_matrix(D, ia, ib, pred[ia], prm, s, nb, gate=g, app_w=app_w)
         L1 = lap(c, base + 2)
         srt = np.sort(np.where(np.isfinite(c), c, 1e6), 1)
         for i, j in L1:
@@ -367,8 +462,9 @@ def link_frames(D, prm: TrackSettings, px_um, progress=None):
     return links, pred, gate_used
 
 
-def build_tracks(D, links, pred, gate_used, prm: TrackSettings, px_um):
-    """Track id per detection (1-based, 0 = none), gaps closed over up to gap_max missing frames."""
+def build_tracks(D, links, pred, gate_used, prm: TrackSettings, px_um, app_w=None):
+    """Track id per detection (1-based, 0 = none), gaps closed over up to
+    gap_max missing frames (gap_max 1: ParticleTracker's one-frame closing)."""
     from scipy.optimize import linear_sum_assignment
     n = len(D['frame'])
     nxt = {a: b for a, b, *_ in links}
@@ -387,7 +483,9 @@ def build_tracks(D, links, pred, gate_used, prm: TrackSettings, px_um):
                 break
         k += 1
     mp = {}
-    if prm.gap_max >= 1 and k > 1:
+    if prm.gap_max == 1 and k > 1:
+        _close_one_gap(D, tid, pred, gate_used, prm, px_um, app_w, mp)
+    elif prm.gap_max > 1 and k > 1:
         px = px_um or 0.1
         s = UNIT_UM / px
         base = prm.gate_um / UNIT_UM
@@ -413,8 +511,15 @@ def build_tracks(D, links, pred, gate_used, prm: TrackSettings, px_um):
                 if dd > gg:
                     continue
                 c = dd * (base / gg) + prm.w_cell * (D['cell'][e] != D['cell'][st]) + prm.gap_penalty * (gap - 1)
-                c += prm.w_int * abs(math.log(max(D['mean'][e], 1e-9) / max(D['mean'][st], 1e-9)))
-                c += prm.w_area * abs(math.log(max(D['area'][e], 1) / max(D['area'][st], 1)))
+                if app_w:
+                    for kk, w in app_w.items():
+                        col, kind = APPEARANCE[kk]
+                        if w > 0 and col in D:
+                            c += prm.appearance_scale * w * float(
+                                _featdiff(np.array([D[col][e]]), np.array([D[col][st]]), kind)[0])
+                else:
+                    c += prm.w_int * abs(math.log(max(D['mean'][e], 1e-9) / max(D['mean'][st], 1e-9)))
+                    c += prm.w_area * abs(math.log(max(D['area'][e], 1) / max(D['area'][st], 1)))
                 cand.append((ei, si, c))
         if cand:
             ne, ns = len(ends), len(starts)
@@ -442,6 +547,36 @@ def build_tracks(D, links, pred, gate_used, prm: TrackSettings, px_um):
     return np.array([order[r] for r in roots], int), len(mp)
 
 
+def _close_one_gap(D, tid, pred, gate_used, prm: TrackSettings, px_um, app_w, mp):
+    """ParticleTracker's gap closing for one missing frame: a track ending at
+    frame t and one starting at t + 2, end extrapolated two steps (2 × pred −
+    position), gate × 1.3, the linking cost without the neighbour term, one
+    assignment per frame."""
+    from scipy.optimize import linear_sum_assignment
+    px = px_um or 0.1
+    s = UNIT_UM / px
+    base = prm.gate_um / UNIT_UM
+    first, last = {}, {}
+    for i in np.argsort(D['frame'], kind='stable'):
+        first.setdefault(tid[i], i)
+        last[tid[i]] = i
+    ends = np.array(list(last.values()), int)
+    starts = np.array(list(first.values()), int)
+    fe, fs = D['frame'][ends], D['frame'][starts]
+    for t in sorted({int(f) for f in fe}):
+        E = ends[fe == t]
+        S = starts[fs == t + 2]
+        if not len(E) or not len(S):
+            continue
+        P = 2 * pred[E] - np.stack([D['y'][E], D['x'][E]], 1)
+        gg = (gate_used[E] if prm.velocity else np.full(len(E), base)) * 1.3
+        c, _ = cost_matrix(D, E, S, P, prm, s, gate=gg, app_w=app_w)
+        c = np.where(np.isinf(c), 1e6, c)
+        for i, j in zip(*linear_sum_assignment(c)):
+            if c[i, j] < 1e6:
+                mp[tid[S[j]]] = tid[E[i]]
+
+
 # ---------------------------------------------------------------------------
 # the whole run on detections
 # ---------------------------------------------------------------------------
@@ -451,11 +586,15 @@ def track(rows, det_stack, prm: TrackSettings, px_um, times_s, progress=None):
     (sorted by track and frame) and the number of gaps closed."""
     if not rows:
         return [], 0
-    D = as_columns(rows, ['frame', 'label', 'y', 'x', 'area', 'mean', 'ecc', 'cell', 'flow_y', 'flow_x'])
+    keys = ['frame', 'label', 'y', 'x', 'area', 'mean', 'ecc', 'cell', 'flow_y', 'flow_x']
+    if all('ri_max' in r for r in rows):
+        keys += ['ri_mean', 'ri_max']
+    D = as_columns(rows, keys)
     D['cell'] = D['cell'].astype(int)
     predictions(D, det_stack, prm, px_um, progress)
-    links, pred, gate_used = link_frames(D, prm, px_um, progress)
-    tid, n_gap = build_tracks(D, links, pred, gate_used, prm, px_um)
+    links, pred, gate_used, app_w = link_frames(D, prm, px_um, progress)
+    tid, n_gap = build_tracks(D, links, pred, gate_used, prm, px_um, app_w)
+    track.last_appearance = D.get('_appearance') if app_w else None
     lk = {b: (c, d, m) for a, b, c, d, m in links}
     px = px_um or 0.1
     pts = []

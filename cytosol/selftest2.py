@@ -642,6 +642,75 @@ def tracking_step(out: Path):
             f'{len(res.files)} files, PT CSV loaded, project, batch')
 
 
+def tracking_z_step(out: Path):
+    """v0.69 Z 투영 후 추적: a time series with a Z stack whose spots sit on
+    different planes; projected (MIP / mean) every frame they are all found
+    whatever the viewer's Z slider shows, off = only the viewer's plane."""
+    from .io import Image
+    from .lut import ImageItem
+    from .track_panel import frame_planes
+
+    T, n, nz = 8, 12, 4
+    flat, truth = _moving_spots(T, n, seed=3)
+    rng = np.random.default_rng(4)
+    on_z = rng.integers(0, nz, n)
+    frames = []
+    for t in range(T):
+        vol = rng.normal(100, 3, (2, nz) + flat.shape[-2:]).astype(np.float32)
+        for k in range(nz):
+            sig = flat[t, :, 0] - 100.0
+            # spot i only on plane on_z[i]: rebuild from the flat frame by masking the spots of other planes
+            keep = np.zeros(flat.shape[-2:], bool)
+            yy, xx = np.mgrid[:flat.shape[-2], :flat.shape[-1]]
+            for i in range(n):
+                if on_z[i] == k:
+                    y, x = truth[t][i]
+                    keep |= (yy - y) ** 2 + (xx - x) ** 2 < 36
+            vol[:, k] += np.where(keep, sig, 0)
+        frames.append(vol)
+    px = 0.155
+    image = Image(frames[0].copy(), ['A', 'B'], {'Z': 0.5, 'Y': px, 'X': px}, colors=[(0, 1, 0), (1, 0, 1)],
+                  metadata={'image_id': 'TRACKSZ'}, times=[30.0 * t for t in range(T)],
+                  loader=lambda t: frames[t].copy())
+    item = ImageItem(path=out / 'tracks_z.tif', image=image, label='tracks_z')
+    item.reset_luts()
+    if not np.allclose(frame_planes(item, 2, 'mean'), frames[2].mean(axis=1)) or \
+            not np.allclose(frame_planes(item, 2, 'mip'), frames[2].max(axis=1)):
+        raise AssertionError('frame projection')
+    app, win = _window()
+    win.show()
+    win._add_item(item)
+    win.file_list.setCurrentRow(0)
+    win.show_tab('track_tab')
+    pp, tp = win.particle_panel, win.track_panel
+    pp.part_channel.setCurrentIndex(0)
+    pp.within.setCurrentIndex(pp.within.findData('image'))
+    tp.cell_mode.setCurrentIndex(tp.cell_mode.findData('none'))
+    item.z = 0                                  # the viewer shows plane 1 only
+    app.processEvents()
+    if not tp.z_proj.isChecked() or tp.z_method.currentData() != 'mip' or not tp.z_row.isVisibleTo(tp):
+        raise AssertionError('Z 투영 후 추적 not on by default for a Z stack')
+    if tp.z_source(item) != 'mip':
+        raise AssertionError(f'z source {tp.z_source(item)}')
+    found = {}
+    for key, on, method in (('mip', True, 'mip'), ('mean', True, 'mean'), ('view', False, 'mip')):
+        tp.z_proj.setChecked(on)
+        tp.z_method.setCurrentIndex(tp.z_method.findData(method))
+        st = tp.run_current()
+        if st is None:
+            raise AssertionError(f'no tracks ({key})')
+        found[key] = sum(1 for v in st.tracks().values() if len(v) >= T - 1)
+        if on and st.settings.get('z_project') != method:
+            raise AssertionError('z_project not kept with the tracks')
+    on0 = int((on_z == 0).sum())
+    if found['mip'] < n - 2 or found['mean'] < n - 3 or found['view'] > on0 + 1:
+        raise AssertionError(f'Z projection tracks {found} (spots on plane 1: {on0} of {n})')
+    tp.z_proj.setChecked(True)
+    tp.z_method.setCurrentIndex(0)
+    _close(win)
+    return f'tracks over ≥ {T - 1} frames: MIP {found["mip"]}, mean {found["mean"]}, viewer Z 1 {found["view"]} of {n}'
+
+
 def _mito_field(seed=7, n=320):
     """Mito (tubules), POI (on mito in cell 1, faint in cell 2), nuclei: three
     channels and the cell labels."""
@@ -865,6 +934,7 @@ STEPS = [
     ('data display', data_display_step),
     ('particle criterion + HT cells', particle_criterion_step),
     ('particle tracking', tracking_step),
+    ('particle tracking on a Z projection', tracking_z_step),
     ('mitoROI', mito_step),
     ('language', language_step),
 ]

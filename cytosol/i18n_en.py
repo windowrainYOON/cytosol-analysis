@@ -4300,3 +4300,35 @@ EN.update({
     '선 · 점 (XY)': 'Line · XY', '상관 행렬': 'Corr. matrix', '상관 비교': 'Corr. by group',
     ' % 세포질': ' % cytosol', '세포질 ROI 탭 (핵 하나 = 세포 하나)': 'Cytosol ROI tab (1 nucleus = 1 cell)',
 })
+
+# v0.69: 입자 추적 · Z 투영 후 추적
+EN.update({
+    'Z 투영 후 추적': 'Track on Z Projection',
+    'Z 스택': 'Z stack',
+    '최대 투영 (MIP)': 'Max projection (MIP)',
+    '평균 투영': 'Mean projection',
+    '프레임마다 Z 스택을 2D로 투영한 영상에서 입자를 찾고 잇습니다 (ParticleTracker와 같은 방식). 끄면 뷰어의 Z 슬라이더에서 고른 위치를 씁니다.':
+        'Find and link the particles on a 2D projection of the Z stack of every frame (as ParticleTracker does). '
+        "Off: the plane chosen on the viewer's Z slider is used.",
+    '최대 투영: Z마다 가장 밝은 값 (작은 입자가 잘 보임, ParticleTracker 기본). 평균 투영: Z 평균 (잡음이 적고 밝기가 Z 전체를 대표).':
+        'Max projection: the brightest value over Z (small particles stand out; ParticleTracker default). '
+        'Mean projection: the mean over Z (less noise; brightness stands for the whole stack).',
+    ' % 넘는 프레임': ' % of frames (more than)',
+    '트랙 프레임 중 이 비율을 넘게 세포 안(세포질)에 있으면 세포 안 트랙입니다 (ParticleTracker와 같은 기준).':
+        'A track is inside when more than this share of its frames lie in a cell (cytosol), as in ParticleTracker.',
+    '가운데 Z': 'middle Z',
+})
+TEMPLATES.update({
+    'Z {}장을 프레임마다 투영해 추적합니다. 뷰어의 Z 슬라이더와는 따로입니다.':
+        'Each frame’s {} Z planes are projected for tracking, independent of the viewer’s Z slider.',
+    '뷰어의 Z 슬라이더 위치 ({})의 한 장으로 추적합니다.': 'Tracks the single plane at the viewer’s Z slider ({}).',
+    '{}–{} 프레임 · Z 최대 투영': 'Frames {}–{} · Z max projection',
+    '{}–{} 프레임 · Z 평균 투영': 'Frames {}–{} · Z mean projection',
+    '{}–{} 프레임 · Z 최대 투영 · 입자 {}개': 'Frames {}–{} · Z max projection · {} particles',
+    '{}–{} 프레임 · Z 평균 투영 · 입자 {}개': 'Frames {}–{} · Z mean projection · {} particles',
+})
+TEMPLATES.update({
+    '입자 추적 세포 {}/{} ({})': 'Particle Tracking cells {}/{} ({})',
+    '1차 연결 {}/{} ({})': 'Pass 1 linking {}/{} ({})',
+    '2차 (외형) 연결 {}/{} ({})': 'Pass 2 (appearance) linking {}/{} ({})',
+})
