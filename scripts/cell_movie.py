@@ -2,7 +2,7 @@
 
 usage: python scripts/cell_movie.py PROJECT.cyproj LOCAL_BG_CSV OUT IMAGE::CELL [IMAGE::CELL ...]
 Crops follow the cell's bounding box (union over frames, + 3 µm), cell outline from ParticleTracker's cell labels.
-Green shown 0–6 (raw 8-bit counts), Cy5 auto (0.5–99.8 % of the crops), RI 0.5–99.8 %.
+Green (black → green) 0–6 (raw 8-bit counts), Cy5 (black → red) auto (0.5–99.8 % of the crops), RI 0.5–99.8 %.
 """
 import pickle
 import sys
@@ -28,6 +28,9 @@ for s in sys.argv[4:]:
     want.setdefault(img, []).append(int(c))
 out.mkdir(parents=True, exist_ok=True)
 style.setup()
+from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
+CMAPS = {'green': LinearSegmentedColormap.from_list('k_green', ['black', (0, 1, 0)]),   # black background
+         'Cy5': LinearSegmentedColormap.from_list('k_red', ['black', (1, 0, 0)])}
 LB = pd.read_csv(lbcsv)
 data, files = read_project(proj)
 for n, _ in enumerate(data.get('images') or []):
@@ -89,8 +92,7 @@ for n, _ in enumerate(data.get('images') or []):
                                                     (axs[2], h, 'RI', 'gray', lo_h, hi_h)):
                     a.clear()
                     a.axis('off')
-                    a.imshow(im, cmap='gray' if cmap == 'gray' else 'viridis' if False else cmap.replace('_r', ''),
-                             vmin=vmin, vmax=vmax)
+                    a.imshow(im, cmap=CMAPS.get(ttl.split()[0], 'gray'), vmin=vmin, vmax=vmax)
                     if m.any():
                         a.contour(m, [.5], colors='y', linewidths=.8)
                     a.set_title(ttl)
