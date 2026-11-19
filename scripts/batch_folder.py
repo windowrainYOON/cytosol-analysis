@@ -210,6 +210,14 @@ def main():
                                    capture_output=True, text=True)
                 print('  세포 단위 밝기:', 'done' if r.returncode == 0 else
                       f'failed {r.stderr.strip().splitlines()[-1:]}', flush=True)
+            lb = out / '통합 분석' / '세포 단위 밝기' / '세포별 주변 배경'   # each cell's own ring background
+            r = subprocess.run([sys.executable, str(Path(__file__).with_name('cell_local_bg.py')),
+                                str(out / 'project.cyproj'), str(lb)], capture_output=True, text=True)
+            if r.returncode == 0:
+                r = subprocess.run([sys.executable, str(Path(__file__).with_name('cell_local_bg_plots.py')),
+                                    str(lb / 'cell_local_bg.csv'), str(lb)], capture_output=True, text=True)
+            print('  세포별 주변 배경:', 'done' if r.returncode == 0 else
+                  f'failed {r.stderr.strip().splitlines()[-1:]}', flush=True)
     nfiles = sum(1 for _ in out.rglob('*') if _.is_file())
     print(f'DONE {len(done)}/{len(items)} images, {nfiles} files in {out} '
           f'({time.perf_counter() - t_all:.0f}s)' + (f' errors {r.errors}' if r.errors else ''), flush=True)
