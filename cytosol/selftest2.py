@@ -1071,7 +1071,13 @@ def language_step(out: Path):
             raise AssertionError('reopen button not offered')
         page = win.tab_pages['roi_tab'][0]
         if page.widget().width() > page.viewport().width() + 1:
-            raise AssertionError('English page wider than the inspector')
+            from PySide6.QtWidgets import QWidget as _W
+            vp = page.viewport().width()
+            wide = sorted(((c.minimumSizeHint().width(), type(c).__name__, c.objectName(),
+                            (i18n.shown(c) if hasattr(c, 'text') else '')[:50])
+                           for c in page.widget().findChildren(_W) if c.isVisibleTo(page.widget())
+                           and c.minimumSizeHint().width() > vp - 40), reverse=True)[:8]
+            raise AssertionError(f'English page wider than the inspector ({page.widget().width()} > {vp}): {wide}')
     finally:
         dlg.lang.setCurrentIndex(dlg.lang.findData('ko'))
         app.processEvents()
