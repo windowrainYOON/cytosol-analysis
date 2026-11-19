@@ -4371,3 +4371,41 @@ EN.update({
     '그래프 PNG (ParticleTracker 그래프 단계)': 'Graph PNGs (ParticleTracker figures stage)',
     '영상 MP4 (ParticleTracker 영상 단계, 오래 걸림)': 'Movies MP4 (ParticleTracker movies stage, slow)',
 })
+
+# v0.72: 입자 추적 › 5 신호 기준
+EN.update({
+    '5  신호 기준 (긴 트랙)': '5  Signal criterion (long tracks)',
+    '신호 있는 트랙으로 나누기': 'Split tracks by signal',
+    '세포 안 / 밖 대신 신호 있음 / 없음으로 긴 트랙을 나눕니다.': 'Splits long tracks into with / without signal instead of inside / outside the cell.',
+    '세포 안 / 밖 대신, 긴 트랙을 이 채널의 Min(LUT 최솟값) 이상인 프레임이 있는 트랙과 없는 트랙으로 나눕니다. 그래프 · 표 · 일괄 분석 · 내보내기가 이 두 그룹을 씁니다.':
+        "Instead of inside / outside the cell, long tracks are split into tracks with frames at or above this channel's Min (LUT minimum) and tracks without. Graphs, tables, batch analysis and export use these two groups.",
+    '데이터 범위 · 미리보기와 같이 바뀜': 'Data range · changes with the preview',
+    'Min = 신호 기준': 'Min = signal threshold',
+    '현재 이미지 데이터의 최소값~최대값으로 설정': "Set to the current image's data minimum–maximum",
+    '이 채널의 Min / Max를 모든 이미지의 같은 채널에 적용': "Apply this channel's Min / Max to the same channel of every image",
+    'LUT 탭의 이 채널 Min / Max와 같은 값입니다 (한쪽에서 바꾸면 다른 쪽도 바뀜).':
+        "The same values as this channel's Min / Max in the LUT tab (changing one changes the other).",
+    '입자 ROI 최댓값': 'Particle ROI maximum',
+    '입자 ROI 평균': 'Particle ROI mean',
+    '기준 값': 'Value used',
+    '신호 프레임': 'Signal frames',
+    ' 프레임 이상': ' frames or more',
+    '미리보기: 신호 있는 입자 표시': 'Preview: mark particles with signal',
+    '초록 고리 = 신호 트랙, 이 프레임에서 Min 이상 · 흰 점선 고리 = 신호 트랙, 이 프레임은 Min 아래.':
+        'Green ring = signal track, at or above Min in this frame · white dashed ring = signal track, below Min in this frame.',
+    '꺼져 있습니다 (세포 안 / 밖으로 나눔).': 'Off (split by inside / outside the cell).',
+    '신호 값이 없습니다.': 'No signal values.',
+    '신호 있음': 'With signal',
+    '신호 없음': 'Without signal',
+    '신호 기준 (입자 추적 › 5 신호 기준이 켜져 있을 때)': 'Signal criterion (when 입자 추적 › 5 Signal criterion is on)',
+    '이미지마다 신호 있음 / 없음 트랙 CSV + 비교 그래프 (ratio, 신호 값, 트랙별 시간 곡선)':
+        'Per image: with / without signal track CSVs + comparison graphs (ratio, signal value, per-track time courses)',
+    '모든 이미지 통합 그래프 + 이미지별 요약 (per_image_summary.csv)': 'All images combined graphs + per-image summary (per_image_summary.csv)',
+})
+TEMPLATES.update({
+    '신호 있음 {} / 긴 트랙 {} ({} %){}': 'With signal {} / long tracks {} ({} %){}',
+    ' · 처음 신호 중앙값 {} h': ' · median first signal {} h',
+    '{} · 이 프레임 신호 입자 {}': '{} · signal particles in this frame {}',
+    '신호 값 측정 {}/{} ({})': 'Measuring signal values {}/{} ({})',
+    '트랙 {}개 · 긴 트랙 {}개 (신호 있음 {}, 없음 {}) · 누락 연결 {}, 합쳐짐 {} 시점': '{} tracks · {} long tracks ({} with signal, {} without) · {} gap links, {} merged timepoints',
+})

@@ -189,7 +189,7 @@ def run(win, items, out, opts, progress=None) -> Result:
     if _kind_on(opts, 'frap_summary', 'frap_csv', 'frap_plot', 'frap_rois'):
         _try(res, lambda: _frap(win, items, out, opts))
     # ---- 입자 추적 ----
-    if _kind_on(opts, 'track_csv', 'track_rois', 'track_all', 'track_ptdir'):
+    if _kind_on(opts, 'track_csv', 'track_rois', 'track_all', 'track_ptdir', 'track_signal', 'track_signal_all'):
         _try(res, lambda: _tracks(win, items, out, opts, where))
     # ---- mitoROI ----
     if _kind_on(opts, 'mito_csv', 'mito_rois', 'mito_all'):
@@ -328,11 +328,23 @@ def _tracks(win, items, out, opts, where):
 
     tp = win.track_panel
     files = []
+    sig_on = tp.signal_on() and (opts.get('track_signal') or opts.get('track_signal_all'))
+    sig_all = []
     for it in items:
         st = it.tracks
         if st is None or not st.points:
             continue
         folder, stem = where(it)
+        if sig_on:   # 입자 추적 › 신호 기준 (v0.72)
+            from . import track_signal as ts
+            s = tp.signal_settings(it)
+            vals = ts.point_values(it, st, s.channel, s.basis, tp.z_source(it))
+            if opts.get('track_signal'):
+                fs, d = ts.write_item(it, st, s, folder, stem, vals, tp.min_track.value())
+                files += fs
+            else:
+                d = ts._frame(st, vals, ts.classify(st, vals, s.thr, s.frames, tp.min_track.value()), st.ratio)
+            sig_all.append((it.label, d))
         if opts.get('track_csv'):
             files += tp.save_item(it, folder, stem, pt_names=bool(opts.get('track_pt')), rois=False)
         if opts.get('track_rois') and st.outlines:
@@ -347,6 +359,10 @@ def _tracks(win, items, out, opts, where):
                                                  movies=bool(opts.get('track_ptmovie')))
             elif st.source == 'app':
                 files += pt_engine.write_app_outputs(st, it, tp.summary_of(it), d, stem)
+    if sig_on and opts.get('track_signal_all') and sig_all:
+        from . import track_signal as ts
+        s = tp.signal_settings(items[0])
+        files += ts.write_all(sig_all, out / '신호 기준 통합', s)
     if opts.get('track_all'):
         names = {'입자 추적 · 시점': 'tracks_points.csv', '입자 추적 · 트랙': 'tracks_summary.csv',
                  '입자 추적 · 세포 × 시점': 'tracks_cells.csv'}

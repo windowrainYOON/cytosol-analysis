@@ -3539,6 +3539,8 @@ class MainWindow(QMainWindow):
                 panel.changed.connect(self.update_preview)
                 panel.changed.connect(self.set_dirty)
                 panel.applyAll.connect(self.apply_channel_to_all)
+                if hasattr(self, 'track_panel'):  # 입자 추적 › 신호 기준 shows the same Min / Max
+                    panel.changed.connect(self.track_panel.lut_changed)
                 self.channel_box.insertWidget(self.channel_box.count() - 1, panel)
                 self.panels.append(panel)
         self.visibility.set_panels(self.panels)

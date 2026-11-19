@@ -837,6 +837,30 @@ def tracking_pt_step(out: Path):
     with open(pts_csv, newline='', encoding='utf-8') as fh:
         if next(csv.reader(fh)) != want:
             raise AssertionError('ParticleTracker point columns (this app\'s method)')
+    # 5 신호 기준 (v0.72): long tracks split by the LUT minimum of a channel, values measured on the image
+    keep_min = tp.min_track.value()
+    tp.min_track.setValue(2)
+    ch = tp._sig_ch(item)
+    ci = item.channels.index(ch)
+    vals = sorted(p.get(f'I_{ch}_raw', 0) for p in st2.points)
+    item.luts[ci].vmin = float(round(vals[len(vals) // 2])) if vals else 0.0
+    tp.lut_changed()
+    tp.sig_on.setChecked(True)
+    cls = tp.signal_classes(item, compute=True)
+    if not cls or abs(tp.sig_min.value() - item.luts[ci].vmin) > 1e-3 \
+            or not any(r['class'] in ('signal', 'nosignal') for r in tp.summary_of(item)):  # noqa: E501
+        raise AssertionError(f'신호 기준: {cls and len(cls)} classes, Min {tp.sig_min.value()}')
+    tp.sig_min.setValue(item.luts[ci].vmin + 1)
+    if abs(item.luts[ci].vmin - tp.sig_min.value()) > 1e-3:
+        raise AssertionError('신호 기준 Min did not change the LUT')
+    res = export_run(win, [item], out / 'export_signal', {'per_image': False, 'track_signal': True,
+                                                         'track_signal_all': True})
+    names = {Path(f).name for f in res.files}
+    if res.errors or not {'per_image_summary.csv', 'value_signal_vs_nosignal.png'} <= names \
+            or not any(n.endswith('_signal_tracks_summary.csv') for n in names):
+        raise AssertionError(f'신호 기준 export {sorted(names)} {res.errors}')
+    tp.sig_on.setChecked(False)
+    tp.min_track.setValue(keep_min)
     tp.pt_engine.setChecked(True)
     _close(win)
     return f'PT detection {found}/{len(spots)}; TCF {len(whole)}/{n} spots whole over {T} frames, {st.seconds:.1f} s'

@@ -829,6 +829,8 @@ def from_pt(rows, px_um, ht_scale=None, chan_a='A', chan_b='B', dataset=None):
             if k.startswith(('I_', 'bg_', 'ratio_')) and k not in ('I_A', 'I_B', 'I_A_raw', 'I_B_raw', 'bg_A', 'bg_B',
                                                                   'ratio_BA', 'ratio_BA_raw', 'ratio_BA_unfiltered', 'I_B_max'):
                 p[k] = _num(v)
+        if 'I_B_max' in r:   # brightest measure-channel pixel of the ROI (입자 추적 › 신호 기준)
+            p[f'I_{chan_b}_max'] = _num(r['I_B_max'])
         if 'ratio_BA' in r:
             p[f'ratio_{chan_b}_{chan_a}'] = _num(r['ratio_BA'])
             if 'ratio_BA_unfiltered' in r:

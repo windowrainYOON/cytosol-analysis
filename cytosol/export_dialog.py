@@ -116,6 +116,11 @@ KINDS: dict = {
             ('track_ptfig', '그래프 PNG (ParticleTracker 그래프 단계)', '', True),
             ('track_ptmovie', '영상 MP4 (ParticleTracker 영상 단계, 오래 걸림)', '', False),
         ]),
+        ('신호 기준 (입자 추적 › 5 신호 기준이 켜져 있을 때)', [
+            ('track_signal', '이미지마다 신호 있음 / 없음 트랙 CSV + 비교 그래프 (ratio, 신호 값, 트랙별 시간 곡선)',
+             '<이름>_signal_thr<Min>/', True),
+            ('track_signal_all', '모든 이미지 통합 그래프 + 이미지별 요약 (per_image_summary.csv)', '신호 기준 통합/', True),
+        ]),
         ('모든 이미지', [
             ('track_all', 'tracks_points.csv · tracks_summary.csv · tracks_cells.csv', '', True),
         ]),

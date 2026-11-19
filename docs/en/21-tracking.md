@@ -1,4 +1,4 @@
-# Particle tracking tab (v0.66, Z projection v0.69, ParticleTracker method v0.70, result folder v0.71)
+# Particle tracking tab (v0.66, Z projection v0.69, ParticleTracker method v0.70, result folder v0.71, signal criterion v0.72)
 
 On images with a time axis, the 입자 ROI tab's detection settings are applied to every frame and the same
 particle is linked from frame to frame into tracks. The linking and measurement follow the ParticleTracker
@@ -80,6 +80,19 @@ area weights).
   no ratio while **합쳐짐 / 가림 시점은 비율에서 제외** is on.
 - **세포 안 기준**: in a cell on more than 50 % of its frames = an inside track (ParticleTracker's rule).
 - **긴 트랙**: ≥ 10 frames; shorter ones are short tracks.
+
+## 5 신호 기준 (signal criterion, long tracks, v0.72)
+
+Instead of inside / outside the cell, long tracks are split into tracks with and without signal in one channel (e.g. particles where pHrodo green turns on).
+
+- **신호 있는 트랙으로 나누기** (split by signal): when on, the 4 트랙 chips and summary, the data tables (`class` = `signal` / `nosignal`), graphs, batch analysis and export use these two groups. Off = inside / outside as before.
+- **채널** (channel): the tracking's measure channel by default (measure for the ParticleTracker method).
+- **Histogram · Min = signal threshold · Max**: the same values as that channel's Min / Max in the LUT tab. Moving them here changes the LUT tab and the preview, and changes in the LUT tab show here. Everything below Min is black in the preview, so the threshold is set by eye. Auto, Min/Max and 전체 이미지에 적용 work as in the LUT tab. Each image uses its own Min.
+- **기준 값** (value used): particle ROI maximum (any pixel at or above Min) or particle ROI mean.
+- **신호 프레임** (signal frames): a track has signal when the value is ≥ Min in at least this many frames (default 3). Long tracks are those of 3 측정 › 긴 트랙 (default 10 frames).
+- **Preview**: in the current frame, a green ring on particles of signal tracks at or above Min, a white dashed ring when below Min.
+- Values: the measure channel maximum of the ParticleTracker method comes from the tracking result (`I_B_max`); other channels / the mean come from the track values or are measured on the image inside each particle outline (once, reading every frame).
+- Export › 입자 추적 › 신호 기준: per image `<name>_signal_thr<Min>/` (track summary and point CSVs, comparison graphs = median ± IQR of the ratio and the signal value, signal track time courses), all images `신호 기준 통합/` (combined graphs, `per_image_summary.csv`, per-image fraction).
 
 ## 4 트랙 (tracks)
 

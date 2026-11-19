@@ -47,6 +47,8 @@ from .flow import FlowLayout
 CELL_MODES = [('static', '세포질 ROI 탭 · 지금 세포 ROI 그대로'), ('frame', '세포질 ROI 탭 · 프레임마다 검출 + ID 연결'),
               ('none', '세포 ROI 없이 (이미지 전체)')]
 TAIL = 8          # frames of track tail drawn
+IN_CLASSES = ('inside', 'signal')      # 4 트랙 chips: 세포 안 / 신호 있음
+OUT_CLASSES = ('outside', 'nosignal')  # 세포 밖 / 신호 없음
 MEAN_CACHE_BYTES = 1 << 30   # mean-projected frames kept during one run
 PALETTE = [(255, 99, 71), (255, 215, 0), (0, 230, 230), (124, 252, 0), (255, 105, 180), (135, 206, 250),
            (255, 165, 0), (186, 85, 211), (64, 224, 208), (240, 230, 140)]
@@ -220,6 +222,10 @@ class TrackPanel(QWidget):
         f.addRow(self.exclude_merged)
         lay.addWidget(meas)
 
+        # 5 신호 기준 (v0.72, owner request 2026-11-19; shown after 4 트랙's settings order: placed before it)
+        self.sig_box = self._build_signal_card()
+        lay.addWidget(self.sig_box)
+
         # 4 트랙
         tr = QGroupBox('4  트랙')
         v = QVBoxLayout(tr)
@@ -263,6 +269,299 @@ class TrackPanel(QWidget):
         v.addWidget(_row(self.load_btn, None, self.graph_btn))
         lay.addWidget(tr)
         lay.addStretch(1)
+
+    # ---- 5 신호 기준 ------------------------------------------------------------------
+
+    def _build_signal_card(self):
+        from PySide6.QtWidgets import QSlider
+
+        from .app import Histogram
+        box = QGroupBox('5  신호 기준 (긴 트랙)')
+        v = QVBoxLayout(box)
+        f = QFormLayout()
+        self.sig_on = QCheckBox('신호 있는 트랙으로 나누기')
+        self.sig_on.setToolTip('세포 안 / 밖 대신 신호 있음 / 없음으로 긴 트랙을 나눕니다.')
+        f.addRow(self.sig_on)
+        f.addRow(_hint('세포 안 / 밖 대신, 긴 트랙을 이 채널의 Min(LUT 최솟값) 이상인 프레임이 있는 트랙과 없는 '
+                       '트랙으로 나눕니다. 그래프 · 표 · 일괄 분석 · 내보내기가 이 두 그룹을 씁니다.'))
+        self.sig_channel = QComboBox()
+        f.addRow('채널', self.sig_channel)
+        v.addLayout(f)
+        self.sig_hist = Histogram()
+        v.addWidget(self.sig_hist)
+        scale = QHBoxLayout()
+        scale.setContentsMargins(0, 0, 0, 0)
+        self.sig_lo, self.sig_hi = QLabel(), QLabel()
+        note = QLabel('데이터 범위 · 미리보기와 같이 바뀜')
+        for w in (self.sig_lo, note, self.sig_hi):
+            theme.hint(w)
+        note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        scale.addWidget(self.sig_lo)
+        scale.addWidget(note, 1)
+        scale.addWidget(self.sig_hi)
+        v.addLayout(scale)
+        f2 = QFormLayout()
+        self.sig_min_slider = QSlider(Qt.Orientation.Horizontal)
+        self.sig_max_slider = QSlider(Qt.Orientation.Horizontal)
+        self.sig_min = QDoubleSpinBox()
+        self.sig_max = QDoubleSpinBox()
+        for s in (self.sig_min, self.sig_max):
+            s.setKeyboardTracking(False)
+            s.setRange(-1e9, 1e9)
+        f2.addRow('Min = 신호 기준', theme.slider_field(self.sig_min_slider, self.sig_min))
+        f2.addRow('Max', theme.slider_field(self.sig_max_slider, self.sig_max))
+        v.addLayout(f2)
+        btns = QWidget()
+        bl = QHBoxLayout(btns)
+        bl.setContentsMargins(0, 0, 0, 0)
+        self.sig_auto = QPushButton('Auto')
+        self.sig_full = QPushButton('Min/Max')
+        self.sig_full.setToolTip('현재 이미지 데이터의 최소값~최대값으로 설정')
+        self.sig_all = QPushButton('전체 이미지에 적용')
+        self.sig_all.setToolTip('이 채널의 Min / Max를 모든 이미지의 같은 채널에 적용')
+        for b in (self.sig_auto, self.sig_full, self.sig_all):
+            bl.addWidget(b)
+        bl.addStretch(1)
+        v.addWidget(btns)
+        v.addWidget(_hint('LUT 탭의 이 채널 Min / Max와 같은 값입니다 (한쪽에서 바꾸면 다른 쪽도 바뀜).'))
+        f3 = QFormLayout()
+        self.sig_basis = QComboBox()
+        from .track_signal import BASES
+        for k, t in BASES:
+            self.sig_basis.addItem(t, k)
+        f3.addRow('기준 값', self.sig_basis)
+        self.sig_frames = QSpinBox()
+        self.sig_frames.setRange(1, 10000)
+        self.sig_frames.setValue(3)
+        self.sig_frames.setSuffix(' 프레임 이상')
+        f3.addRow('신호 프레임', self.sig_frames)
+        self.sig_preview = QCheckBox('미리보기: 신호 있는 입자 표시')
+        self.sig_preview.setChecked(True)
+        f3.addRow(self.sig_preview)
+        f3.addRow(_hint('초록 고리 = 신호 트랙, 이 프레임에서 Min 이상 · 흰 점선 고리 = 신호 트랙, 이 프레임은 Min 아래.'))
+        v.addLayout(f3)
+        self.sig_state = theme.StatusLabel(kind='info')
+        self.sig_state.setWordWrap(True)
+        v.addWidget(self.sig_state)
+        self._sig_lo, self._sig_hi, self._sig_steps = 0.0, 1.0, 1000
+        self.sig_on.toggled.connect(lambda _: self._sig_changed())
+        self.sig_channel.currentIndexChanged.connect(lambda _: self._sig_bind_lut())
+        self.sig_basis.currentIndexChanged.connect(lambda _: self._sig_changed())
+        self.sig_frames.valueChanged.connect(lambda _: self._sig_changed())
+        self.sig_preview.toggled.connect(lambda _: self.draw())
+        self.sig_min_slider.valueChanged.connect(lambda x: self._sig_slider(self.sig_min, x))
+        self.sig_max_slider.valueChanged.connect(lambda x: self._sig_slider(self.sig_max, x))
+        self.sig_min.valueChanged.connect(lambda _: self._sig_lut_edit())
+        self.sig_max.valueChanged.connect(lambda _: self._sig_lut_edit())
+        self.sig_auto.clicked.connect(lambda: self._sig_lut_button('auto'))
+        self.sig_full.clicked.connect(lambda: self._sig_lut_button('full'))
+        self.sig_all.clicked.connect(lambda: self._sig_lut_button('all'))
+        self._sig_busy = False
+        self._sig_cls = {}
+        self._sig_text = ''
+        return box
+
+    def signal_on(self) -> bool:
+        return self.sig_on.isChecked()
+
+    def _sig_ch(self, item=None):
+        it = item or self.item
+        name = self.sig_channel.currentData()
+        if it is None:
+            return ''
+        if name in it.channels:
+            return name
+        from .track_signal import default_channel
+        return default_channel(it, it.tracks)
+
+    def signal_settings(self, item):
+        from .track_signal import SignalSettings, threshold_of
+        ch = self._sig_ch(item)
+        return SignalSettings(on=self.sig_on.isChecked(), channel=ch, basis=self.sig_basis.currentData() or 'max',
+                              frames=self.sig_frames.value(), thr=threshold_of(item, ch) if ch else 0.0)
+
+    def _sig_fill_channels(self, item):
+        self._sig_busy = True
+        keep = self.sig_channel.currentData()
+        self.sig_channel.clear()
+        if item is not None:
+            from .track_signal import default_channel
+            for name in item.channels:
+                if str(name) != 'RI':
+                    self.sig_channel.addItem(name, name)
+            want = keep if keep in item.channels else default_channel(item, item.tracks)
+            self.sig_channel.setCurrentIndex(max(self.sig_channel.findData(want), 0))
+        self._sig_busy = False
+        self._sig_bind_lut()
+
+    def _sig_bind_lut(self):
+        """Histogram and Min / Max of the chosen channel, as in the LUT tab."""
+        it = self.item
+        if self._sig_busy:
+            return
+        ch = self._sig_ch()
+        if it is None or not ch:
+            return
+        ci = it.channels.index(ch)
+        lo, hi, note = it.value_range(ci)
+        integer = bool(note) and note != 'RI' and float(lo).is_integer() and float(hi).is_integer()
+        self._sig_lo, self._sig_hi = float(lo), float(hi)
+        span = max(hi - lo, 1e-12)
+        self._sig_steps = int(span) if integer and 0 < span <= 1_000_000 else 1000
+        self._sig_busy = True
+        for s in (self.sig_min_slider, self.sig_max_slider):
+            s.setRange(0, self._sig_steps)
+        for s in (self.sig_min, self.sig_max):
+            s.setDecimals(0 if integer else 4)
+            s.setRange(lo, hi)
+            s.setSingleStep(1 if integer else span / 100)
+        fmt = (lambda x: f'{x:.0f}') if integer else (lambda x: f'{x:.4f}')
+        self.sig_lo.setText(fmt(lo))
+        self.sig_hi.setText(fmt(hi))
+        try:
+            self.sig_hist.set_data(it.planes()[ci], lo, hi)
+        except Exception:  # noqa: BLE001
+            pass
+        self._sig_busy = False
+        self.lut_changed()
+        self._sig_changed()
+
+    def _sig_to_slider(self, x):
+        return int(round((x - self._sig_lo) / max(self._sig_hi - self._sig_lo, 1e-12) * self._sig_steps))
+
+    def _sig_slider(self, spin, value):
+        if self._sig_busy:
+            return
+        spin.setValue(self._sig_lo + value / self._sig_steps * (self._sig_hi - self._sig_lo))
+
+    def lut_changed(self):
+        """The LUT of the current image changed (LUT tab or here): show it, re-classify."""
+        it = self.item
+        ch = self._sig_ch()
+        if it is None or not ch:
+            return
+        lut = it.luts[it.channels.index(ch)]
+        self._sig_busy = True
+        self.sig_min.setValue(lut.vmin)
+        self.sig_max.setValue(lut.vmax)
+        self.sig_min_slider.setValue(self._sig_to_slider(lut.vmin))
+        self.sig_max_slider.setValue(self._sig_to_slider(lut.vmax))
+        self.sig_hist.set_lut(lut.vmin, lut.vmax, lut.color)
+        self._sig_busy = False
+        if self.sig_on.isChecked():
+            self._sig_changed()
+
+    def _sig_lut_edit(self):
+        it = self.item
+        if self._sig_busy or it is None:
+            return
+        ci = it.channels.index(self._sig_ch())
+        lut = it.luts[ci]
+        lut.vmin, lut.vmax = self.sig_min.value(), self.sig_max.value()
+        self._sig_lut_pushed(ci)
+
+    def _sig_lut_button(self, what):
+        it = self.item
+        if it is None or not self._sig_ch():
+            return
+        ci = it.channels.index(self._sig_ch())
+        if what == 'auto':
+            it.auto_lut(ci)
+        elif what == 'full':
+            plane = it.planes()[ci]
+            lo, hi = float(np.nanmin(plane)), float(np.nanmax(plane))
+            it.luts[ci].vmin, it.luts[ci].vmax = lo, (hi if hi > lo else self._sig_hi)
+        else:
+            self.win.apply_channel_to_all(ci)
+        self._sig_lut_pushed(ci)
+
+    def _sig_lut_pushed(self, ci):
+        w = self.win
+        for p in getattr(w, 'panels', []):
+            if p.index == ci and p.item is self.item:
+                p.refresh()
+        w.update_preview()
+        w.set_dirty()
+        self.lut_changed()
+        self._sig_changed()
+
+    def signal_classes(self, it, compute=False):
+        """track_id -> classify() row for long tracks, or None (off / no tracks / values not measured yet)."""
+        if not self.sig_on.isChecked() or it is None or it.tracks is None or not it.tracks.points:
+            return None
+        from . import track_signal as ts
+        s = self.signal_settings(it)
+        if not s.channel:
+            return None
+        vals = ts.point_values(it, it.tracks, s.channel, s.basis, self.z_source(it), compute=compute,
+                               progress=(lambda i, n: self._progress(f'신호 값 측정 {i}/{n} ({it.label})'))
+                               if compute else None)
+        if vals is None:
+            return None
+        return ts.classify(it.tracks, vals, s.thr, s.frames, self.min_track.value())
+
+    def _sig_changed(self):
+        if self._sig_busy:
+            return
+        self._chip_names()
+        it = self.item
+        cls = self.signal_classes(it, compute=True) if it is not None else None
+        self._sig_cls = cls or {}
+        self._sig_text = ''
+        if not self.sig_on.isChecked():
+            self.sig_state.set_kind('info')
+            self.sig_state.setText('꺼져 있습니다 (세포 안 / 밖으로 나눔).')
+        elif cls is None:
+            self.sig_state.set_kind('info')
+            self.sig_state.setText('트랙이 없습니다.' if it is None or it.tracks is None else '신호 값이 없습니다.')
+        else:
+            sig = [c for c in cls.values() if c['signal']]
+            first = [c['first_signal_frame'] for c in sig if c['first_signal_frame']]
+            times = list(it.image.times) if it.image.times else None
+            med = ''
+            if first and times:
+                h = [times[f - 1] / 3600 for f in first if f - 1 < len(times)]
+                med = f' · 처음 신호 중앙값 {np.median(h):.1f} h' if h else ''
+            self._sig_text = f'신호 있음 {len(sig)} / 긴 트랙 {len(cls)} ({len(sig) / max(len(cls), 1) * 100:.1f} %){med}'
+            self.sig_state.set_kind('success')
+            self.sig_state.setText(self._sig_text)
+        self._fill_table()
+        self.data_rows.refresh()
+        self.draw()
+
+    def _chip_names(self):
+        on = self.sig_on.isChecked()
+        self.show_in.setText('신호 있음' if on else '세포 안')
+        self.show_out.setText('신호 없음' if on else '세포 밖')
+
+    def _sig_draw(self, it, sc):
+        """Rings on the particles of signal tracks in the frame shown."""
+        if not (self.sig_on.isChecked() and self.sig_preview.isChecked()) or not self._sig_cls:
+            return
+        s = self.signal_settings(it)
+        vals = (getattr(it.tracks, 'signal_cache', None) or {}).get((s.channel, s.basis), {})
+        f_now = it.t + 1
+        n_lit = 0
+        for p in it.tracks.points:
+            if p['frame'] != f_now:
+                continue
+            c = self._sig_cls.get(p['track_id'])
+            if c is None or not c['signal']:
+                continue
+            lit = vals.get((p['track_id'], f_now), -np.inf) >= s.thr
+            n_lit += lit
+            r = 9.0
+            e = QGraphicsEllipseItem(p['x'] + 0.5 - r, p['y'] + 0.5 - r, 2 * r, 2 * r)
+            pen = QPen(QColor(60, 220, 90) if lit else QColor(255, 255, 255), 2.0)
+            if not lit:
+                pen.setStyle(Qt.PenStyle.DashLine)
+            pen.setCosmetic(True)
+            e.setPen(pen)
+            e.setZValue(16)
+            sc.addItem(e)
+            self._scene.append(e)
+        if getattr(self, '_sig_text', ''):
+            self.sig_state.setText(f'{self._sig_text} · 이 프레임 신호 입자 {n_lit}')
 
     # ---- settings -----------------------------------------------------------
 
@@ -618,7 +917,17 @@ class TrackPanel(QWidget):
         prm = tk.TrackSettings.from_dict(st.settings)
         prm.min_track, prm.inside_fraction = self.min_track.value(), self.inside.value() / 100 - 1e-9
         chans = [c for c in st.channels if any(f'I_{c}' in p for p in st.points[:1])]
-        return tk.summary(st.points, chans, prm, st.ratio)
+        rows = tk.summary(st.points, chans, prm, st.ratio)
+        cls = self.signal_classes(it) if self.sig_on.isChecked() else None
+        if cls:   # 신호 기준: long tracks are signal / nosignal instead of inside / outside
+            for r in rows:
+                c = cls.get(r['track_id'])
+                if c is not None and r['class'] in ('inside', 'outside'):
+                    r['class'] = 'signal' if c['signal'] else 'nosignal'
+                    r['signal_frames'] = c['signal_frames']
+                    r['first_signal_frame'] = c['first_signal_frame'] or ''
+                    r['signal_value_max'] = c['value_max']
+        return rows
 
     def data_tables(self):
         """(name, 점 하나 =, rows) of every image with tracks."""
@@ -671,6 +980,7 @@ class TrackPanel(QWidget):
         self.f_from.setValue(1)
         self.f_to.setValue(max(nt, 1))
         self._busy = False
+        self._sig_fill_channels(item)
         self.refresh()
 
     def refresh(self):
@@ -723,8 +1033,8 @@ class TrackPanel(QWidget):
 
     def _class_ok(self, row):
         k = row['class']
-        return (k == 'inside' and self.show_in.isChecked()) or (k == 'outside' and self.show_out.isChecked()) \
-            or (k not in ('inside', 'outside') and self.show_short.isChecked())
+        return (k in IN_CLASSES and self.show_in.isChecked()) or (k in OUT_CLASSES and self.show_out.isChecked()) \
+            or (k not in IN_CLASSES + OUT_CLASSES and self.show_short.isChecked())
 
     def _fill_table(self):
         it = self.item
@@ -749,10 +1059,11 @@ class TrackPanel(QWidget):
             return
         n = len(summ)
         long_ = [r for r in summ if r['class'] != 'short']
-        ins = sum(1 for r in long_ if r['class'] == 'inside')
+        ins = sum(1 for r in long_ if r['class'] in IN_CLASSES)
         merged = sum(1 for p in st.points if p.get('merged'))
+        a, b = ('신호 있음', '없음') if any(r['class'] in ('signal', 'nosignal') for r in long_) else ('세포 안', '밖')
         self.state.set_kind('success')
-        self.state.setText(f'트랙 {n}개 · 긴 트랙 {len(long_)}개 (세포 안 {ins}, 밖 {len(long_) - ins}) · '
+        self.state.setText(f'트랙 {n}개 · 긴 트랙 {len(long_)}개 ({a} {ins}, {b} {len(long_) - ins}) · '
                            f'누락 연결 {st.n_gap}, 합쳐짐 {merged} 시점' +
                            (' · 불러옴 (ParticleTracker)' if st.source != 'app' else ''))
 
@@ -779,24 +1090,27 @@ class TrackPanel(QWidget):
         """Track tails up to the current frame and the current positions."""
         self._clear()
         it = self.win.current
-        if it is None or it is not self.item or it.tracks is None or not self.show_tracks.isChecked():
+        if it is None or it is not self.item or it.tracks is None:
             return
         if not (self.visible_tab() or self._sel is not None):
+            return
+        sc = self.win.canvas.scene()
+        self._sig_draw(it, sc)
+        if not self.show_tracks.isChecked():
             return
         st = it.tracks
         f_now = it.t + 1
         cls = {r['track_id']: r['class'] for r in self.summary_of(it)}
-        sc = self.win.canvas.scene()
         for tid, pts in st.tracks().items():
             k = cls.get(tid, 'short')
-            if not ((k == 'inside' and self.show_in.isChecked()) or (k == 'outside' and self.show_out.isChecked())
+            if not ((k in IN_CLASSES and self.show_in.isChecked()) or (k in OUT_CLASSES and self.show_out.isChecked())
                     or (k == 'short' and self.show_short.isChecked())):
                 continue
             tail = [p for p in pts if f_now - TAIL <= p['frame'] <= f_now]
             if not tail:
                 continue
             sel = tid == self._sel
-            col = QColor(*PALETTE[tid % len(PALETTE)]) if k != 'outside' else QColor(170, 170, 170)
+            col = QColor(*PALETTE[tid % len(PALETTE)]) if k not in OUT_CLASSES else QColor(170, 170, 170)
             if self._sel is not None and not sel:
                 col.setAlpha(90)
             path = QPainterPath(QPointF(tail[0]['x'] + 0.5, tail[0]['y'] + 0.5))
