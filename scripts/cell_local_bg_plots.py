@@ -94,3 +94,60 @@ s = L.groupby('t_h').agg(cells=('cell_uid', 'nunique'), green_cell=('green_cell'
 s.round(4).to_csv(out / 'cell_local_bg_summary.csv')
 L.round(5).to_csv(out / 'cell_local_bg_long_cells.csv', index=False)
 print(s.round(3).iloc[::3].to_string())
+
+
+# ---- normalized versions (owner 2026-11-19): the middle 90 % of all values of a panel -> 0–1, y axis 0–1 --------
+def norm(cols):
+    v = pd.concat([L[c] for c in cols]).replace([np.inf, -np.inf], np.nan).dropna()
+    lo, hi = np.percentile(v, [5, 95])
+    for c in cols:
+        L[f'n_{c}'] = (L[c] - lo) / (hi - lo if hi > lo else 1)
+    return lo, hi
+
+
+def ylim01(a, lo, hi, unit=''):
+    a.set_ylim(0, 1)
+    a.text(.01, .98, f'0 = {lo:.4g}, 1 = {hi:.4g}{unit} (전체 값의 5 · 95 백분위)', transform=a.transAxes, va='top',
+           fontsize=7, color='0.35')
+
+
+fig, axs = plt.subplots(1, 2, figsize=(14, 5))
+for a, col, ttl in ((axs[0], 'ratio_raw', '배경 빼기 전'), (axs[1], 'ratio', '각자 주변 배경 뺀 뒤')):
+    lo, hi = norm([col])
+    band(a, L, f'n_{col}', 'tab:purple', 'green / Cy5 (정규화)')
+    ylim01(a, lo, hi)
+    a.set_title(f'세포 단위 green / Cy5 ({ttl}, 세포 {n}개)')
+    a.set_xlabel('시간 (h)')
+    a.set_ylabel('정규화 값')
+    a.grid(alpha=.3)
+    a.legend(fontsize=8, loc='lower right')
+plots._save(fig, str(out / 'norm_cell_green_over_cy5.png'))
+
+fig, axs = plt.subplots(1, 2, figsize=(14, 5))
+for a, ch, name in ((axs[0], 'green', 'green (pHrodo)'), (axs[1], 'cy5', 'Cy5')):
+    lo, hi = norm([f'{ch}_cell', f'{ch}_ring', ch])
+    band(a, L, f'n_{ch}_cell', 'tab:blue', '세포 평균')
+    band(a, L, f'n_{ch}_ring', 'tab:orange', '그 세포의 주변 고리 평균')
+    band(a, L, f'n_{ch}', 'k', '세포 − 주변 고리')
+    ylim01(a, lo, hi)
+    a.set_title(f'세포 단위 {name}: 세포와 그 세포 주변 배경 (정규화)')
+    a.set_xlabel('시간 (h)')
+    a.set_ylabel('정규화 값')
+    a.grid(alpha=.3)
+    a.legend(fontsize=8, loc='lower right')
+plots._save(fig, str(out / 'norm_cell_vs_own_background.png'))
+
+fig, axs = plt.subplots(1, 2, figsize=(14, 5))
+for a, col, color, ttl in ((axs[0], 'd_green', 'tab:green', '세포별 green 증감 (주변 배경 뺀 뒤, 1 h 기준)'),
+                           (axs[1], 'cy5_rel', 'tab:red', '세포별 Cy5 증감 (주변 배경 뺀 뒤, 1 h 기준 배수)')):
+    lo, hi = norm([col])
+    for u, g in L.groupby('cell_uid'):
+        a.plot(g.t_h, g[f'n_{col}'], '-', lw=.6, alpha=.35, color=color)
+    band(a, L, f'n_{col}', 'k', '중앙값 ± IQR')
+    ylim01(a, lo, hi)
+    a.set_title(ttl)
+    a.set_xlabel('시간 (h)')
+    a.set_ylabel('정규화 값')
+    a.grid(alpha=.3)
+    a.legend(fontsize=8, loc='lower right')
+plots._save(fig, str(out / 'norm_cell_change_local_bg.png'))
