@@ -50,4 +50,55 @@ if len(sys.argv) > 3:
     plots.ratio_figures(lp, str(o / 'combined'), 'combined_', idcol='track_uid')
     plots.per_dataset_medians(lp, str(o / 'combined' / 'combined_per_dataset_medians.png'))
     run_risefall(p, cfg, o / 'risefall', dirs=dirs)
+
+
+# ---- 크롭 영상 + 곡선 (ParticleTracker 특이 입자 탭의 '크롭 영상 + 그래프'), every kept particle -------------------
+def crops(pts, rdir, out_dir, cfg, dirs):
+    """make_crop() for each kept track, loading each dataset once."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    from ptracker import movies, registration
+    from ptracker.io_utils import DatasetSpec, load_dataset
+    R = pd.read_csv(rdir / 'risefall_classification_all_tracks.csv')
+    kept = R[R.keep]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    n = 0
+    for ds, rows in kept.groupby('dataset'):
+        spec = DatasetSpec.load(Path(dirs[ds]) / 'dataset.json')
+        A, B, HT = load_dataset(spec)
+        reg = pd.read_csv(Path(dirs[ds]) / 'registration.csv')
+        Bal = registration.align_b(B, reg)
+        for _, r in rows.iterrows():
+            u = r.track_uid
+            t = pts[pts.track_uid == u]
+            safe = u.replace('::', '_').replace('/', '_')
+            cat = plots.CNAME.get(getattr(r, 'category', ''), '')
+            info = f"{ds} | {u.split('::')[-1]} | {plots.GNAME.get(t.group.iloc[0], t.group.iloc[0])} {cat}"
+            if (out_dir / f'trace_{safe}.png').exists():
+                n += 1
+                continue
+            try:   # as ParticleTracker's crops task: one failure does not stop the rest
+                movies.crop_movie(A, Bal, HT, t, HT.shape[1] / A.shape[1], str(out_dir / f'crop_{safe}'), info, r,
+                                  cfg.output.crop_half, cfg.output.movie_fps, {})
+            except Exception as e:  # noqa: BLE001
+                print('crop failed', u, e, flush=True)
+            fig, ax = plt.subplots(figsize=(9, 4))
+            plots.track_trace(ax, t, r, show_channels=True)
+            ax.set_title(info)
+            fig.savefig(out_dir / f'trace_{safe}.png', dpi=110, bbox_inches='tight')
+            plt.close(fig)
+            n += 1
+        print('crops', ds, len(rows), flush=True)
+        del A, B, HT, Bal
+    return n
+
+
+if not os.environ.get('NO_CROPS'):
+    if len(sys.argv) > 3:
+        cp, crd = p, o / 'risefall'
+    else:
+        cp, crd = pts, out / 'A 세포 안·밖 (ParticleTracker 그대로)' / 'risefall'
+    print('crop movies', crops(cp, crd, out / '크롭 영상 (선별 입자)', cfg, dirs))
 print('done')
