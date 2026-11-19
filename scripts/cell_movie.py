@@ -2,7 +2,7 @@
 
 usage: python scripts/cell_movie.py PROJECT.cyproj LOCAL_BG_CSV OUT IMAGE::CELL [IMAGE::CELL ...]
 Crops follow the cell's bounding box (union over frames, + 3 µm), cell outline from ParticleTracker's cell labels.
-Green (black → green) 0–6 (raw 8-bit counts), Cy5 (black → red) auto (0.5–99.8 % of the crops), RI 0.5–99.8 %.
+Green (black → green) 0–30 (raw counts), Cy5 (black → red) auto (0.5–99.8 % of the crops), RI 0.5–99.8 %.
 """
 import pickle
 import sys
@@ -87,7 +87,7 @@ for n, _ in enumerate(data.get('images') or []):
                 m = lab[y0:y1, x0:x1] == c
                 h = HT[z][np.ix_(hy[y0:y1], hx[x0:x1])].astype(float)
                 lo_h, hi_h = np.percentile(h, [.5, 99.8])
-                for a, im, ttl, cmap, vmin, vmax in ((axs[0], cb[z], 'green (0–6)', 'Greens_r', 0, 6),
+                for a, im, ttl, cmap, vmin, vmax in ((axs[0], cb[z], 'green (0–30)', 'Greens_r', 0, 30),
                                                     (axs[1], ca[z], 'Cy5', 'gray', lo_a, hi_a),
                                                     (axs[2], h, 'RI', 'gray', lo_h, hi_h)):
                     a.clear()
