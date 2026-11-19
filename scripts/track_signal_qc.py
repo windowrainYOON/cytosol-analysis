@@ -6,7 +6,9 @@ RISEFALL_ROOT = 통합 분석/특이 입자 (ParticleTracker). Reads B …/combi
 
 Criteria (per track, frames where the particle was detected):
   green loss   a clearly bright frame (green max >= 2 × thr) followed by a frame < thr, and no frame >= thr
-               in the next 3 frames (the green switches off at once and does not come back)
+               in the next 3 frames (the green switches off at once and does not come back) — excluded only when
+               the RI surroundings also jump at that frame or the next (owner 2026-11-19: green may switch off
+               while the HT pattern is kept)
   HT jump      normalized cross-correlation of the RI patch around the particle (31 x 31 HT px ≈ 4.8 µm) between
                consecutive detected frames below 0.1 and more than 0.35 below the track's own median correlation,
                in at least 2 frames (one odd frame is tolerated: 20 min frames, cells move and deform)
@@ -80,17 +82,18 @@ for ds, kk in k.groupby('dataset'):
         c = np.array([v for _, v in cs], float)
         med = float(np.nanmedian(c)) if len(c) else np.nan
         bad = [f for f, v in cs if v == v and v < NCC_MIN and (med != med or v < med - NCC_DROP)]
+        loss_ht = loss is not None and any(f in (loss, loss + 1) for f in bad)
         rows.append(dict(dataset=ds, track_uid=u, track_id=int(u.split('::')[1]), green_loss_frame=loss,
                          ht_ncc_median=round(med, 3), ht_ncc_min=round(float(np.nanmin(c)), 3) if len(c) else np.nan,
-                         ht_jump_frames=' '.join(map(str, bad)), green_loss=loss is not None, ht_jump=len(bad) >= NCC_FRAMES))
+                         ht_jump_frames=' '.join(map(str, bad)), green_loss=loss is not None, green_loss_ht=loss_ht, ht_jump=len(bad) >= NCC_FRAMES))
     print(ds, len(kk), flush=True)
     del HT
 q = pd.DataFrame(rows)
 FR = pd.DataFrame(frames).merge(pts[['track_uid', 'frame', 'I_B_max', 'I_B_raw', 'ratio_BA']], on=['track_uid', 'frame'], how='right')
 FR = FR[FR.track_uid.isin(k.track_uid)].sort_values(['track_uid', 'frame'])
-q['qc_keep'] = ~(q.green_loss | q.ht_jump)
-q['reason'] = [', '.join(r for r, on in (('green 갑자기 사라짐', a), ('HT 주변 패턴 급변', b_)) if on) for a, b_ in
-               zip(q.green_loss, q.ht_jump)]
+q['qc_keep'] = ~(q.ht_jump | (q.green_loss & q.green_loss_ht))
+q['reason'] = [', '.join(r for r, on in (('green 꺼짐 + 그 시점 HT 패턴 급변', a and c_), ('HT 주변 패턴 급변', b_)) if on)
+               or ('green 꺼짐 (HT 패턴 유지, 남김)' if a else '') for a, c_, b_ in zip(q.green_loss, q.green_loss_ht, q.ht_jump)]
 sig_dir = sub('신호 있는 선별 입자 (')
 base = pd.read_csv(sig_dir / 'signal_kept_particles.csv')
 m = base.merge(q.drop(columns=['dataset', 'track_id']), on='track_uid', how='left')
