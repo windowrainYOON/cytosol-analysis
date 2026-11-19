@@ -15,6 +15,9 @@ JSON saved from the app), and writes into FOLDER/OUT:
     graphs and, unless --no-movies, its MP4s)
   - project.cyproj (rewritten after every image, so a crash keeps the rest),
     combined tables, batch/ results + settings, work_log.csv, run_log.txt
+With --green-thr (입자 추적): per image green_threshold<thr>_long_tracks/ (long tracks split by
+the measure channel ROI max >= thr in >= --green-frames frames; CSVs + ParticleTracker-style
+graphs), and at the end 통합 분석/ (all images: inside/outside and green graphs, per-image summary).
 Prints one line per image: '[k/n] label OK|FAIL ...'.  Use scripts/run_batch_bg.sh
 to run it in the background with caffeinate and the CW Data mount check."""
 from __future__ import annotations
@@ -61,6 +64,28 @@ def kind_defaults(kinds) -> dict:
     return opts
 
 
+def _py(script, *args):
+    """Run a sibling script with this interpreter; print its last line."""
+    import subprocess
+    r = subprocess.run([sys.executable, str(Path(__file__).with_name(script)), *args],
+                       capture_output=True, text=True)
+    if r.returncode:
+        print(f'  {script} failed: {r.stderr.strip().splitlines()[-1:]}', flush=True)
+    return r
+
+
+def green_step(files, a):
+    """Green / non-green split of the long tracks of the ParticleTracker folder just written."""
+    pts = {Path(f).parent for f in files if Path(f).name == 'tracks_summary_A_B_HT.csv'}
+    for pt in pts:
+        d = pt.parent / f'green_threshold{a.green_thr:g}_long_tracks'
+        _py('track_green.py', str(pt), str(d), '--thr', f'{a.green_thr:g}', '--min-len', str(a.min_len),
+            '--min-green', str(a.green_frames))
+        r = _py('track_green_plots.py', str(REPO), str(pt), str(d), f'{a.green_thr:g}', str(a.green_frames),
+                str(a.min_len))
+        print(f'  {r.stdout.strip()}', flush=True)
+
+
 def pick(combo, name, by_text=False):
     for k in range(combo.count()):
         v = combo.itemText(k).split(': ', 1)[-1] if by_text else str(combo.itemData(k) or '')
@@ -82,6 +107,11 @@ def main():
     ap.add_argument('--pt-measure', default='CH0')
     ap.add_argument('--settings', type=Path, help='batch settings JSON from the app (tab settings)')
     ap.add_argument('--list', action='store_true', help='only list the files')
+    ap.add_argument('--green-thr', type=float, default=None,
+                    help='입자 추적: also split long tracks by measure-channel signal (ROI max >= this, e.g. 5)')
+    ap.add_argument('--green-frames', type=int, default=3, help='frames above --green-thr to count as green')
+    ap.add_argument('--min-len', type=int, default=10, help='long track = at least this many frames')
+    ap.add_argument('--no-integrate', action='store_true', help='skip the all-images graphs (통합 분석)')
     a = ap.parse_args()
 
     steps = [s.strip() for s in a.steps.split(',') if s.strip()]
@@ -135,6 +165,8 @@ def main():
         try:
             errs = batch.run(win, st, [it])
             r = exporter.run(win, [it], out, per)
+            if 'track' in steps and a.green_thr is not None:
+                green_step(r.files, a)
             ok = not errs and not r.errors
             done.append(it.label)
             print(f'[{n}/{len(items)}] {it.label} {"OK" if ok else "WARN"} {st.results.get(it.label)} '
@@ -153,6 +185,10 @@ def main():
     final = {k: v for k, v in kind_defaults(kinds).items() if k in ('track_all', 'mito_all')}
     final.update(per_image=True, integrated_csv=True, batch_results=True, project=True, log=True)
     r = exporter.run(win, items, out, final)
+    if 'track' in steps and not a.no_integrate and done:
+        thr = a.green_thr if a.green_thr is not None else 5
+        _py('track_integrate.py', str(REPO), str(out), str(out / '통합 분석'), f'{thr:g}',
+            str(a.green_frames), str(a.min_len))
     nfiles = sum(1 for _ in out.rglob('*') if _.is_file())
     print(f'DONE {len(done)}/{len(items)} images, {nfiles} files in {out} '
           f'({time.perf_counter() - t_all:.0f}s)' + (f' errors {r.errors}' if r.errors else ''), flush=True)
