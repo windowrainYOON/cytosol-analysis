@@ -72,6 +72,24 @@ ax.grid(alpha=.3)
 ax.legend()
 plots._save(fig, str(out / 'cell_green_per_cell.png'))
 
+# raw, background and raw − background per cell (owner 2026-11-19: why does cell green fall late?)
+fig, axs = plt.subplots(1, 2, figsize=(14, 5))
+for a, ch, name in ((axs[0], 'B', 'green (pHrodo)'), (axs[1], 'A', 'Cy5 (reference)')):
+    band(a, L, f'cell_I_{ch}_raw', 'tab:blue', '세포 평균 (배경 빼기 전)')
+    band(a, L, f'cell_bg_{ch}', 'tab:orange', '세포 주변 배경')
+    band(a, L, f'cell_I_{ch}', 'k', '세포 − 배경')
+    a.set_title(f'세포 단위 {name}: 배경 빼기 전 · 배경 · 뺀 값 (세포 {L.cell_uid.nunique()}개, 중앙값 ± IQR)')
+    a.set_xlabel('시간 (h)')
+    a.set_ylabel('형광 (raw)')
+    a.grid(alpha=.3)
+    a.legend(fontsize=8)
+plots._save(fig, str(out / 'cell_raw_background_subtracted.png'))
+L.groupby('t_h').agg(green_raw=('cell_I_B_raw', 'median'), green_bg=('cell_bg_B', 'median'),
+                     green=('cell_I_B', 'median'), green_raw_mean=('cell_I_B_raw', 'mean'),
+                     green_bg_mean=('cell_bg_B', 'mean'), green_mean=('cell_I_B', 'mean'),
+                     cy5_raw=('cell_I_A_raw', 'median'), cy5_bg=('cell_bg_A', 'median'), cy5=('cell_I_A', 'median')) \
+    .round(4).to_csv(out / 'cell_raw_background_summary.csv')
+
 C.round(5).to_csv(out / 'cell_intensity_all.csv', index=False)
 per.round(4).to_csv(out / 'cell_particle_counts_per_frame.csv', index=False)
 s = L.groupby('t_h').agg(cells=('cell_uid', 'nunique'), green_median=('cell_I_B', 'median'),
