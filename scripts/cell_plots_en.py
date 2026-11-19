@@ -6,7 +6,7 @@ usage:
       MODE local = local-background table (columns green, green_cell, cy5, ratio)
       chosen cells (red) and all cells (black), normalized 5 / 95 % of all cells -> 0 / 1, y −0.2–1.7
   python scripts/cell_plots_en.py thr THR_CSV OUT_PNG [percentile] [early_min]
-      the 4-panel thresholded graph of all cells, y −0.2–1.2
+      the 4-panel thresholded graph of all cells, y −0.2–1.7
 """
 import sys
 from pathlib import Path
@@ -97,7 +97,7 @@ elif kind == 'thr':
         q = L.groupby('t_h')._n.quantile([.25, .5, .75]).unstack()
         a.fill_between(q.index, q[.25], q[.75], color='k', alpha=.18)
         h = a.plot(q.index, q[.5], '-', color='k', lw=2.4, label='Median ± IQR')[0]
-        finish(a, lo, hi, (-0.2, 1.2))
+        finish(a, lo, hi, (-0.2, 1.7))
         a.set_title(ttl, fontsize=10)
     for a in axs[1]:
         a.set_xlabel('Time (h)')
