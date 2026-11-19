@@ -78,7 +78,7 @@ for a, ch, name in ((axs[0], 'B', 'green (pHrodo)'), (axs[1], 'A', 'Cy5 (referen
     band(a, L, f'cell_I_{ch}_raw', 'tab:blue', '세포 평균 (배경 빼기 전)')
     band(a, L, f'cell_bg_{ch}', 'tab:orange', '세포 주변 배경')
     band(a, L, f'cell_I_{ch}', 'k', '세포 − 배경')
-    a.set_title(f'세포 단위 {name}: 배경 빼기 전 · 배경 · 뺀 값 (세포 {L.cell_uid.nunique()}개, 중앙값 ± IQR)')
+    a.set_title(f'세포 단위 {name} (세포 {L.cell_uid.nunique()}개, 중앙값 ± IQR)')
     a.set_xlabel('시간 (h)')
     a.set_ylabel('형광 (raw)')
     a.grid(alpha=.3)
