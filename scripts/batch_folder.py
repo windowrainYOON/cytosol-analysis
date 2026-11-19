@@ -43,7 +43,8 @@ def find_files(folder: Path, globs, match, out_dir):
     seen, files = set(), []
     for g in globs:
         for f in sorted(folder.rglob(g)):
-            if f in seen or out_dir in f.parents or any(p.name.startswith('.') for p in f.parents):
+            if f in seen or f.name.startswith('._') or out_dir in f.parents \
+                    or any(p.name.startswith('.') for p in f.parents):
                 continue
             if match and not any(m in f.name for m in match):
                 continue
@@ -112,6 +113,9 @@ def main():
     ap.add_argument('--green-frames', type=int, default=3, help='frames above --green-thr to count as green')
     ap.add_argument('--min-len', type=int, default=10, help='long track = at least this many frames')
     ap.add_argument('--no-integrate', action='store_true', help='skip the all-images graphs (통합 분석)')
+    ap.add_argument('--pt-repo', type=Path, default=Path.home() / 'Developer' / 'particle-tracking',
+                    help='ParticleTracker repo (its .venv) for 특이 입자 after 통합 분석; missing = skipped')
+    ap.add_argument('--no-risefall', action='store_true', help='skip ParticleTracker 특이 입자')
     a = ap.parse_args()
 
     steps = [s.strip() for s in a.steps.split(',') if s.strip()]
@@ -189,6 +193,16 @@ def main():
         thr = a.green_thr if a.green_thr is not None else 5
         _py('track_integrate.py', str(REPO), str(out), str(out / '통합 분석'), f'{thr:g}',
             str(a.green_frames), str(a.min_len))
+        pt_py = a.pt_repo / '.venv' / 'bin' / 'python'
+        if not a.no_risefall and pt_py.exists():   # ParticleTracker 통합 분석 + 특이 입자 (A 세포 안·밖, B 신호)
+            import subprocess
+            args = [str(pt_py), '-I', str(Path(__file__).with_name('track_pt_risefall.py')), str(a.pt_repo), str(out),
+                    str(out / '통합 분석' / '특이 입자 (ParticleTracker)')]
+            if a.green_thr is not None:
+                args += [str(out / '통합 분석' / 'all_green_track_ids.csv'), f'green ≥ {a.green_thr:g}']
+            r = subprocess.run(args, capture_output=True, text=True)
+            print('  특이 입자:', 'done' if r.returncode == 0 else f'failed {r.stderr.strip().splitlines()[-1:]}',
+                  flush=True)
     nfiles = sum(1 for _ in out.rglob('*') if _.is_file())
     print(f'DONE {len(done)}/{len(items)} images, {nfiles} files in {out} '
           f'({time.perf_counter() - t_all:.0f}s)' + (f' errors {r.errors}' if r.errors else ''), flush=True)

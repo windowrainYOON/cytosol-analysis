@@ -21,7 +21,8 @@ from cytosol.ptcore import plots, style  # noqa: E402
 style.setup()
 out.mkdir(parents=True, exist_ok=True)
 P, S = [], []
-for k, pt in enumerate(sorted(root.glob('*_*/*_ParticleTracker')), 1):
+for k, pt in enumerate([q for q in sorted(root.glob('*_*/*_ParticleTracker'))
+                        if not q.name.startswith('._') and not q.parent.name.startswith('._')], 1):
     if not (pt / 'tracks_summary_A_B_HT.csv').exists():
         continue
     img = pt.parent.name.split('.A1.')[-1].split('_')[0]
