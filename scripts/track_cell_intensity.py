@@ -90,6 +90,48 @@ L.groupby('t_h').agg(green_raw=('cell_I_B_raw', 'median'), green_bg=('cell_bg_B'
                      cy5_raw=('cell_I_A_raw', 'median'), cy5_bg=('cell_bg_A', 'median'), cy5=('cell_I_A', 'median')) \
     .round(4).to_csv(out / 'cell_raw_background_summary.csv')
 
+# green background stable window (owner 2026-11-19: cut the start / end where the green background jumps)
+BG_FRAC = 0.2
+fr = L.groupby('t_h').cell_bg_B.apply(lambda v: (v >= 1).mean())
+ok = (fr <= BG_FRAC).to_numpy()
+best, cur, start = (0, 0), 0, 0
+for i, o in enumerate(ok):
+    if o:
+        if cur == 0:
+            start = i
+        cur += 1
+        if cur > best[1] - best[0]:
+            best = (start, i + 1)
+    else:
+        cur = 0
+t0, t1 = fr.index[best[0]], fr.index[best[1] - 1]
+(out / 'green_stable_window.txt').write_text(
+    f'green background stable: {t0:.2f}–{t1:.2f} h (longest run of frames where <= {BG_FRAC:.0%} of the cells '
+    f'have a green ring background >= 1)\n' + fr.round(3).to_string() + '\n', encoding='utf-8')
+W = L[L.t_h.between(t0, t1)]
+Pw = pin[pin.t_h.between(t0, t1)]
+perw = per[per.t_h.between(t0, t1)]
+fig, axs = plt.subplots(2, 2, figsize=(14, 9), sharex=True)
+for a, ch, name in ((axs[0, 0], 'B', 'green (pHrodo)'), (axs[0, 1], 'A', 'Cy5 (reference)')):
+    band(a, W, f'cell_I_{ch}_raw', 'tab:blue', '세포 평균 (배경 빼기 전)')
+    band(a, W, f'cell_bg_{ch}', 'tab:orange', '세포 주변 배경')
+    band(a, W, f'cell_I_{ch}', 'k', '세포 − 배경')
+    a.set_title(f'세포 단위 {name} (세포 {W.cell_uid.nunique()}개)')
+    a.set_ylabel('형광 (raw)')
+band(axs[1, 0], Pw, 'I_B', 'tab:green', 'green (배경 제거)')
+axs[1, 0].set_title('세포 안 입자 green')
+band(axs[1, 1], perw, 'n', 'tab:blue', '세포당 입자 수')
+band(axs[1, 1], perw, 'green', 'tab:green', '세포당 green ≥ 5 입자 수')
+axs[1, 1].set_title('세포당 입자 수 / green 입자 수')
+for a in axs.flat:
+    a.grid(alpha=.3)
+    a.legend(fontsize=8)
+for a in axs[1]:
+    a.set_xlabel('시간 (h)')
+fig.suptitle(f'green 배경이 안정적인 구간만: {t0:.1f}–{t1:.1f} h (중앙값 ± IQR)')
+plots._save(fig, str(out / 'cell_intensity_green_stable_window.png'))
+print(f'green stable window {t0:.2f}-{t1:.2f} h')
+
 C.round(5).to_csv(out / 'cell_intensity_all.csv', index=False)
 per.round(4).to_csv(out / 'cell_particle_counts_per_frame.csv', index=False)
 s = L.groupby('t_h').agg(cells=('cell_uid', 'nunique'), green_median=('cell_I_B', 'median'),
