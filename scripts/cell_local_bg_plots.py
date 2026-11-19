@@ -106,7 +106,7 @@ def norm(cols):
 
 
 def ylim01(a, lo, hi, unit=''):
-    a.set_ylim(0, 1)
+    a.set_ylim(-0.2, 1.2)
     a.text(.01, .98, f'0 = {lo:.4g}, 1 = {hi:.4g}{unit} (전체 값의 5 · 95 백분위)', transform=a.transAxes, va='top',
            fontsize=7, color='0.35')
 
