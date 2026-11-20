@@ -415,13 +415,13 @@ class GraphWindow(QMainWindow):
         for key, (title, *_r) in self._sources().items():
             c = hig_widgets.Chip(title, False)
             c.setCheckable(False)
-            c.clicked.connect(lambda _=False, k=key: self.start_wizard(k))
+            c.clicked.connect(lambda _=False, k=key: QTimer.singleShot(0, lambda: self.start_wizard(k)))
             self.chips[key] = c
             cr.addWidget(c)
         csv_chip = hig_widgets.Chip('CSV…', False)
         csv_chip.setCheckable(False)
         csv_chip.setToolTip('CSV 표(첫 줄 = 열 이름)로 새 그래프를 만듭니다.')
-        csv_chip.clicked.connect(lambda: self.start_wizard_csv())
+        csv_chip.clicked.connect(lambda: QTimer.singleShot(0, lambda: self.start_wizard_csv()))
         cr.addWidget(csv_chip)
         self.zoom_label = QLabel('100 %')
         theme.secondary(self.zoom_label)
@@ -669,9 +669,11 @@ class GraphWindow(QMainWindow):
     # ---- data sources (chips) -----------------------------------------------------------------
 
     def refresh_chips(self):
-        """A chip per tool; tools with nothing analysed yet look disabled."""
-        from PySide6.QtWidgets import QGraphicsOpacityEffect
-
+        """A chip per tool; tools with nothing analysed yet look disabled
+        (the style sheet's :disabled look). v0.72.1: no QGraphicsOpacityEffect
+        any more: replacing a chip's effect on every refresh crashed the app
+        (segmentation fault in setGraphicsEffect / the backing-store flush on
+        macOS, 2026-11-20 report and the self-test)."""
         try:
             self.refresh_data()
         except Exception:  # noqa: BLE001
@@ -684,14 +686,7 @@ class GraphWindow(QMainWindow):
             except Exception:
                 ok = False
             c.setEnabled(ok)
-            if ok:
-                c.setGraphicsEffect(None)
-                c.setToolTip(f'{title}의 결과로 새 그래프를 만듭니다 (종류 → 축 배치 → 그룹).')
-            else:
-                eff = QGraphicsOpacityEffect(c)
-                eff.setOpacity(0.4)
-                c.setGraphicsEffect(eff)
-                c.setToolTip(hint)
+            c.setToolTip(f'{title}의 결과로 새 그래프를 만듭니다 (종류 → 축 배치 → 그룹).' if ok else hint)
 
     # ---- 데이터 list (v0.64) ----
 
@@ -739,11 +734,16 @@ class GraphWindow(QMainWindow):
         self.data_list.addTopLevelItem(csv)
 
     def _data_clicked(self, item, _col=0):
+        # v0.72.1 crash fix: the file chooser and the modal 새 그래프 window
+        # must not run inside the list's own mouse-release handler; finishing
+        # the wizard rebuilds this list (refresh_data → clear), which deleted
+        # the clicked item under QTreeView::mouseReleaseEvent and crashed the
+        # app in the backing-store flush on macOS (2026-11-20 report)
         name = item.data(0, Qt.ItemDataRole.UserRole)
         if name == '@csv':
-            self.start_wizard_csv()
+            QTimer.singleShot(0, lambda: self.start_wizard_csv())
         elif name:
-            self.start_data(name)
+            QTimer.singleShot(0, lambda n=name: self.start_data(n))
 
     def start_data(self, name, run=True):
         """A table of the 데이터 list: images whose ROIs or settings changed
