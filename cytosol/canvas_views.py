@@ -141,7 +141,7 @@ class SectionView(QWidget):
         self._rects = g
         nz = self.stack.shape[1]
         img_xy, img_xz, img_yz = self._imgs
-        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, s < 1)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         for r, img in ((xy, img_xy), (yz, img_yz), (xz, img_xz)):
             p.fillRect(r, BLACK)
             p.drawImage(r, img)

@@ -25,6 +25,7 @@ from PySide6.QtGui import (
     QShortcut,
 )
 from PySide6.QtWidgets import (
+    QStackedWidget,
     QApplication,
     QCheckBox,
     QColorDialog,
@@ -1768,7 +1769,31 @@ class MainWindow(QMainWindow):
         # mitoROI (v0.67, Mito Analyzer measurements)
         from .mito_panel import MitoPanel
         self.mito_panel = MitoPanel(self)
+        from .mina_panel import MinaPanel
+        self.mina_panel = MinaPanel(self)
         self.live_box.adopt_plots()  # FRAP curve, profile, Coloc 2 plots under the canvas (v0.64)
+        # 라인 프로파일 icon (v0.73): the line settings and 내보내기… under the plot
+        pp = self.profile_panel
+        strip = QWidget()
+        sl = QHBoxLayout(strip)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.setSpacing(12)
+        sl.addWidget(QLabel('선 두께'))
+        sl.addWidget(pp.width)
+        sl.addWidget(pp.only_visible)
+        sl.addWidget(pp.normalize)
+        sl.addStretch()
+        clear = QPushButton('선 지우기')
+        clear.clicked.connect(pp.clear_line)
+        sl.addWidget(clear)
+        exp = QPushButton('내보내기…')
+        exp.setToolTip('CSV · 플롯 · 선 ROI (파일 › 내보내기의 라인 프로파일)')
+        exp.clicked.connect(lambda: self.export_dialog('profile'))
+        sl.addWidget(exp)
+        self.profile_strip = strip
+        self.live_box.add_strip('profile_tab', strip)
+        pp.info.setParent(strip)
+        pp.info.hide()
         self.info_panel = InfoPanel()
         # inspector: capsule chips switch the pages (hig_widgets.ChipTabs)
         right = hig_widgets.ChipTabs()
@@ -1790,6 +1815,7 @@ class MainWindow(QMainWindow):
             'frap_tab': (scrolled(self.frap_panel), 'FRAP 측정'),
             'track_tab': (scrolled(self.track_panel), '입자 추적'),
             'mito_tab': (scrolled(self.mito_panel), 'mitoROI'),
+            'mina_tab': (scrolled(self.mina_panel), '미토 형태 (MiNA)'),
         }
         self.canvas.lineDrawn.connect(self._line_drawn)
         for mode, btn in self.view_btns.items():
@@ -1830,6 +1856,8 @@ class MainWindow(QMainWindow):
                                   self.track_panel.bar_status),
             'mito_tab': Measurer(lambda: self.mito_panel.run_current(), self.mito_panel.run_all,
                                  self.mito_panel.bar_status),
+            'mina_tab': Measurer(lambda: self.mina_panel.run_current(), self.mina_panel.run_all,
+                                 self.mina_panel.bar_status),
         }
         inspector.setMinimumWidth(RIGHT_MIN_W)
 
@@ -1941,55 +1969,60 @@ class MainWindow(QMainWindow):
         # are in 파일 › 내보내기 (owner request 2026-11-05), its loads stay here
         self.tool_menu = tools = mb.addMenu('Tool')
 
-        sub = tools.addMenu('LUT')
-        act(sub, 'LUT 프리셋 저장…', self.save_preset,
-            tip='현재 이미지의 채널 LUT를 JSON 파일로 저장합니다.')
-        load_action(sub, 'LUT 프리셋 불러오기…', 'lut')
-
-        sub = tools.addMenu('마커')
-        act(sub, '마커 설정 저장…', self.save_marker_settings,
-            tip='scale bar, 시간 표시, bleach ROI 표시 설정을 JSON 파일로 저장합니다.')
-        load_action(sub, '마커 설정 불러오기…', 'marker')
-
         # Crop (owner request 2026-11-05: no Tool › Crop menu): the canvas Crop
         # icon, the crop rows of the sidebar and the crop right-click menu
         self.crop_draw_act = QAction('Crop 그리기 · 옮기기', self, checkable=True)
         self.crop_draw_act.toggled.connect(self.crop_btn.setChecked)
         self.crop_btn.toggled.connect(self.crop_draw_act.setChecked)
 
-        sub = tools.addMenu('세포질 ROI')
+        # Tool › 검출 · 추적 · 측정 (owner request 2026-11-24, pipeline design v3.6):
+        # the same groups as the pipeline; LUT presets and marker settings are
+        # read by 파일 › 불러오기 and written by 파일 › 내보내기, 강도 측정 moves
+        # to the pipeline, 스택 / 라인 프로파일 are canvas icons
+        detect = tools.addMenu('검출')
+        track = tools.addMenu('추적')
+        measure = tools.addMenu('측정')
+
+        sub = detect.addMenu('세포질 ROI')
         tab_action(sub, 'roi_tab')
         load_action(sub, 'ROI 불러오기…', 'cell')
 
-        sub = tools.addMenu('입자 ROI')
+        sub = detect.addMenu('입자 ROI')
         tab_action(sub, 'particle_tab')
         load_action(sub, '입자 ROI 불러오기…', 'particle')
 
-        sub = tools.addMenu('강도 측정')
-        tab_action(sub, 'intensity_tab')
-
-        sub = tools.addMenu('등거리 띠')
-        tab_action(sub, 'bands_tab')
-
-        sub = tools.addMenu('Coloc 2')
-        tab_action(sub, 'coloc_tab')
-
-        sub = tools.addMenu('FRAP 측정')
-        tab_action(sub, 'frap_tab')
-        load_action(sub, 'FRAP ROI 불러오기…', 'frap')
-
-        sub = tools.addMenu('입자 추적')
-        tab_action(sub, 'track_tab')
-        pt_act = sub.addAction('트랙 불러오기 (ParticleTracker)…')
-        pt_act.setToolTip('ParticleTracker 결과 폴더의 tracks_points CSV를 현재 이미지에 불러옵니다.')
-        pt_act.triggered.connect(lambda: self.track_panel.load_dialog())
-
-        sub = tools.addMenu('mitoROI')
+        sub = detect.addMenu('mitoROI')
         tab_action(sub, 'mito_tab')
         ma_act = sub.addAction('Mito Analyzer 결과 불러오기…')
         ma_act.setToolTip('Mito Analyzer 결과 폴더의 <이름>_per_cell.csv를 이름이 같은 이미지(없으면 현재 이미지)에 '
                           '불러옵니다.')
         ma_act.triggered.connect(lambda: self.mito_panel.load_dialog())
+
+        sub = track.addMenu('입자 추적')
+        tab_action(sub, 'track_tab')
+        pt_act = sub.addAction('트랙 불러오기 (ParticleTracker)…')
+        pt_act.setToolTip('ParticleTracker 결과 폴더의 tracks_points CSV를 현재 이미지에 불러옵니다.')
+        pt_act.triggered.connect(lambda: self.track_panel.load_dialog())
+        if 'cyto_track_tab' in self.tab_pages:
+            sub = track.addMenu('세포질 강도 추적')
+            tab_action(sub, 'cyto_track_tab')
+
+        sub = measure.addMenu('등거리 띠')
+        tab_action(sub, 'bands_tab')
+
+        sub = measure.addMenu('Coloc 2')
+        tab_action(sub, 'coloc_tab')
+
+        sub = measure.addMenu('FRAP 측정')
+        tab_action(sub, 'frap_tab')
+        load_action(sub, 'FRAP ROI 불러오기…', 'frap')
+
+        if 'mina_tab' in self.tab_pages:
+            sub = measure.addMenu('미토 형태 (MiNA)')
+            tab_action(sub, 'mina_tab')
+        if 'intensity_tab' in self.tab_pages:
+            sub = measure.addMenu('강도 측정')
+            tab_action(sub, 'intensity_tab')
 
         for sub in tools.findChildren(QMenu):  # no trailing separator after the tab item
             acts = sub.actions()
@@ -2088,6 +2121,10 @@ class MainWindow(QMainWindow):
             if rows:
                 out.append({'feature': 'mitoROI', 'name': name, 'unit': unit, 'rows': len(rows), 'state': 'ok',
                             'key': 'mito', 'table': name})
+        for name, unit, rows in self.mina_panel.data_tables():
+            if rows:
+                out.append({'feature': '미토 형태 (MiNA)', 'name': name, 'unit': unit, 'rows': len(rows),
+                            'state': 'ok', 'key': 'mina', 'table': name})
         for name, unit, rows in self.track_panel.data_tables():
             if rows:
                 out.append({'feature': '입자 추적', 'name': name, 'unit': unit, 'rows': len(rows), 'state': 'ok',
@@ -2512,10 +2549,18 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, '마커 설정 저장', 'markers.json', 'JSON (*.json)')
         if not path:
             return
+        self.write_marker_settings(path)
+        self.statusBar().showMessage(f'마커 설정 저장: {Path(path).name}')
+
+    def write_marker_settings(self, path):
+        import json
+
+        from .project import widget_state
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_text(json.dumps({'format': MARKER_FORMAT, 'version': 1,
                                           'state': widget_state(self.markers)},
                                          ensure_ascii=False, indent=1), encoding='utf-8')
-        self.statusBar().showMessage(f'마커 설정 저장: {Path(path).name}')
+        return Path(path)
 
     def load_marker_settings(self, path):
         import json
@@ -3448,6 +3493,7 @@ class MainWindow(QMainWindow):
             removed = self.items.pop(row)
             current_removed |= removed is self.current
             self.stack_views.pop(id(removed), None)
+            self.view3d_pane.forget(removed)
             self.frap_panel.forget(removed)
             removed.image.release()
             if self.figure_win is not None:
@@ -3477,6 +3523,7 @@ class MainWindow(QMainWindow):
             self.frap_panel.bind(None)
             self.track_panel.bind(None)
             self.mito_panel.bind(None)
+            self.mina_panel.bind(None)
             self.particle_panel.bind(None)
             self.intensity_panel.bind(None)
             self.info_panel.bind(None)
@@ -3520,11 +3567,18 @@ class MainWindow(QMainWindow):
         self._refresh_crop_list(select=0)
         self.stack_panel.bind(self._stack_view(it))
         self._build_stack_panels()
+        st3 = self.view3d_settings()
+        if st3.prerender == 'on_load' and it.nz > 1 and self.view_mode != '3d':
+            from . import vol3d
+            self.view3d_pane.cache(it).start(it.t, it.luts, st3.resolution,
+                                             vol3d.z_ratio(it.image, st3, it.pixel_um), None,
+                                             st3.memory_gb, sync_first=False)
         self.profile_panel.bind(it)
         self.coloc_panel.bind(it)
         self.frap_panel.bind(it)
         self.track_panel.bind(it)
         self.mito_panel.bind(it)
+        self.mina_panel.bind(it)
         self.particle_panel.bind(it)
         self.intensity_panel.bind(it)
         self.info_panel.bind(it)
@@ -3726,7 +3780,7 @@ class MainWindow(QMainWindow):
             w.blockSignals(False)
         self.z_col.setEnabled(nz > 1 and not self._stack_on())
         self.z_mip.setEnabled(self.view_mode != 'sect')
-        self.z_col.setVisible(it is not None)  # empty list: no Z / T controls
+        self.z_col.setVisible(it is not None and not self._stack_on())  # none without an image / in 3D
         if it is None:
             self.t_row.setVisible(False)
         self._z_label()
@@ -3811,7 +3865,7 @@ class MainWindow(QMainWindow):
         self.view_stack.setCurrentWidget({'sect': self.section_pane, '3d': self.view3d_pane}
                                          .get(mode, self.canvas))
         it = self.current
-        if mode != '3d' and old == '3d' and it is not None:
+        if mode not in ('3d', 'sect') and old in ('3d', 'sect') and it is not None:
             it.image.release()
         self._sync_z_widgets()
         self.update_preview(refit=True)
@@ -3999,6 +4053,30 @@ class MainWindow(QMainWindow):
         if view.raw3d is not None:
             view.refresh_3d()
         self.update_preview()
+
+    def save_view3d(self, stem) -> str | None:
+        """<stem>_3d.png: the current image's 3D projection at the 3D view's
+        angle and the Preferences' render method (numpy renderer, exact)."""
+        from PIL import Image as PILImage
+
+        from . import vol3d
+        it = self.current
+        if it is None or it.nz < 2:
+            return None
+        st = self.view3d_settings()
+        zr = vol3d.z_ratio(it.image, st, it.pixel_um)
+        cache = self.view3d_pane.cache(it)
+        vol = cache.get(it.t) if cache.key == (vol3d.lut_key(it.luts), int(st.resolution),
+                                               round(float(zr), 5), None) else None
+        if vol is None:
+            vol = vol3d.frame_volume(vol3d.read_stack(it.image, it.t), it.luts, st.resolution, zr)
+        ball = self.view3d_pane.view.ball
+        rgb = vol3d.render_cpu(np.asarray(vol), ball.R, (1024, 1024), st.method,
+                               [lut.visible for lut in it.luts], [lut.color for lut in it.luts],
+                               ball.zoom, level=st.surface_level)
+        path = f'{stem}_3d_{st.method}.png'
+        PILImage.fromarray((rgb * 255 + 0.5).astype(np.uint8)).save(path)
+        return path
 
     def save_projection(self, kind, stem=None, ask=True, movie=False):
         """Write the current projection (kind 'rotation': the 3D rotation

@@ -191,6 +191,12 @@ def run(win, items, out, opts, progress=None) -> Result:
     # ---- 입자 추적 ----
     if _kind_on(opts, 'track_csv', 'track_rois', 'track_all', 'track_ptdir', 'track_signal', 'track_signal_all'):
         _try(res, lambda: _tracks(win, items, out, opts, where))
+    # ---- 미토 형태 (MiNA) ----
+    if opts.get('mina_csv'):
+        for it in items:
+            if getattr(it, 'mina', None) is not None:
+                folder, stem = where(it)
+                _try(res, lambda it=it, folder=folder, stem=stem: win.mina_panel.save_item(it, folder, stem))
     # ---- mitoROI ----
     if _kind_on(opts, 'mito_csv', 'mito_rois', 'mito_all'):
         _try(res, lambda: _mito(win, items, out, opts, where))
@@ -206,6 +212,21 @@ def run(win, items, out, opts, progress=None) -> Result:
             res.add(integrate.write_csv(win, out, {it.image_id for it in items}))
         except Exception as exc:  # noqa: BLE001
             res.errors.append(f'통합 데이터: {exc}')
+    # ---- LUT 프리셋 · 마커 설정 (v0.73: their Tool menus are gone) ----
+    if opts.get('lut_preset') and win.current is not None:
+        from .lut import save_preset
+
+        try:
+            out.mkdir(parents=True, exist_ok=True)
+            save_preset(win.current, out / 'lut_preset.json')
+            res.add([out / 'lut_preset.json'])
+        except Exception as exc:  # noqa: BLE001
+            res.errors.append(f'LUT 프리셋: {exc}')
+    if opts.get('marker_settings'):
+        try:
+            res.add([win.write_marker_settings(out / 'markers.json')])
+        except Exception as exc:  # noqa: BLE001
+            res.errors.append(f'마커 설정: {exc}')
     # ---- 일괄 분석 ----
     if opts.get('batch_results') and win.batch.ran_at:
         from . import batch
@@ -288,9 +309,11 @@ def _stack(win, folder, stem, opts):
     files = []
     folder.mkdir(parents=True, exist_ok=True)
     if opts.get('projection'):
-        files += win.save_projection('projection', stem=str(folder / stem), ask=False,
-                                     movie=bool(opts.get('stack_mp4')))
-    if opts.get('rotation') and win.stack_panel.mode_3d.isChecked():
+        f = win.save_view3d(str(folder / stem))
+        if f:
+            files.append(f)
+    if opts.get('rotation'):
+        win.stack_panel.mode_3d.setChecked(True)
         files += win.save_projection('rotation', stem=str(folder / stem), ask=False,
                                      movie=bool(opts.get('stack_mp4')))
     return files

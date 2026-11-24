@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QRadioButton,
@@ -877,26 +878,23 @@ class GraphWizard(QDialog):
 
     STEPS = ('그래프 종류', '축 배치', '그룹')
 
-    def __init__(self, title, data: G.GraphData, parent=None):
+    def __init__(self, title, data: G.GraphData | None, parent=None, import_path=None):
         super().__init__(parent)
         self.setWindowTitle(f'새 그래프 · {title}')
         self.resize(1080, 640)
+        self.imp = self.gcard = None
+        self.off = 0
+        if import_path is not None:  # 파일 불러오기: 표 가져오기 first (v0.73)
+            from .table_import_page import GroupCard, ImportPage
+            self.imp = ImportPage(import_path)
+            self.gcard = GroupCard(self.imp)
+            self.off = 1
+            self.resize(1240, 860)
+            data = self._import_data()
         self.data = data
         self.tables = {t.name: t for t in data.tables}
-        sp = G.GraphSpec(chart='strip')
-        m = G.guess_mapping(data.spec, self.tables)
-        if not m.x_cat:  # the tool's own graph is an XY graph (time, distance)
-            sp.chart = data.spec.chart if data.spec.chart in G.CHARTS else 'xy'
-        else:
-            sp.chart = 'strip' if data.spec.chart not in G.CATEGORY_CHARTS else data.spec.chart
-        m.on = True
-        sp.mapping = m
-        for a in ('x', 'y'):
-            src = getattr(data.spec, a)
-            getattr(sp, a).unit = src.unit
-        apply_stats_defaults(sp)
-        self.spec = sp
-        self._rebuild()
+        self._init_spec()
+        sp, m = self.spec, self.spec.mapping
 
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 20)
@@ -904,8 +902,8 @@ class GraphWizard(QDialog):
         tl = QLabel(f'새 그래프 · {title}')
         theme.text_style(tl, 'title-2')
         root.addWidget(tl)
-        self.bar = StepBar(('분석: ' + title,) + self.STEPS)
-        self.bar.set_step(1)
+        self.bar = StepBar((('표 가져오기',) if self.off else ('분석: ' + title,)) + self.STEPS)
+        self.bar.set_step(0 if self.off else 1)
         root.addWidget(self.bar)
         body = QHBoxLayout()
         body.setSpacing(24)
@@ -935,23 +933,30 @@ class GraphWizard(QDialog):
         l2 = QVBoxLayout(p2)
         l2.addWidget(_titled('어떤 그룹을 그래프에 넣을까요?', self.groups))
         l2.addStretch()
-        for p in (p0, p1, p2):
+        for p in ((self.imp,) if self.imp else ()) + (p0, p1, p2):
             sc = QScrollArea()
             sc.setWidgetResizable(True)
             sc.setFrameShape(QFrame.Shape.NoFrame)
             sc.setWidget(p)
             theme.unify(p)
             self.pages.addWidget(sc)
-        self.pages.setFixedWidth(660)
+        self.pages.setFixedWidth(760 if self.off else 660)
         body.addWidget(self.pages)
         right = QVBoxLayout()
+        if self.gcard is not None:
+            theme.unify(self.gcard)
+            right.addWidget(self.gcard, 1)
+        self._pv = []
         pl = QLabel('미리보기')
         theme.secondary(pl)
         right.addWidget(pl)
         self.preview = Preview()
         right.addWidget(self.preview)
-        right.addWidget(hint('지금 고른 설정으로 그린 모양입니다.'))
-        right.addStretch()
+        ph = hint('지금 고른 설정으로 그린 모양입니다.')
+        right.addWidget(ph)
+        self._pv = [pl, self.preview, ph]
+        self._stretch = QWidget()
+        right.addWidget(self._stretch, 1)
         body.addLayout(right, 1)
         root.addLayout(body, 1)
         bar = QHBoxLayout()
@@ -970,6 +975,40 @@ class GraphWizard(QDialog):
         self.step = 0
         self.go(0)
 
+    def _init_spec(self):
+        data = self.data
+        sp = G.GraphSpec(chart='strip')
+        m = G.guess_mapping(data.spec, self.tables)
+        if not m.x_cat:  # the tool's own graph is an XY graph (time, distance)
+            sp.chart = data.spec.chart if data.spec.chart in G.CHARTS else 'xy'
+        else:
+            sp.chart = 'strip' if data.spec.chart not in G.CATEGORY_CHARTS else data.spec.chart
+        m.on = True
+        sp.mapping = m
+        for a in ('x', 'y'):
+            src = getattr(data.spec, a)
+            getattr(sp, a).unit = src.unit
+        apply_stats_defaults(sp)
+        self.spec = sp
+        self._rebuild()
+
+    def _import_data(self) -> G.GraphData:
+        t = self.gcard.result()
+        if t is None:
+            t = G.Table(self.imp.path.stem, [], [])
+        return G.GraphData(t.name, [t], G.GraphSpec(), G.safe_name(t.name))
+
+    def _take_table(self):
+        """표 가져오기 → 그래프 종류: the table as read and grouped now."""
+        self.data = self._import_data()
+        self.tables = {t.name: t for t in self.data.tables}
+        self._init_spec()
+        m = self.spec.mapping
+        self.kinds.set_kind(self.spec.chart)
+        self.kinds.set_recommended({G.recommend_chart(m, self.tables)} | ({'bar', 'box'} if m.x_cat else set()))
+        self.mapping.refresh()
+        self.groups.refresh()
+
     def _rebuild(self):
         G.build_series(self.spec, self.tables)
         self.spec.legend_show = sum(1 for s in self.spec.series if s.visible) > 1 and \
@@ -978,7 +1017,7 @@ class GraphWizard(QDialog):
     def _changed(self):
         self._rebuild()
         self.preview.show_spec(self.spec, self.tables)
-        if self.pages.currentIndex() != 2:
+        if self.pages.currentIndex() != 2 + self.off:
             QTimer.singleShot(0, self.groups.refresh)
 
     def _kind(self, k):
@@ -997,21 +1036,36 @@ class GraphWizard(QDialog):
         self._changed()
 
     def go(self, i):
-        self.step = max(0, min(2, i))
+        last = 2 + self.off
+        old = getattr(self, 'step', 0)
+        self.step = max(0, min(last, i))
+        if self.off and old == 0 and self.step > 0:
+            self._take_table()
         self.pages.setCurrentIndex(self.step)
-        self.bar.set_step(self.step + 1)
+        self.bar.set_step(self.step + (1 - self.off))
         self.prev_b.setEnabled(self.step > 0)
-        self.next_b.setText('그래프 만들기' if self.step == 2 else '다음')
-        if self.step == 1:
+        self.next_b.setText('그래프 만들기' if self.step == last else '다음')
+        importing = bool(self.off) and self.step == 0
+        if self.gcard is not None:
+            self.gcard.setVisible(importing)
+        for w in self._pv:
+            w.setVisible(not importing)
+        self._stretch.setVisible(not importing)
+        if importing:
+            return
+        if self.step == 1 + self.off:
             self.mapping.refresh()
-        if self.step == 2:
+        if self.step == last:
             self.groups.refresh()
         self.preview.show_spec(self.spec, self.tables)
 
     def _next(self):
-        if self.step == 2:
+        if self.step == 2 + self.off:
             self.accept()
         else:
+            if self.off and self.step == 0 and not (self.gcard.result() and self.gcard.result().rows):
+                QMessageBox.information(self, '표 가져오기', '가져올 행이 없습니다. 읽는 방법과 역할을 확인하세요.')
+                return
             self.go(self.step + 1)
 
 

@@ -28,7 +28,7 @@ TITLES = {'roi_tab': '세포질 ROI · 현재 이미지', 'particle_tab': '입�
           'intensity_tab': '강도 측정 · 현재 이미지', 'bands_tab': '등거리 띠 · 현재 이미지',
           'frap_tab': 'FRAP · 현재 이미지', 'profile_tab': '라인 프로파일 · 현재 선',
           'coloc_tab': 'Coloc 2 · 고른 ROI', 'track_tab': '입자 추적 · 현재 이미지',
-          'mito_tab': 'mitoROI · 현재 이미지'}
+          'mito_tab': 'mitoROI · 현재 이미지', 'mina_tab': '미토 형태 (MiNA) · 현재 이미지'}
 BORROWED = {'frap_tab': 'frap_panel', 'profile_tab': 'profile_panel', 'coloc_tab': 'coloc_panel'}
 PLOT_H = 150
 
@@ -90,6 +90,11 @@ class LiveBox(QGroupBox):
         bl.addWidget(self.plots, 1)
         lay.addWidget(self.body)
         lay.addWidget(self.note)
+        # a tab's own controls under its plot (라인 프로파일: width, clear, 내보내기…)
+        self.strips: dict[str, QWidget] = {}
+        self.strip_box = QVBoxLayout()
+        self.strip_box.setContentsMargins(0, 0, 0, 0)
+        lay.addLayout(self.strip_box)
         self._own = {}  # tab -> (FigureCanvas, Figure)
         self._pages = {}
         self.setVisible(False)
@@ -129,8 +134,15 @@ class LiveBox(QGroupBox):
 
     # ---- state ------------------------------------------------------------------
 
+    def add_strip(self, tab, widget):
+        self.strips[tab] = widget
+        widget.setVisible(False)
+        self.strip_box.addWidget(widget)
+
     def toggle_fold(self):
         self.folded = not self.folded
+        for name, w in self.strips.items():
+            w.setVisible(name == self.tab and not self.folded)
         self.body.setVisible(not self.folded)
         self.note.setVisible(not self.folded and bool(self.note.text()))
         self.fold_btn.setText('⌃' if self.folded else '⌄')
@@ -139,7 +151,13 @@ class LiveBox(QGroupBox):
         self._timer.start()
 
     def current_tab(self):
+        if getattr(self.win, 'view_mode', '') == 'line':
+            return 'profile_tab'  # 라인 프로파일 canvas icon (v0.73): plot under the canvas
+        if getattr(self.win, 'view_mode', '') in ('sect', '3d'):
+            return None
         for tab in TITLES:
+            if tab == 'profile_tab':
+                continue
             try:
                 if self.win.tab_current(tab):
                     return tab
@@ -179,6 +197,8 @@ class LiveBox(QGroupBox):
                 traceback.print_exc()
             cv.draw_idle()
             page = cv
+        for name, w in self.strips.items():
+            w.setVisible(name == tab and not self.folded)
         if page is not None:
             self.plots.setCurrentWidget(page)
         self.plots.setVisible(page is not None)
@@ -335,6 +355,13 @@ class LiveBox(QGroupBox):
             for s_ in ('top', 'right'):
                 ax.spines[s_].set_visible(False)
         return tiles, ('', None), draw
+
+    def _mina_tab(self, it):
+        from .mina_panel import mina_live
+        tiles = mina_live(self.win.mina_panel)
+        if tiles is None:
+            return [], ('인스펙터 아래의 측정 버튼을 누르면 네트워크 · 조각 길이가 여기 나옵니다.', 'info'), None
+        return tiles, ('', None), None
 
     def _track_tab(self, it):
         from .track_panel import track_live

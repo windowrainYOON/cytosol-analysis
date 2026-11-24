@@ -225,6 +225,10 @@ class PreferencesDialog(QDialog):
         form.addRow(note)
         lay.addWidget(mouse)
 
+        # ---- 3D 스택 보기 / 단면 보기 (canvas icons, v0.73) ----
+        lay.addWidget(self._view3d_card())
+        lay.addWidget(self._section_card())
+
         # ---- initial values of every tab ----
         tabs = QGroupBox('탭 설정 초기값')
         tl = QVBoxLayout(tabs)
@@ -312,6 +316,109 @@ class PreferencesDialog(QDialog):
         box.accepted.connect(self.accept)
         outer.addWidget(box)
         self._show_tabs_state()
+
+    def _view3d_card(self):
+        from .vol3d import METHODS, View3DSettings
+        st = View3DSettings.from_dict(view_settings.defaults('view3d'))
+        box = QGroupBox('3D 스택 보기')
+        f = QFormLayout(box)
+        self.v3 = {}
+
+        def combo(key, items, cur, label, tip=''):
+            c = QComboBox()
+            for k, name in items:
+                c.addItem(name, k)
+            c.setCurrentIndex(max(0, c.findData(cur)))
+            c.setToolTip(tip)
+            c.currentIndexChanged.connect(self._view3d_changed)
+            f.addRow(label, c)
+            self.v3[key] = c
+        combo('method', list(METHODS.items()), st.method, '렌더 방식',
+              'MIP: 광선 위의 가장 밝은 값 · 반투명: 방출-흡수 · 표면: 기준 밝기를 처음 넘는 곳')
+        combo('prerender', [('on_open', '3D를 켤 때'), ('on_load', '이미지를 고를 때 (미리)')], st.prerender,
+              '고화질 렌더 시점', '시계열은 모든 시점의 볼륨을 한 번에 준비합니다 (지금 시점부터 양옆으로).')
+        combo('resolution', [(1, '원본'), (2, '1/2 (기본)'), (3, '1/3')], st.resolution, '렌더 해상도',
+              '준비하는 볼륨의 XY 해상도. 낮추면 메모리와 준비 시간이 줄어듭니다.')
+        zs = QDoubleSpinBox()
+        zs.setRange(0.01, 100)
+        zs.setDecimals(3)
+        zs.setSuffix(' µm')
+        zs.setValue(st.spacing_um)
+        za = QCheckBox('자동')
+        za.setToolTip('파일 메타데이터의 Z 간격')
+        za.setChecked(st.auto_spacing)
+        zs.setEnabled(not st.auto_spacing)
+        za.toggled.connect(lambda on: zs.setEnabled(not on))
+        for w in (zs,):
+            w.valueChanged.connect(self._view3d_changed)
+        za.toggled.connect(self._view3d_changed)
+        zrow = QHBoxLayout()
+        zrow.addStretch()
+        zrow.addWidget(zs)
+        zrow.addWidget(za)
+        f.addRow('Z 간격', zrow)
+        self.v3['spacing_um'], self.v3['auto_spacing'] = zs, za
+        combo('rotation', [('free', '3축 자유 (트랙볼)'), ('axis', '한 축 (Y)')], st.rotation, '회전')
+        mem = QDoubleSpinBox()
+        mem.setRange(0.25, 64)
+        mem.setSuffix(' GB')
+        mem.setValue(st.memory_gb)
+        mem.setToolTip('미리 준비한 볼륨을 RAM에 둘 한도. 넘으면 디스크 캐시(.cycache)에 둡니다.')
+        mem.valueChanged.connect(self._view3d_changed)
+        f.addRow('메모리 한도', mem)
+        self.v3['memory_gb'] = mem
+        for key, label, tip in (('crop_only', '선택한 Crop만', '선택한 Crop 영역만 3D로 봅니다.'),
+                                ('lut_link', 'LUT 연동', 'LUT 탭의 Min / Max / 색을 그대로 씁니다 '
+                                 '(바꾸면 백그라운드에서 다시 준비).')):
+            b = QCheckBox(label)
+            b.setToolTip(tip)
+            b.setChecked(getattr(st, key))
+            b.toggled.connect(self._view3d_changed)
+            f.addRow(b)
+            self.v3[key] = b
+        return box
+
+    def _section_card(self):
+        d = {'layout': 'below_right', 'same_spacing': True, 'lines': True}
+        d.update(view_settings.defaults('sections') or {})
+        box = QGroupBox('단면 보기')
+        f = QFormLayout(box)
+        lay_c = QComboBox()
+        lay_c.addItem('아래 X · 오른쪽 Y', 'below_right')
+        lay_c.currentIndexChanged.connect(self._section_changed)
+        f.addRow('단면 배치', lay_c)
+        same = QCheckBox('Z 간격은 3D 스택 보기와 같게')
+        same.setChecked(bool(d.get('same_spacing', True)))
+        same.setEnabled(False)
+        f.addRow(same)
+        lines = QCheckBox('자른 선 표시')
+        lines.setChecked(bool(d.get('lines', True)))
+        lines.toggled.connect(self._section_changed)
+        f.addRow(lines)
+        self.sect = {'layout': lay_c, 'same_spacing': same, 'lines': lines}
+        return box
+
+    def view3d_values(self) -> dict:
+        out = {}
+        for k, w in self.v3.items():
+            if isinstance(w, QComboBox):
+                out[k] = w.currentData()
+            elif isinstance(w, QCheckBox):
+                out[k] = w.isChecked()
+            else:
+                out[k] = w.value()
+        return out
+
+    def _view3d_changed(self, *_):
+        view_settings.set_defaults('view3d', self.view3d_values())
+        if self.win is not None and getattr(self.win, 'view_mode', '') in ('3d', 'sect'):
+            self.win.update_preview()
+
+    def _section_changed(self, *_):
+        view_settings.set_defaults('sections', {k: (w.currentData() if isinstance(w, QComboBox) else w.isChecked())
+                                                for k, w in self.sect.items()})
+        if self.win is not None and getattr(self.win, 'view_mode', '') == 'sect':
+            self.win.update_preview()
 
     def _language(self, _i=None):
         from . import i18n

@@ -142,8 +142,9 @@ class MitoPanel(QWidget):
         self._scene = []
         self._sel = None
         lay = QVBoxLayout(self)
-        lay.addWidget(_hint('세포질 ROI 탭의 세포마다 미토콘드리아를 나누고 골격(MiNA)과 조각을 측정합니다. 관심 단백질 '
-                            '채널이 있으면 미토 위 / 밖의 신호, 점(puncta), 공존(Pearson, Manders)도 함께 잽니다.'))
+        lay.addWidget(_hint('세포질 ROI 탭의 세포마다 미토콘드리아를 찾아 조각(미토 ROI)으로 나눕니다. 관심 단백질 '
+                            '채널이 있으면 미토 위 / 밖의 신호, 점(puncta), 공존(Pearson, Manders)도 함께 잽니다. '
+                            '골격 · 가지 · 네트워크 같은 형태는 Tool › 측정 › 미토 형태 (MiNA) 탭에서 잽니다.'))
         self.run_btn = theme.prominent(QPushButton('분석 실행'))
         self.run_btn.clicked.connect(lambda: self.run_current())
         self.all_btn = QPushButton('모든 이미지에 실행')

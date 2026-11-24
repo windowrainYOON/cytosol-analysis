@@ -342,7 +342,7 @@ def data_display_step(out: Path):
     win.live_box.refresh()
     if win.live_box.plots.currentWidget() is not win.frap_panel.plot:
         raise AssertionError('FRAP curve not in the live box')
-    win.show_tab('stack_tab')
+    win.right_tabs.setCurrentIndex(0)  # LUT: no live box / measure bar
     win.live_box.refresh()
     if win.live_box.isVisible():
         raise AssertionError('live box shown for a tab without one')
@@ -949,6 +949,24 @@ def mito_step(out: Path):
         raise AssertionError('POI on mito / puncta / mito objects')
     if not mp._scene or '미토 조각' not in mp.mito_state.text() or mp.table.rowCount() != 3:
         raise AssertionError('canvas layers / state / table')
+    # v0.73: 미토 형태 (MiNA) is its own tab on mitoROI's detected mito objects;
+    # same numbers as mitoROI's MiNA columns for the same mask
+    win.show_tab('mina_tab')
+    app.processEvents()
+    mn = win.mina_panel.run_current()
+    if mn is None or len(mn.cells) != 3 or not mn.objects:
+        raise AssertionError(f'MiNA tab: {mn and len(mn.cells)}')
+    mby = {c['cell']: c for c in mn.cells}
+    for c, row in by.items():
+        for k in ('n_networks', 'n_branches', 'total_branch_length_um', 'mitochondrial_footprint_um2'):
+            if not np.isclose(float(mby[c][k]), float(row[k])):
+                raise AssertionError(f'MiNA tab {c} {k}: {mby[c][k]} vs mitoROI {row[k]}')
+    if win.measure_bar.measurer is not win.measurers['mina_tab']:
+        raise AssertionError('measure bar not bound to the MiNA tab')
+    if [e['name'] for e in win.data_entries() if e['key'] == 'mina'] != ['미토 형태 (MiNA) · 세포',
+                                                                       '미토 형태 (MiNA) · 미토 조각']:
+        raise AssertionError('MiNA data tables')
+    win.show_tab('mito_tab')
     # MiNA classic and a manual threshold
     mp.method_btns['otsu'].setChecked(True)
     r2 = mp.run(item)
@@ -993,7 +1011,7 @@ def mito_step(out: Path):
     if bar.measurer is not win.measurers['roi_tab'] or not bar.one_btn.isEnabled():
         raise AssertionError('measure bar not bound to the cytosol ROI tab')
     bar._run('all')
-    win.show_tab('stack_tab')
+    win.right_tabs.setCurrentIndex(0)  # LUT: no live box / measure bar
     app.processEvents()
     if bar.isVisible():
         raise AssertionError('measure bar shown on a tab without measurement')

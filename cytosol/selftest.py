@@ -458,7 +458,7 @@ def run(out_dir) -> int:
             # canvas edge, the region margin inside each, no page painting its
             # own sheet over the region
             split = win.main_split
-            if [split.widget(i) for i in range(3)] != [win.sidebar, win.canvas.parentWidget(),
+            if [split.widget(i) for i in range(3)] != [win.sidebar, win.view_stack.parentWidget(),
                                                         win.inspector]:
                 raise AssertionError('regions are not sidebar | canvas | inspector')
             # v0.58: the sidebar is the window's layer, canvas and inspector
@@ -495,7 +495,7 @@ def run(out_dir) -> int:
             m = split.contentsMargins()
             if (m.left(), m.top(), m.right(), m.bottom()) != (0,) + (theme.BOX_GAP,) * 3:
                 raise AssertionError('boxes do not float off the window edge')
-            for lay in (win.sidebar.layout(), win.canvas.parentWidget().layout()):
+            for lay in (win.sidebar.layout(), win.view_stack.parentWidget().layout()):
                 m = lay.contentsMargins()
                 if m.left() != theme.REGION_MARGIN or m.top() != theme.REGION_MARGIN:
                     raise AssertionError('region padding')
@@ -1137,31 +1137,53 @@ def run(out_dir) -> int:
             raise AssertionError('right-drag left a wrong plane')
         win.z_slider.setValue(4)
         win._z_changed()
-        win.show_tab('stack_tab')
+        # v0.73 canvas view icons: [라인 프로파일 · 단면 · 3D 투영], one at a time
+        if 'stack_tab' in win.tab_pages or 'profile_tab' in win.tab_pages:
+            raise AssertionError('스택 / 라인 프로파일 tabs still there')
+        if win.view_btns['3d'].parentWidget() is not win.view_btns['line'].parentWidget():
+            raise AssertionError('view icons not on one capsule')
+        win.view_btns['3d'].setChecked(True)
         app.processEvents()
-        win.stack_panel.mode_3d.setChecked(True)
-        win.stack_panel.angle_spin.setValue(45)
-        win.update_preview()
+        pane = win.view3d_pane
+        if win.view_mode != '3d' or win.view_stack.currentWidget() is not pane or not win._stack_on():
+            raise AssertionError('3D icon did not switch the canvas to the 3D view')
+        pane.wait(120)
+        cache = pane.cache(win.current)
+        if cache.done != win.current.nt or any(cache.get(t) is None for t in range(win.current.nt)):
+            raise AssertionError(f'3D: not every timepoint prepared ({cache.done}/{win.current.nt})')
+        if cache.frame_shape() is None or cache.frame_shape()[1] < 2:
+            raise AssertionError('3D volume without depth')
+        chip0 = pane.right.text()
+        pane.view.ball.drag(40, 25)
+        pane.view.turned.emit()
+        img3d = pane.view.render_now()
+        if img3d is None or img3d.max() <= 0 or pane.right.text() == chip0:
+            raise AssertionError('3D: render / angle chip')
+        if '완료' not in pane.status.text() and '준비 완료' not in pane.status.text():
+            raise AssertionError(f'3D chip: {pane.status.text()}')
+        win.view_btns['sect'].setChecked(True)  # exclusive: 3D goes off
         app.processEvents()
-        if win.current.z != 3 or win.stack_views[id(win.current)].result is None:
-            raise AssertionError('Z slider / stack tab did not update')
-        # 3D view: right-drag turns (up-down switches to the X axis from 0°)
-        if not win.canvas.view3d:
-            raise AssertionError('3D view not draggable')
-        win.canvas.rotateStarted.emit()
-        win.canvas.rotateDragged.emit('X', 40.0)
-        sp = win.stack_panel
-        if sp.axis.currentData() != 'X' or sp.angle_spin.value() != 20:
-            raise AssertionError(f'3D drag: {sp.axis.currentData()} {sp.angle_spin.value()}')
-        win.canvas.rotateDragged.emit('X', 100.0)
-        if sp.angle_spin.value() != 50:
-            raise AssertionError('3D drag did not follow the mouse')
-        win.right_tabs.setCurrentIndex(0)
+        sv = win.section_pane.view
+        if win.view_btns['3d'].isChecked() or win.view_mode != 'sect' or sv.stack is None:
+            raise AssertionError('section icon: not exclusive / no stack')
+        sv.set_point(7, 9)
+        xy, xz, yz = sv.planes()
+        st0 = np.asarray(win.current.image.data)
+        if not (np.array_equal(xz, st0[:, :, 9, :]) and np.array_equal(yz[:, :, 0], st0[:, 0, :, 7])):
+            raise AssertionError('sections are not the cuts at the clicked point')
+        sv.zPicked.emit(1)
         app.processEvents()
+        win._z_changed()
+        if win.current.z != 1 or sv.z() != 1:
+            raise AssertionError(f'clicking a section did not move Z ({win.current.z})')
+        win.view_btns['sect'].setChecked(False)  # pressing it again: back to XY
+        app.processEvents()
+        if win.view_mode or win.view_stack.currentWidget() is not win.canvas:
+            raise AssertionError('view icon off did not return to XY')
         if win.current.image.volume_loaded:
-            raise AssertionError('volume kept after leaving the stack tab')
-        if win.canvas.view3d:
-            raise AssertionError('3D drag mode left on outside the stack tab')
+            raise AssertionError('volume kept after leaving the section / 3D view')
+        win.z_slider.setValue(4)
+        win._z_changed()
         # crop regions: drag one to move it (kept inside the image, same size)
         h, w = win.current.image.shape[-2:]
         win._crop_drawn(2, 2, 12, 10)
@@ -1223,8 +1245,8 @@ def run(out_dir) -> int:
         win.canvas.fit()
         win.line_btn.setChecked(True)
         app.processEvents()
-        if not win.tab_current('profile_tab') or not win.canvas.line_mode:
-            raise AssertionError('line profile mode did not open its tab')
+        if win.view_mode != 'line' or not win.canvas.line_mode:
+            raise AssertionError('line profile icon did not turn line drawing on')
         win.canvas.lineDrawn.emit(5.0, 5.0, 50.0, 40.0)
         win.profile_panel.width.setValue(3)
         win.profile_panel.refresh()
@@ -1233,6 +1255,10 @@ def run(out_dir) -> int:
             raise AssertionError('no profile after drawing a line')
         if not win.canvas._line_items:
             raise AssertionError('profile line not drawn on the canvas')
+        win.live_box.refresh()
+        if win.live_box.plots.currentWidget() is not win.profile_panel.plot \
+                or not win.profile_strip.isVisibleTo(win.live_box):
+            raise AssertionError('line profile plot / 내보내기 not under the canvas')
         win.coloc_panel.whole.setChecked(True)
         win.coloc_panel.nrand.setValue(3)
         win.coloc_panel._run([win.current])
@@ -1278,7 +1304,7 @@ def run(out_dir) -> int:
         if win.current.t != t_before:
             raise AssertionError('wheel back')
         # feature-menu tabs: open next to LUT / 이미지 정보 in menu order, close again
-        win.hide_tab('profile_tab')
+        win.set_view_mode('')
         win.tool_actions['roi_tab'].setChecked(True)
         win.tool_actions['coloc_tab'].setChecked(True)
         tabs = [win.right_tabs.tabText(i) for i in range(win.right_tabs.count())]
@@ -1291,12 +1317,15 @@ def run(out_dir) -> int:
         # Tool next to 파일 holds one submenu per feature; the markers sit fixed in the LUT tab
         menus = [a.text() for a in win.menuBar().actions()]
         tools = [a.text() for a in win.tool_menu.actions() if a.menu()]
-        want = ['LUT', '마커', '세포질 ROI', '입자 ROI', '강도 측정', '등거리 띠', 'Coloc 2',
-                '라인 프로파일', 'FRAP 측정', '입자 추적', 'mitoROI', '스택']
-        if menus != ['파일', 'Tool', 'View', '그래프', 'Figure'] or tools != want \
-                or 'marker_tab' in win.tab_pages:
-            raise AssertionError(f'menus: {menus} / Tool: {tools}')
-        frap_items = [a.text() for a in next(a.menu() for a in win.tool_menu.actions()
+        groups = {a.text(): [b.text() for b in a.menu().actions() if b.menu()]
+                  for a in win.tool_menu.actions() if a.menu()}
+        want = {'검출': ['세포질 ROI', '입자 ROI', 'mitoROI'], '추적': ['입자 추적', '세포질 강도 추적'],
+                '측정': ['등거리 띠', 'Coloc 2', 'FRAP 측정', '미토 형태 (MiNA)', '강도 측정']}
+        if menus != ['파일', 'Tool', 'View', '그래프', 'Figure'] or tools != list(want) \
+                or groups != want or 'marker_tab' in win.tab_pages:
+            raise AssertionError(f'menus: {menus} / Tool: {groups}')
+        measure_menu = next(a.menu() for a in win.tool_menu.actions() if a.text() == '측정')
+        frap_items = [a.text() for a in next(a.menu() for a in measure_menu.actions()
                                              if a.text() == 'FRAP 측정').actions()]
         if 'FRAP ROI 불러오기…' not in frap_items or 'FRAP 측정 탭 열기' not in frap_items:
             raise AssertionError(f'Tool › FRAP 측정: {frap_items}')
@@ -1307,12 +1336,12 @@ def run(out_dir) -> int:
         win.hide_tab('frap_tab')
         if win.view_actions['frap_tab'].isChecked() or win.tool_actions['frap_tab'].isChecked():
             raise AssertionError('View item still ticked after closing the tab')
-        win.tool_actions['stack_tab'].setChecked(True)
-        if not win.view_actions['stack_tab'].isChecked():
+        win.tool_actions['mito_tab'].setChecked(True)
+        if not win.view_actions['mito_tab'].isChecked():
             raise AssertionError('View item not ticked by Tool')
-        win.view_actions['stack_tab'].setChecked(False)
-        if win.tab_open('stack_tab') or list(win.view_actions) != list(win.tab_pages):
-            raise AssertionError('View did not close the 스택 tab')
+        win.view_actions['mito_tab'].setChecked(False)
+        if win.tab_open('mito_tab') or list(win.view_actions) != list(win.tab_pages):
+            raise AssertionError('View did not close the mitoROI tab')
         # 마커 is its own fixed tab; the LUT tab scrolls as one page (no inner scroll)
         from PySide6.QtWidgets import QScrollArea
         lut_page = win.right_tabs.widget(0)
@@ -2387,7 +2416,7 @@ def run(out_dir) -> int:
             raise AssertionError(f'FRAP group graph series: {[(s.equals, s.err) for s in means]}')
         fp.view.setCurrentIndex(fp.view.findData('curve'))
         # line profile and a measurement table
-        win.show_tab('profile_tab')
+        win.set_view_mode('line')
         win.profile_panel.set_line((10, 10, 60, 40))
         app.processEvents()
         pw = win.open_graph('profile')
@@ -2629,8 +2658,8 @@ def run(out_dir) -> int:
         win.edit_crop(None)
         # menus: 그래프 and Figure at the top, no export items left in Tool
         menus = [a.text() for a in win.menuBar().actions()]
-        tool_items = [a.text() for m in (a.menu() for a in win.tool_menu.actions() if a.menu())
-                      for a in m.actions()]
+        tool_items = [a.text() for g in (a.menu() for a in win.tool_menu.actions() if a.menu())
+                      for m in (b.menu() for b in g.actions() if b.menu()) for a in m.actions()]
         if menus != ['파일', 'Tool', 'View', '그래프', 'Figure'] or any(
                 '내보내기' in t or '그래프 편집 창' in t for t in tool_items):
             raise AssertionError(f'menus {menus} / Tool items {tool_items}')

@@ -135,11 +135,22 @@ KINDS: dict = {
             ('mito_all', 'mito_per_cell.csv · mito_per_mito.csv · mito_green_puncta.csv', '', True),
         ]),
     ]),
-    'stack': ('스택 투영', [
-        ('현재 이미지의 투영', [
-            ('projection', '현재 투영 (스택 탭 설정)', '', True),
-            ('rotation', '3D 회전 시리즈', '스택 탭에서 3D projection이 켜져 있을 때 저장합니다.', False),
+    'mina': ('미토 형태 (MiNA)', [
+        ('이미지마다', [
+            ('mina_csv', '세포 · 미토 조각 CSV', '<이름>_mina_per_cell.csv, <이름>_mina_per_mito.csv', True),
+        ]),
+    ]),
+    'stack': ('3D 스택', [
+        ('현재 이미지', [
+            ('projection', '3D 투영 이미지 (지금 각도, PNG)', '3D 투영 보기의 지금 각도와 렌더 방식으로 저장합니다.', True),
+            ('rotation', '3D 회전 시리즈 (Y축 한 바퀴)', '', False),
             ('stack_mp4', 'MP4 동영상으로 (끄면 TIFF)', '', False),
+        ]),
+    ]),
+    'settings': ('LUT 프리셋 · 마커 설정', [
+        ('설정 파일 (파일 › 불러오기로 다시 읽음)', [
+            ('lut_preset', 'LUT 프리셋 (lut_preset.json, 현재 이미지의 채널 LUT)', '', False),
+            ('marker_settings', '마커 설정 (markers.json)', 'scale bar, 시간 표시, bleach ROI 표시 설정', False),
         ]),
     ]),
     'graph': ('그래프', [
@@ -330,12 +341,12 @@ class ExportDialog(QDialog):
         if key == 'graph':
             lay.addWidget(self._graph_format())
         if key == 'stack':
-            h = QLabel('투영 방식, 회전 각도, 3D 해상도와 MP4 속도는 스택 탭과 그 설정을 따릅니다.')
+            h = QLabel('렌더 방식 · Z 간격 · 해상도는 Preferences › 3D 스택 보기를 따릅니다.')
             h.setWordWrap(True)
             theme.hint(h)
             lay.addWidget(h)
         if key in ('profile', 'stack', 'bands'):
-            h = QLabel('그래프 · 라인 프로파일 · 스택 투영은 현재 이미지가 대상에 들어 있을 때 그 이미지의 것을 '
+            h = QLabel('그래프 · 라인 프로파일 · 3D 스택은 현재 이미지가 대상에 들어 있을 때 그 이미지의 것을 '
                        '저장합니다.' if key != 'bands' else '띠 그래프는 현재 이미지의 것을 저장합니다.')
             h.setWordWrap(True)
             theme.hint(h)

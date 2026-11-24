@@ -80,9 +80,11 @@ def z_ratio(image, settings: View3DSettings, pixel_um=None) -> float:
 
 def read_stack(image, t: int) -> np.ndarray:
     """(C, Z, Y, X) of timepoint t without changing the image's current t."""
-    if t == image.t or image.loader is None:
+    if image.loader is None:
         return image.data
-    return image.loader(int(t))
+    if t == image.t and image.volume_loaded:
+        return image.data
+    return image.loader(int(t))  # never touches the image's own cached volume
 
 
 def frame_volume(stack: np.ndarray, luts, step: int = 2, zr: float = 1.0,
@@ -305,6 +307,7 @@ class VolumeCache:
         self.finished = 0.0
         self.bytes = 0
         self.memory = 2e9
+        self._gen = 0
 
     # --- state -----------------------------------------------------------
 
@@ -314,6 +317,13 @@ class VolumeCache:
             if v is None and t in self._disk:
                 v = np.load(self._disk[t], mmap_mode='r')
             return v
+
+    def frame_shape(self):
+        for t in range(self.nt):
+            v = self.get(t)
+            if v is not None:
+                return v.shape
+        return None
 
     def progress(self) -> tuple[int, int]:
         return self.done, self.nt
@@ -335,10 +345,10 @@ class VolumeCache:
     # --- building --------------------------------------------------------
 
     def stop(self):
+        """Stop the background build (does not wait: a frame still being built
+        by the old thread is dropped by its generation)."""
         self._stop.set()
-        th = self._thread
-        if th is not None and th.is_alive() and th is not threading.current_thread():
-            th.join(timeout=5)
+        self._gen = getattr(self, '_gen', 0) + 1
         self._thread = None
 
     def start(self, t: int, luts, step: int, zr: float, region=None, memory_gb: float = 2.0,
@@ -348,7 +358,7 @@ class VolumeCache:
         key = (lut_key(luts), int(step), round(float(zr), 5), tuple(region) if region else None)
         if key == self.key and (self.running() or self.done >= self.nt):
             if sync_first and self.get(t) is None:
-                self._build(t, luts, step, zr, region)
+                self._build(t, luts, step, zr, region, self._gen)
             return
         self.stop()
         with self._lock:
@@ -363,9 +373,10 @@ class VolumeCache:
         self.started = time.perf_counter()
         luts = [type(lut)(**vars(lut)) for lut in luts]  # frozen copy for the thread
         order = frame_order(int(t), self.nt)
+        gen = self._gen
         if sync_first:
             try:
-                self._build(order[0], luts, step, zr, region)
+                self._build(order[0], luts, step, zr, region, gen)
             except Exception as exc:  # noqa: BLE001
                 self.error = str(exc)
                 return
@@ -380,7 +391,7 @@ class VolumeCache:
                 if stop.is_set():
                     return
                 try:
-                    self._build(k, luts, step, zr, region)
+                    self._build(k, luts, step, zr, region, gen)
                 except Exception as exc:  # noqa: BLE001
                     self.error = str(exc)
                     return
@@ -389,13 +400,17 @@ class VolumeCache:
         self._thread = threading.Thread(target=work, name='vol3d-prerender', daemon=True)
         self._thread.start()
 
-    def _build(self, t, luts, step, zr, region):
+    def _build(self, t, luts, step, zr, region, gen=None):
+        if gen is None:
+            gen = getattr(self, '_gen', 0)
         if self.get(t) is not None:
             return
         stack = read_stack(self.image, t)
         v = frame_volume(stack, luts, step, zr, region)
         del stack
         with self._lock:
+            if gen != getattr(self, '_gen', 0):
+                return  # settings changed while this frame was built
             if self.bytes + v.nbytes > self.memory and self.nt > 1:
                 d = self.cache_dir or os.path.join(tempfile.gettempdir(), 'cytosol.cycache')
                 os.makedirs(d, exist_ok=True)
