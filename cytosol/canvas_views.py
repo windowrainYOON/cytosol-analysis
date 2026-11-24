@@ -16,7 +16,7 @@ from __future__ import annotations
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPen
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from . import gl3d, theme, vol3d
 from .lut import add_colored
@@ -33,6 +33,15 @@ def _rgb(planes, luts) -> np.ndarray:
         if lut.visible:
             add_colored(out, lut.apply(plane), lut.color)
     return np.ascontiguousarray((np.clip(out, 0, 1) * 255 + 0.5).astype(np.uint8))
+
+
+def _text(p: QPainter, pt: QPointF, text: str):
+    """White text with a dark shadow, readable on bright and dark pixels."""
+    pen = p.pen()
+    p.setPen(QColor(0, 0, 0, 170))
+    p.drawText(pt + QPointF(1, 1), text)
+    p.setPen(pen)
+    p.drawText(pt, text)
 
 
 def _qimage(u8) -> QImage:
@@ -56,6 +65,8 @@ class SectionView(QWidget):
         self._rects = None
         self._imgs = None
         self._drag = False
+        self.mip = False  # XY panel = maximum over Z (the sections stay)
+        self.scale_bars = True
         self.setMinimumSize(200, 160)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(False)
@@ -99,7 +110,20 @@ class SectionView(QWidget):
         s = self.stack
         x, y = self.point
         z = self.z()
-        return s[:, z], s[:, :, y, :], np.ascontiguousarray(s[:, :, :, x].transpose(0, 2, 1))
+        xy = s.max(axis=1) if self.mip else s[:, z]
+        return xy, s[:, :, y, :], np.ascontiguousarray(s[:, :, :, x].transpose(0, 2, 1))
+
+    def set_mip(self, on: bool):
+        if bool(on) != self.mip:
+            self.mip = bool(on)
+            self.refresh()
+
+    def pixel_um(self):
+        try:
+            v = float(self.item.pixel_um) if self.item is not None else 0.0
+        except (TypeError, ValueError):
+            return None
+        return v if v > 0 else None
 
     def refresh(self):
         if self.stack is None or self.item is None:
@@ -157,10 +181,11 @@ class SectionView(QWidget):
             p.drawLine(QPointF(xy.left(), py), QPointF(xy.right(), py))
             p.drawLine(QPointF(yz.left(), py), QPointF(yz.right(), py))
             p.drawLine(QPointF(px, xz.top()), QPointF(px, xz.bottom()))
-        dash = QPen(YELLOW, 1, Qt.PenStyle.DashLine)
-        p.setPen(dash)
-        p.drawLine(QPointF(pz_yz, yz.top()), QPointF(pz_yz, yz.bottom()))
-        p.drawLine(QPointF(xz.left(), pz_xz), QPointF(xz.right(), pz_xz))
+        if not self.mip:  # the XY panel is no single Z in MIP
+            dash = QPen(YELLOW, 1, Qt.PenStyle.DashLine)
+            p.setPen(dash)
+            p.drawLine(QPointF(pz_yz, yz.top()), QPointF(pz_yz, yz.bottom()))
+            p.drawLine(QPointF(xz.left(), pz_xz), QPointF(xz.right(), pz_xz))
         p.setPen(QPen(QColor(40, 30, 0), 1))
         p.setBrush(YELLOW)
         p.drawEllipse(QPointF(px, py), 4.5, 4.5)
@@ -174,15 +199,55 @@ class SectionView(QWidget):
             bold = QFont(f)
             bold.setBold(True)
             p.setFont(bold)
-            p.drawText(QPointF(r.left() + 8, r.top() + 6 + fm.ascent()), title)
+            _text(p, QPointF(r.left() + 8, r.top() + 6 + fm.ascent()), title)
             p.setFont(f)
-            p.drawText(QPointF(r.left() + 8, r.top() + 8 + fm.ascent() + fm.height()), sub)
-        label(xy, 'XY', f'z = {z + 1} / {nz}')
+            _text(p, QPointF(r.left() + 8, r.top() + 8 + fm.ascent() + fm.height()), sub)
+        label(xy, 'XY', f'MIP · z 1–{nz}' if self.mip else f'z = {z + 1} / {nz}')
         label(yz, 'Y 단면', f'x = {x}')
         label(xz, 'X 단면', f'y = {y}')
-        p.drawText(QPointF(yz.right() - fm.horizontalAdvance('Z →') - 8, yz.bottom() - 8), 'Z →')
-        p.drawText(QPointF(xz.right() - fm.horizontalAdvance('Z ↓') - 8, xz.bottom() - 8), 'Z ↓')
+        _text(p, QPointF(yz.right() - fm.horizontalAdvance('Z →') - 8, yz.bottom() - 8), 'Z →')
+        _text(p, QPointF(xz.right() - fm.horizontalAdvance('Z ↓') - 8, xz.bottom() - 8), 'Z ↓')
+        if self.scale_bars:
+            um = self.pixel_um()
+            if um:
+                # µm per screen px is the same in every panel (one scale, Z in XY pixels)
+                per_px = um / s
+                self._scale_bar(p, xy, per_px, 0)
+                self._scale_bar(p, yz, per_px, fm.horizontalAdvance('Z →') + 16)
+                self._scale_bar(p, xz, per_px, fm.horizontalAdvance('Z ↓') + 16)
         p.end()
+
+    def bar_length(self, r: QRectF, per_px: float, reserve: float = 0.0):
+        """Scale bar of a panel: (µm, screen px), the largest nice length up to a
+        third of the panel's free width, or None when nothing fits."""
+        from .render import NICE_LENGTHS_UM
+        nice = [0.1, 0.2] + list(NICE_LENGTHS_UM)
+        room = min(r.width() / 3, r.width() - reserve - 16)
+        fits = [v for v in nice if 6 <= v / per_px <= room]
+        if not fits:
+            return None
+        return fits[-1], fits[-1] / per_px
+
+    def _scale_bar(self, p: QPainter, r: QRectF, per_px: float, reserve: float):
+        """White bar at the panel's lower left, its length above it (marker per panel)."""
+        got = self.bar_length(r, per_px, reserve)
+        if got is None:
+            return
+        um, w = got
+        fm = p.fontMetrics()
+        text = f'{um:g} µm'
+        x0, y0 = r.left() + 8, r.bottom() - 8
+        p.save()
+        p.setPen(QPen(QColor(0, 0, 0, 160), 1))  # dark edge: visible on bright images too
+        p.setBrush(QColor(255, 255, 255))
+        p.drawRect(QRectF(x0, y0 - 3, w, 3))
+        p.setPen(QColor(255, 255, 255))
+        if r.height() >= fm.height() + 24:  # label above the bar
+            tx = x0 + max(0.0, (w - fm.horizontalAdvance(text)) / 2)
+            _text(p, QPointF(tx, y0 - 6), text)
+        else:  # flat panel: label after the bar
+            _text(p, QPointF(x0 + w + 6, y0), text)
+        p.restore()
 
     # ---- mouse ----------------------------------------------------------------
 
@@ -258,6 +323,15 @@ class SectionPane(_ModePane):
         super().__init__(SectionView(), '클릭: 그 점에서 자른 X 단면(아래) · Y 단면(오른쪽) · 점 끌기: 단면 위치 '
                          '옮기기 · Z 슬라이더 · 휠: XY 평면의 Z · 단면을 클릭하면 그 자리로 Z 이동', parent)
         self.view.pointMoved.connect(lambda *_: self._chips())
+        # owner request (2026-11-24): the XY panel as MIP, the sections unchanged
+        self.mip_check = QCheckBox('MIP')
+        self.mip_check.setToolTip('XY 패널을 Z 최대 투영(MIP)으로 보기 · 오른쪽 · 아래 단면은 그대로')
+        self.mip_check.toggled.connect(self._mip_toggled)
+        self.bottom.insertWidget(0, self.mip_check)
+
+    def _mip_toggled(self, on):
+        self.view.set_mip(on)
+        self._chips()
 
     def show_item(self, it, zr, auto_spacing, show_lines=True):
         self.view.show_lines = show_lines
@@ -271,7 +345,8 @@ class SectionPane(_ModePane):
         if zr is not None:
             self._zr_text = f'Z 간격 {zr:.3g} ({"자동" if auto else "수동"})'
         x, y = v.point
-        self.status.setText(f'단면 보기 · 클릭한 점 x {x} · y {y} · z {v.z() + 1}')
+        z = 'MIP' if v.mip else v.z() + 1
+        self.status.setText(f'단면 보기 · 클릭한 점 x {x} · y {y} · z {z}')
         self.right.setText(getattr(self, '_zr_text', ''))
 
 

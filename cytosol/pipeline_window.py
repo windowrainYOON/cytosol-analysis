@@ -97,6 +97,45 @@ def _flow(widgets):
     return w
 
 
+def stage_flow_widget(spec):
+    """A pipeline as chips from top to bottom (owner request 2026-11-24, v0.74):
+    the group name beside the first stage of each group, ↓ between stages, 검토
+    stops as warning chips, switched-off stages greyed."""
+    from PySide6.QtWidgets import QGridLayout
+    w = QWidget()
+    grid = QGridLayout(w)
+    grid.setContentsMargins(0, 0, 0, 0)
+    grid.setHorizontalSpacing(12)
+    grid.setVerticalSpacing(0)
+    flow = P.stage_flow(spec)
+    if not flow:
+        grid.addWidget(_hint('단계 없음'), 0, 0, 1, 2)
+        return w
+    last = None
+    row = 0
+    for k, (gtitle, title, g, on) in enumerate(flow):
+        if k:
+            arrow = QLabel('↓')
+            theme.secondary(arrow)
+            arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            grid.addWidget(arrow, row, 1, Qt.AlignmentFlag.AlignLeft)
+            arrow.setFixedWidth(28)
+            row += 1
+        if g != last and g != 'human':
+            lab = QLabel(gtitle)
+            theme.secondary(lab)
+            grid.addWidget(lab, row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            last = g
+        chip = _status_chip(title + ('' if on else ' · 꺼짐'), 'warning' if g == 'human' else
+                            'neutral' if on else 'neutral')
+        chip.setWordWrap(False)
+        chip.setEnabled(on)
+        grid.addWidget(chip, row, 1, Qt.AlignmentFlag.AlignLeft)
+        row += 1
+    grid.setColumnStretch(2, 1)
+    return w
+
+
 def _chip_box(text, on):
     b = theme.chip(QCheckBox(text))
     b.setChecked(bool(on))
@@ -150,7 +189,7 @@ class PipelineWindow(QDialog):
         self.win = win
         self.setWindowTitle('파이프라인')
         self.resize(1100, 760)
-        self.spec = spec or P.find_preset('세포질 + 입자 · 띠')
+        self.spec = spec or P.PipelineSpec()  # a new pipeline starts empty (v0.74)
         self.path = Path(path) if path else None
         self.runner: P.Runner | None = None
         self.sel = 0
@@ -1564,11 +1603,11 @@ class LibraryDialog(QDialog):
         super().__init__(win)
         self.win, self.pwin = win, pwin
         self.setWindowTitle('파이프라인 보관함')
-        self.resize(760, 620)
+        self.resize(1040, 700)
         lay = QVBoxLayout(self)
         bar = QHBoxLayout()
         new = QPushButton('새 파이프라인')
-        new.clicked.connect(lambda: self._open(P.PipelineSpec(stages=[P.default_stage('end.export')])))
+        new.clicked.connect(lambda: self._open(P.PipelineSpec()))  # empty (owner request 2026-11-24)
         load = QPushButton('파일에서 불러오기…')
         load.clicked.connect(self._load)
         bar.addWidget(new)
@@ -1582,16 +1621,16 @@ class LibraryDialog(QDialog):
         area.setWidgetResizable(True)
         area.setFrameShape(QScrollArea.Shape.NoFrame)
         page = QWidget()
-        v = QVBoxLayout(page)
-        for name, path, spec in P.library():
+        from PySide6.QtWidgets import QGridLayout
+        v = QGridLayout(page)
+        COLS = 3  # cards side by side, each pipeline a top-to-bottom flow
+        for k, (name, path, spec) in enumerate(P.library()):
             box = QGroupBox(name + ('' if path else '  · 기본'))
             bl = QVBoxLayout(box)
             if spec.note:
                 bl.addWidget(_hint(spec.note))
-            chips = []
-            for g, titles in P.chip_summary(spec).items():
-                chips.append(_status_chip(f'{g}: {" · ".join(titles)}', 'neutral'))
-            bl.addWidget(_flow(chips))
+            bl.addWidget(stage_flow_widget(spec))
+            bl.addStretch()
             row = QHBoxLayout()
             row.addStretch()
             dup = QPushButton('복제')
@@ -1601,8 +1640,10 @@ class LibraryDialog(QDialog):
             row.addWidget(dup)
             row.addWidget(op)
             bl.addLayout(row)
-            v.addWidget(box)
-        v.addStretch()
+            v.addWidget(box, k // COLS, k % COLS)
+        for c in range(COLS):
+            v.setColumnStretch(c, 1)
+        v.setRowStretch(v.rowCount(), 1)
         theme.unify(page)
         area.setWidget(page)
         lay.addWidget(area, 1)

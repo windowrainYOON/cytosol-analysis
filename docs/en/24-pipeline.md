@@ -10,8 +10,11 @@ analysis** became "a pipeline without review" and moved here, and the **intensit
 moved into the pipeline's **Operation** stages (add · subtract · intersect) and **Measurement ›
 Intensity**.
 
-Open the window with **File › Pipeline…** (`⇧⌘P`). **File › Pipeline Library…** shows saved
-pipelines and the built-in presets as cards. Opening a `.cypipe` file or an old batch-analysis
+Open the window with **File › Pipeline…** (`⇧⌘P`). **File › New Pipeline** (v0.74) opens it with an
+empty pipeline without stages (the window also starts empty the first time). **File › Pipeline
+Library…** shows saved pipelines and the built-in presets as cards; each card lists its stages from top to
+bottom as chips joined by ↓, the group name (Detect · Track · Measure …) beside the first stage of a group,
+review stages as orange chips and switched-off stages greyed. Opening a `.cypipe` file or an old batch-analysis
 settings file (`.json`) with **Import** opens this window too.
 
 ## Window

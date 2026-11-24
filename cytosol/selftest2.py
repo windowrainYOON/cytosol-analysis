@@ -1353,8 +1353,19 @@ def pipeline_step(out: Path):
         win._add_item(it)
     win.file_list.setCurrentRow(0)
     app.processEvents()
+    # 파일 › 새 파이프라인: an empty pipeline (v0.74); the library as chip flows
+    pw = win.new_pipeline()
+    if pw.spec.stages:
+        raise AssertionError('new pipeline not empty')
+    pw.show_stage(0)
+    from .pipeline_window import LibraryDialog, stage_flow_widget
+    lib = LibraryDialog(win, pw)
+    lib.grab()
+    lib.close()
+    first = P.library()[0][2]
+    if len(P.stage_flow(first)) != len(first.stages) or stage_flow_widget(first) is None:
+        raise AssertionError('library chip flow')
     # presets: all valid, every editor builds
-    pw = win.pipeline_window()
     for name, _p, spec in P.library():
         errs = P.validate(spec)
         if errs:

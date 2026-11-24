@@ -159,8 +159,9 @@ def plot_color(color) -> tuple:
     return (r, g, b)
 
 
-def draw_profile(ax, prof: Profile, colors, visible=None, normalize=False):
-    """Plot the profile on a matplotlib Axes (one line per channel, channel colors)."""
+def draw_profile(ax, prof: Profile, colors, visible=None, normalize=False, legend=True):
+    """Plot the profile on a matplotlib Axes (one line per channel, channel colors).
+    legend=False: no legend inside the plot (the live box draws it beside, v0.74)."""
     ax.clear()
     for c, name in enumerate(prof.channels):
         if visible is not None and not visible[c]:
@@ -175,8 +176,14 @@ def draw_profile(ax, prof: Profile, colors, visible=None, normalize=False):
     if len(prof.distance):
         ax.set_xlim(0, prof.distance[-1])
     ax.grid(True, color='0.85', lw=0.6)
-    if ax.lines:
+    if ax.lines and legend:
         ax.legend(fontsize=8, frameon=False, loc='best')
+
+
+def legend_entries(prof: Profile, colors, visible=None):
+    """[(name, rgb 0–1)] of the channels the plot draws, in its colours."""
+    return [(name, plot_color(colors[c])) for c, name in enumerate(prof.channels)
+            if visible is None or visible[c]]
 
 
 def line_roi(prof: Profile, name: str = 'profile', properties: dict | None = None):

@@ -21,7 +21,9 @@ canvas Crop icon and the crop rows' context menu in the sidebar handle them
 
 The right panel starts with the **LUT**, **마커** and **이미지 정보** (Image info) tabs. Ticking a
 feature in the **View** menu or **… 탭 열기** (Open … tab) in a feature menu adds that tab next to them;
-unticking it or pressing the tab's × hides it. **View › 모든 기능 탭 열기 / 닫기** (open / close all
+unticking it or pressing the tab's × hides it. As in the Tool menu, the View items are grouped in the
+submenus **Detect** (cytosol ROI · particle ROI · mitoROI), **Track** (particle tracking · cytosol intensity
+tracking) and **Measure** (distance bands · Coloc 2 · FRAP · mito morphology) (v0.74). **View › 모든 기능 탭 열기 / 닫기** (open / close all
 feature tabs) does it for every feature tab at once. Settings and results stay while a tab is hidden,
 and the open tabs are saved in the project.
 

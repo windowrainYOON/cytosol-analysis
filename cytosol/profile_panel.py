@@ -149,7 +149,7 @@ class ProfilePanel(QWidget):
             self.info.setText(f'프로파일 계산 실패: {exc}')
             return
         draw_profile(self.ax, self.profile, self._colors(), self._visible(),
-                     self.normalize.isChecked())
+                     self.normalize.isChecked(), legend=False)  # legend beside the plot (live box)
         self.plot.draw_idle()
         p = self.profile
         x0, y0, x1, y1 = p.line
@@ -159,6 +159,13 @@ class ProfilePanel(QWidget):
 
     def _colors(self):
         return [lut.color for lut in self.item.luts]
+
+    def legend(self):
+        """[(channel name, rgb)] of the plotted lines (the live box draws them)."""
+        from .lineprofile import legend_entries
+        if self.profile is None or self.item is None:
+            return []
+        return legend_entries(self.profile, self._colors(), self._visible())
 
     def _visible(self):
         if not self.only_visible.isChecked():

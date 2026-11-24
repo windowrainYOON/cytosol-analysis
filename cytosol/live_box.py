@@ -10,7 +10,8 @@ from __future__ import annotations
 import traceback
 
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QPointF, Qt, QTimer
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QGridLayout,
     QGroupBox,
@@ -45,6 +46,41 @@ def _fmt(v) -> str:
     if not np.isfinite(v):
         return '–'
     return f'{v:.3g}' if abs(v) < 1000 else f'{v:,.0f}'
+
+
+class PlotLegend(QWidget):
+    """The line profile's legend beside its plot (owner request 2026-11-24,
+    v0.74): the white plot background goes on to the left over the place of the
+    number tiles, the legend in it, the plot itself keeps its size."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.entries = []  # [(name, rgb 0–1)]
+        self.setFixedHeight(PLOT_H)
+
+    def set_entries(self, entries):
+        self.entries = list(entries)
+        self.update()
+
+    def paintEvent(self, _ev):
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor(255, 255, 255))  # the plot's white
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        f = QFont(self.font())
+        f.setPixelSize(11)  # matplotlib's 8 pt legend at the plot's 100 dpi
+        p.setFont(f)
+        fm = p.fontMetrics()
+        y = 14.0
+        for name, rgb in self.entries:
+            col = QColor.fromRgbF(*rgb)
+            p.setPen(QPen(col, 1.6))
+            cy = y + fm.ascent() / 2 - 1
+            p.drawLine(QPointF(12, cy), QPointF(32, cy))
+            p.setPen(QColor(0, 0, 0))
+            p.drawText(QPointF(38, y + fm.ascent()), fm.elidedText(name, Qt.TextElideMode.ElideRight,
+                                                                    max(10, self.width() - 44)))
+            y += fm.height() + 4
+        p.end()
 
 
 class LiveBox(QGroupBox):
@@ -84,6 +120,9 @@ class LiveBox(QGroupBox):
         self.grid.setHorizontalSpacing(18)
         self.grid.setVerticalSpacing(2)
         bl.addWidget(self.grid_w)
+        self.legend = PlotLegend()
+        self.legend.setVisible(False)
+        bl.addWidget(self.legend)
         self.note = theme.StatusLabel('')
         self.plots = QStackedWidget()
         self.plots.setFixedHeight(PLOT_H)
@@ -183,6 +222,7 @@ class LiveBox(QGroupBox):
         self.tab = tab
         self.title.setText(TITLES[tab])
         self._show_tiles(tiles)
+        self._legend_for(tab)
         self.note.setText(note[0])
         self.note.set_kind(note[1])
         self.note.setVisible(bool(note[0]) and not self.folded)
@@ -204,6 +244,22 @@ class LiveBox(QGroupBox):
             self.plots.setCurrentWidget(page)
         self.plots.setVisible(page is not None)
         self.setVisible(True)
+
+    def _legend_for(self, tab):
+        """라인 프로파일: no number tiles, the legend in their place (same width),
+        joined to the plot without a gap, so the plot keeps its size."""
+        bl = self.body.layout()
+        if tab != 'profile_tab':
+            self.legend.setVisible(False)
+            self.grid_w.setVisible(True)
+            bl.setSpacing(16)
+            return
+        w = self.grid_w.sizeHint().width()
+        self.grid_w.setVisible(False)
+        bl.setSpacing(0)
+        self.legend.setFixedWidth(max(80, w + 16))
+        self.legend.set_entries(self.win.profile_panel.legend())
+        self.legend.setVisible(True)
 
     def values(self) -> dict:
         return {k: v for k, v, _d in self.tiles}

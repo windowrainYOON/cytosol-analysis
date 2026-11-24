@@ -1176,6 +1176,20 @@ def run(out_dir) -> int:
         win._z_changed()
         if win.current.z != 1 or sv.z() != 1:
             raise AssertionError(f'clicking a section did not move Z ({win.current.z})')
+        # MIP check box: the XY panel = max over Z, the sections stay the cuts (v0.74)
+        win.section_pane.mip_check.setChecked(True)
+        app.processEvents()
+        xy_m, xz_m, _yz_m = sv.planes()
+        if not np.array_equal(xy_m, st0.max(axis=1)) or not np.array_equal(xz_m, st0[:, :, 9, :]):
+            raise AssertionError('section MIP: XY not the MIP or the section changed')
+        win.section_pane.mip_check.setChecked(False)
+        # a scale bar per panel, sized to the panel
+        g = sv.geometry_rects()
+        per = (sv.pixel_um() or 0) / g[3]
+        bars = [sv.bar_length(r, per, 30) for r in g[:3]] if per else []
+        if not bars or any(b is None or b[1] > r.width() / 3 + 1e-6 for b, r in zip(bars, g[:3])):
+            raise AssertionError(f'section scale bars: {bars}')
+        sv.grab()
         win.view_btns['sect'].setChecked(False)  # pressing it again: back to XY
         app.processEvents()
         if win.view_mode or win.view_stack.currentWidget() is not win.canvas:
@@ -1259,6 +1273,27 @@ def run(out_dir) -> int:
         if win.live_box.plots.currentWidget() is not win.profile_panel.plot \
                 or not win.profile_strip.isVisibleTo(win.live_box):
             raise AssertionError('line profile plot / 내보내기 not under the canvas')
+        # legend beside the plot instead of the number tiles (v0.74), none inside
+        lb = win.live_box
+        if not lb.legend.isVisibleTo(lb) or lb.grid_w.isVisibleTo(lb) \
+                or len(lb.legend.entries) == 0 or win.profile_panel.ax.get_legend() is not None:
+            raise AssertionError('line profile legend not beside the plot')
+        # 자 (ruler): a temporary line with 1 µm ticks, gone when the icon is off
+        from . import ruler
+        win.view_btns['ruler'].setChecked(True)
+        app.processEvents()
+        if win.view_mode != 'ruler' or not win.canvas.ruler_mode or win.line_btn.isChecked():
+            raise AssertionError('ruler icon')
+        win.canvas.show_ruler((2.0, 3.0, 40.0, 3.0))
+        um = win.current.pixel_um
+        tk = ruler.ticks(win.canvas.ruler_line(), um)
+        if not um or len(tk) != int(38 * um) + 1 or not ruler.label(win.canvas.ruler_line(), um).endswith('µm'):
+            raise AssertionError(f'ruler ticks / label: {len(tk)}')
+        win.canvas.grab()
+        win.view_btns['ruler'].setChecked(False)
+        app.processEvents()
+        if win.canvas.ruler_line() is not None or win.view_mode:
+            raise AssertionError('ruler kept after the icon went off')
         win.coloc_panel.whole.setChecked(True)
         win.coloc_panel.nrand.setValue(3)
         win.coloc_panel._run([win.current])
@@ -1341,8 +1376,14 @@ def run(out_dir) -> int:
             raise AssertionError('View item not ticked by Tool')
         win.view_actions['mito_tab'].setChecked(False)
         shown = [k for k in win.tab_pages if k not in win.HIDDEN_TABS]
-        if win.tab_open('mito_tab') or list(win.view_actions) != shown:
+        if win.tab_open('mito_tab') or set(win.view_actions) != set(shown):
             raise AssertionError('View did not close the mitoROI tab')
+        # View in the Tool menu's groups (v0.74)
+        vgroups = [a.text() for a in win.view_menu.actions() if a.menu() is not None]
+        if vgroups != ['검출', '추적', '측정'] \
+                or win.view_actions['track_tab'] not in win.view_groups['추적'].actions() \
+                or win.view_actions['frap_tab'] not in win.view_groups['측정'].actions():
+            raise AssertionError(f'View groups: {vgroups}')
         # 마커 is its own fixed tab; the LUT tab scrolls as one page (no inner scroll)
         from PySide6.QtWidgets import QScrollArea
         lut_page = win.right_tabs.widget(0)

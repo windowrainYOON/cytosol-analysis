@@ -4971,3 +4971,17 @@ EN.update({
     '세포질 강도 추적 · 세포': 'Cytosol Intensity Tracking · cell',
     '세포질 강도 추적 · 세포 × 시점': 'Cytosol Intensity Tracking · cell × timepoint',
 })
+
+# v0.74: section view MIP / scale bars, ruler, new pipeline, library chip flow
+EN.update({
+    'XY 패널을 Z 최대 투영(MIP)으로 보기 · 오른쪽 · 아래 단면은 그대로':
+        'Show the XY panel as a Z maximum projection (MIP) · the right and bottom sections stay',
+    '자\n선을 그어 길이 재기 (1 µm 눈금, Shift: 0° / 45° / 90°)\n끄면 선이 사라집니다.':
+        'Ruler\nDraw a line to measure its length (1 µm ticks, Shift: 0° / 45° / 90°)\nThe line goes when this is off.',
+    '단계가 없는 빈 파이프라인을 파이프라인 창에서 만듭니다.': 'Makes an empty pipeline (no stages) in the pipeline window.',
+    '단계 없음': 'No stages',
+})
+TEMPLATES.update({
+    'MIP · z 1–{}': 'MIP · z 1–{}',
+    '{} · 꺼짐': '{} · off',
+})

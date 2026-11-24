@@ -3,7 +3,7 @@
 [← Manual index](README.md) · [한국어](../ko/06-stack.md)
 
 **Since v0.73** there is no 스택 tab: one of the three view icons at the canvas' top right,
-**[Line profile · Sections · 3D projection]**, is on at a time; pressing it again returns to the plain XY
+**[Line profile · Ruler · Sections · 3D projection]**, is on at a time; pressing it again returns to the plain XY
 view. The settings are in **Preferences › 3D Stack View** and **Section View**; saving is the **3D Stack**
 kind of **파일 › 내보내기…**.
 
@@ -36,6 +36,13 @@ Like Fiji's Orthogonal Views: the XY plane of the current Z with the X section (
 section (YZ) on the right, at one scale. Clicking or dragging the point in XY moves the cuts (white lines);
 clicking a section moves Z there (yellow dashed line on the sections). **Preferences › Section View**:
 **Section layout**, **Show cut lines**, **Z spacing as in 3D Stack View**.
+
+- **MIP** check box (bottom row, v0.74): on = the XY panel is the Z maximum projection (MIP); the Y section on
+  the right and the X section below stay the cuts at the clicked point (the yellow Z line is hidden). Coming
+  from the main view with MIP on opens the section view with it on.
+- **Scale bars** (v0.74): each panel (XY, Y section, X section) gets a white bar with its length (e.g. 2 µm) at
+  its lower left, sized automatically: the largest round length up to a third of the panel's width. The three
+  panels share one scale, so the bars mean the same µm (Z is drawn with its Z spacing).
 
 ## Saving (파일 › 내보내기 › 3D Stack)
 
