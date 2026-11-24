@@ -225,6 +225,9 @@ class TrackPanel(QWidget):
         # 5 신호 기준 (v0.72, owner request 2026-11-19; shown after 4 트랙's settings order: placed before it)
         self.sig_box = self._build_signal_card()
         lay.addWidget(self.sig_box)
+        # 6 신호 변화 트랙 (v0.73, owner request 2026-11-19/20)
+        self.chg_box = self._build_change_card()
+        lay.addWidget(self.chg_box)
 
         # 4 트랙
         tr = QGroupBox('4  트랙')
@@ -360,6 +363,186 @@ class TrackPanel(QWidget):
         self._sig_cls = {}
         self._sig_text = ''
         return box
+
+    # ---- 6 신호 변화 트랙 ----------------------------------------------------------
+
+    def _build_change_card(self):
+        from PySide6.QtWidgets import QSlider
+
+        from .flow import FlowLayout
+        box = QGroupBox('6  신호 변화 트랙 (신뢰할 수 있는 트랙만)')
+        v = QVBoxLayout(box)
+        f = QFormLayout()
+        self.chg_on = QCheckBox('켜짐 · 꺼짐 트랙 찾기')
+        f.addRow(self.chg_on)
+        f.addRow(_hint('긴 트랙마다 트래킹 점수(연결 신뢰도 × RI 주변 연속성, 0-100)를 매기고, 점수가 기준 이상인 '
+                       '트랙 중에서 5 신호 기준의 Min을 넘었다가 내려가거나(또는 반대) 트랙 안에서 신호가 바뀌는 '
+                       '트랙을 고릅니다.'))
+        self.chg_score_slider = QSlider(Qt.Orientation.Horizontal)
+        self.chg_score_slider.setRange(0, 100)
+        self.chg_score_slider.setValue(50)
+        self.chg_score = QDoubleSpinBox()
+        self.chg_score.setRange(0, 100)
+        self.chg_score.setDecimals(0)
+        self.chg_score.setValue(50)
+        self.chg_score_slider.valueChanged.connect(lambda x: self.chg_score.setValue(x))
+        self.chg_score.valueChanged.connect(lambda x: self.chg_score_slider.setValue(int(x)))
+        f.addRow('최소 트래킹 점수', theme.slider_field(self.chg_score_slider, self.chg_score))
+        self.chg_thr = QLabel()
+        f.addRow('신호 기준', self.chg_thr)
+        self.chg_frames = QSpinBox()
+        self.chg_frames.setRange(1, 10000)
+        self.chg_frames.setValue(3)
+        self.chg_frames.setSuffix(' 프레임 이상')
+        f.addRow('신호 프레임', self.chg_frames)
+        self.chg_run = QSpinBox()
+        self.chg_run.setRange(1, 10000)
+        self.chg_run.setValue(2)
+        self.chg_run.setSuffix(' 프레임 이상')
+        f.addRow('연속 신호', self.chg_run)
+        self.chg_passby = QCheckBox('다른 입자가 스쳐 간 시점은 빼고 다시 판정')
+        self.chg_passby.setChecked(True)
+        f.addRow(self.chg_passby)
+        self.chg_inside = QCheckBox('세포 안 트랙만 (세포질 50 % 넘는 프레임)')
+        self.chg_inside.setChecked(True)
+        f.addRow(self.chg_inside)
+        v.addLayout(f)
+        self.chg_state = theme.StatusLabel(kind='info')
+        self.chg_state.setWordWrap(True)
+        v.addWidget(self.chg_state)
+        self.chg_chip_box = QWidget()
+        self.chg_chip_box.setProperty('hig_no_reflow', True)
+        cl = FlowLayout(self.chg_chip_box)
+        self.chg_chips = {}
+        for k in ('켜짐', '켜짐→꺼짐', '꺼짐'):
+            c = QCheckBox(k)
+            c.setChecked(True)
+            theme.chip(c)
+            c.toggled.connect(lambda _v: (self.data_rows.refresh(), self.draw()))
+            cl.addWidget(c)
+            self.chg_chips[k] = c
+        v.addWidget(self.chg_chip_box)
+        v.addWidget(_hint('고른 유형만 이미지와 표에 표시합니다 · 이미지: 실선 고리 = 이 프레임 신호 있음, 점선 = 없음.'))
+        self._chg_cache = {}
+        self.chg_on.toggled.connect(lambda _v: self._chg_changed())
+        for w in (self.chg_score, self.chg_frames, self.chg_run):
+            w.valueChanged.connect(lambda _v: self._chg_changed())
+        for w in (self.chg_passby, self.chg_inside):
+            w.toggled.connect(lambda _v: self._chg_changed())
+        return box
+
+    def change_settings(self):
+        from .track_change import ChangeSettings
+        return ChangeSettings(on=self.chg_on.isChecked(), min_score=self.chg_score.value(),
+                              frames=self.chg_frames.value(), run=self.chg_run.value(),
+                              passby=self.chg_passby.isChecked(), inside_only=self.chg_inside.isChecked(),
+                              min_len=self.min_track.value())
+
+    def change_rows(self, it, compute=True):
+        """6 신호 변화 트랙 rows of one image (None when off / no tracks / no signal channel)."""
+        if not self.chg_on.isChecked() or it is None or it.tracks is None or not it.tracks.points:
+            return None
+        from . import track_change as tc
+        from . import track_signal as ts
+        from .cellroi import is_ri
+        sg = self.signal_settings(it)
+        if not sg.channel:
+            return None
+        s = self.change_settings()
+        key = (id(it.tracks), len(it.tracks.points), sg.channel, sg.basis, sg.thr, tuple(sorted(s.to_dict().items())))
+        if key in self._chg_cache:
+            return self._chg_cache[key]
+        vals = ts.point_values(it, it.tracks, sg.channel, sg.basis, self.z_source(it), compute=compute)
+        if vals is None:
+            return None
+        roles = dict(self.win.roi_panel.roles(it))
+        z = self.z_source(it)
+        planes = {}
+        ri = roles.get('bg')
+
+        def ri_of(frame):
+            if ri is None:
+                return None
+            if frame not in planes:
+                p = frame_planes(it, frame - 1, z)[ri] if 0 < frame <= it.nt else None
+                planes[frame] = p if p is not None and is_ri(p) else None
+            return planes[frame]
+        try:
+            probe = ri_of(it.tracks.points[0]['frame'])
+        except Exception:  # noqa: BLE001
+            probe = None
+        rows = tc.analyze(it.tracks, vals, sg.thr, s, ri_of if probe is not None else None, it.pixel_um)
+        self._chg_cache = {k: v for k, v in self._chg_cache.items() if k[0] != id(it.tracks)}
+        self._chg_cache[key] = rows
+        return rows
+
+    def _chg_changed(self):
+        it = self.item
+        sg = self.signal_settings(it) if it is not None else None
+        self.chg_thr.setText(f'5 신호 기준의 Min ({sg.channel} = {sg.thr:g})' if sg and sg.channel else '5 신호 기준의 Min')
+        rows = self.change_rows(it) if it is not None else None
+        if not self.chg_on.isChecked():
+            self.chg_state.set_kind('info')
+            self.chg_state.setText('꺼져 있습니다.')
+        elif rows is None:
+            self.chg_state.set_kind('info')
+            self.chg_state.setText('트랙 또는 신호 값이 없습니다.')
+        else:
+            sel = [r for r in rows if r['selected']]
+            rel = sum(1 for r in rows if r['score'] >= self.chg_score.value())
+            kinds = {k: sum(1 for r in sel if r['kind'] == k) for k in self.chg_chips}
+            dropped = sum(1 for r in rows if r['passby_dropped'])
+            self.chg_state.set_kind('success' if sel else 'info')
+            self.chg_state.setText(f'긴 트랙 {len(rows)}개 · 점수 {self.chg_score.value():g} 이상 {rel}개 · 신호 변화 '
+                                   f'{len(sel)}개: ' + ' · '.join(f'{k} {n}' for k, n in kinds.items()) +
+                                   (f' (스쳐 간 입자 {dropped}개 제외)' if dropped else ''))
+            for k, c in self.chg_chips.items():
+                c.setText(f'{k} {kinds[k]}')
+        self.data_rows.refresh()
+        self.draw()
+
+    def _chg_draw(self, it, sc):
+        """Rings around the 신호 변화 트랙 particles of this frame: solid = signal on, dashed = off."""
+        if not getattr(self, 'chg_on', None) or not self.chg_on.isChecked():
+            return
+        rows = self.change_rows(it, compute=False) or []
+        want = {r['track_id'] for r in rows if r['selected'] and self.chg_chips[r['kind']].isChecked()}
+        if not want:
+            return
+        from . import track_signal as ts
+        sg = self.signal_settings(it)
+        vals = ts.point_values(it, it.tracks, sg.channel, sg.basis, self.z_source(it), compute=False) or {}
+        f_now = it.t + 1
+        for p in it.tracks.points:
+            if p['frame'] != f_now or p['track_id'] not in want:
+                continue
+            on = vals.get((p['track_id'], p['frame']), np.nan) >= sg.thr
+            r = 9.0
+            e = QGraphicsEllipseItem(p['x'] + 0.5 - r, p['y'] + 0.5 - r, 2 * r, 2 * r)
+            pen = QPen(QColor(255, 214, 0))
+            pen.setCosmetic(True)
+            pen.setWidthF(1.8)
+            if not on:
+                pen.setStyle(Qt.PenStyle.DashLine)
+            e.setPen(pen)
+            e.setZValue(15)
+            sc.addItem(e)
+            self._scene.append(e)
+
+    def change_tables(self):
+        sel, scores = [], []
+        for it in self.win.items:
+            rows = self.change_rows(it, compute=False)
+            if not rows:
+                continue
+            head = {'image_id': it.image_id, 'image': it.label, 'group': it.group or ''}
+            for r in rows:
+                rr = {**head, 'track': f'{it.label} T{r["track_id"]:03d}', **r}
+                scores.append(rr)
+                c = self.chg_chips.get(r['kind'])
+                if r['selected'] and (c is None or c.isChecked()):
+                    sel.append(rr)
+        return [('입자 추적 · 신호 변화 트랙', '트랙', sel), ('입자 추적 · 트래킹 점수', '트랙', scores)]
 
     def signal_on(self) -> bool:
         return self.sig_on.isChecked()
@@ -526,6 +709,8 @@ class TrackPanel(QWidget):
             self.sig_state.set_kind('success')
             self.sig_state.setText(self._sig_text)
         self._fill_table()
+        if hasattr(self, 'chg_on'):
+            self._chg_changed()
         self.data_rows.refresh()
         self.draw()
 
@@ -943,8 +1128,11 @@ class TrackPanel(QWidget):
                     for r in tk.point_rows(st.points, st.ratio)]
             summ += [{**head, **r} for r in sm]
             cells += [{**head, **r} for r in tk.per_cell(st.points, st.ratio)]
-        return [('입자 추적 · 시점', '트랙 × 시점', pts), ('입자 추적 · 트랙', '트랙', summ),
-                ('입자 추적 · 세포 × 시점', '세포 × 시점', cells)]
+        out = [('입자 추적 · 시점', '트랙 × 시점', pts), ('입자 추적 · 트랙', '트랙', summ),
+               ('입자 추적 · 세포 × 시점', '세포 × 시점', cells)]
+        if getattr(self, 'chg_on', None) is not None and self.chg_on.isChecked():
+            out += self.change_tables()
+        return out
 
     def open_graph(self):
         gw = self.win.graph_window()
@@ -1096,6 +1284,7 @@ class TrackPanel(QWidget):
             return
         sc = self.win.canvas.scene()
         self._sig_draw(it, sc)
+        self._chg_draw(it, sc)
         if not self.show_tracks.isChecked():
             return
         st = it.tracks

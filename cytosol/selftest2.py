@@ -949,6 +949,39 @@ def _cyto_cells_movie(T=30, size=(200, 260), seed=3):
     return frames
 
 
+def signal_change_step(out: Path):
+    """입자 추적 › 6 신호 변화 트랙 (v0.73): change kinds, a gap lowering the
+    score, a pass-by frame left out before judging, the card on a run."""
+    from . import track_change as tc
+    from .tracking import TrackState
+
+    if tc.change_kind([0, 0, 1, 1, 1, 0, 0]) != (True, '켜짐→꺼짐') or tc.change_kind([0, 1, 1, 1])[1] != '켜짐' \
+            or tc.change_kind([1, 1, 1, 0])[1] != '꺼짐' or tc.change_kind([1, 1, 1, 1])[0]:
+        raise AssertionError('change kinds')
+    pts, vals = [], {}
+    for f in range(1, 13):
+        pts.append(dict(track_id=1, frame=f, x=20.0, y=20.0, area=9.0, gap_before=0, location='cytosol'))
+        vals[(1, f)] = 10.0 if 4 <= f <= 8 else 1.0
+        pts.append(dict(track_id=2, frame=f, x=60.0, y=20.0, area=9.0, gap_before=1 if f == 6 else 0,
+                        location='cytosol'))
+        vals[(2, f)] = 10.0 if f >= 7 else 1.0
+        # track 3: green only while track 4 (green) sits on it
+        pts.append(dict(track_id=3, frame=f, x=100.0, y=20.0, area=9.0, gap_before=0, location='cytosol'))
+        vals[(3, f)] = 10.0 if 5 <= f <= 7 else 1.0
+        if 5 <= f <= 7:
+            pts.append(dict(track_id=4, frame=f, x=103.0, y=20.0, area=9.0, gap_before=0, location='cytosol'))
+            vals[(4, f)] = 10.0
+    st = TrackState(points=pts)
+    rows = {r['track_id']: r for r in tc.analyze(st, vals, 5.0, tc.ChangeSettings(on=True, min_score=50))}
+    if rows[1]['kind'] != '켜짐→꺼짐' or not rows[1]['selected'] or rows[1]['score'] != 100:
+        raise AssertionError(f'track 1 {rows[1]}')
+    if rows[2]['kind'] != '켜짐' or not 90 < rows[2]['score'] < 100:
+        raise AssertionError(f'track 2 {rows[2]}')
+    if rows[3]['selected'] or not rows[3]['passby_dropped']:
+        raise AssertionError(f'pass-by {rows[3]}')
+    return f'kinds, score {rows[2]["score"]:.0f} with a gap, pass-by dropped'
+
+
 def CT_default_settings():
     from .cell_track import CellTrackSettings
     return CellTrackSettings().to_dict()
@@ -1289,6 +1322,7 @@ STEPS = [
     ('particle tracking on a Z projection', tracking_z_step),
     ('particle tracking (ParticleTracker method)', tracking_pt_step),
     ('cell intensity tracking', cell_track_step),
+    ('signal change tracks', signal_change_step),
     ('mitoROI', mito_step),
     ('language', language_step),
 ]
