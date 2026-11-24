@@ -191,12 +191,17 @@ def run(win, items, out, opts, progress=None) -> Result:
     # ---- 입자 추적 ----
     if _kind_on(opts, 'track_csv', 'track_rois', 'track_all', 'track_ptdir', 'track_signal', 'track_signal_all'):
         _try(res, lambda: _tracks(win, items, out, opts, where))
+    # ---- 신호 변화 트랙 ----
+    if _kind_on(opts, 'track_change', 'track_change_all') and getattr(win.track_panel, 'chg_on', None) is not None \
+            and win.track_panel.chg_on.isChecked():
+        _try(res, lambda: _track_change(win, items, out, opts, where))
     # ---- 세포질 강도 추적 ----
-    if opts.get('cyto_track_csv'):
+    if opts.get('cyto_track_csv') or opts.get('cyto_track_fig'):
         for it in items:
             if getattr(it, 'cell_tracks', None) is not None:
                 folder, stem = where(it)
-                _try(res, lambda it=it, folder=folder, stem=stem: win.cell_track_panel.save_item(it, folder, stem))
+                _try(res, lambda it=it, folder=folder, stem=stem: win.cell_track_panel.save_item(
+                    it, folder, stem, csv_on=bool(opts.get('cyto_track_csv')), fig=bool(opts.get('cyto_track_fig'))))
     # ---- 미토 형태 (MiNA) ----
     if opts.get('mina_csv'):
         for it in items:
@@ -463,3 +468,167 @@ def _graphs(win, keys, out, opts, fmt):
         if opts.get('g_spec'):
             files.append(G.save_spec(folder / f'{name}_graph.json', d.spec))
     return files
+
+
+# ---------------------------------------------------------------------------
+# 백그라운드 저장 (owner request 2026-11-20, Tomocube C; v0.73): the files are
+# written to a local staging folder first, then copied to the destination by
+# a thread, so a slow or hanging disk (the exFAT CW Data drive) never freezes
+# the app; cancelling removes only the file being written and what was not
+# copied yet.
+# ---------------------------------------------------------------------------
+
+def _track_change(win, items, out, opts, where) -> list:
+    """신호 변화 트랙: per image one folder per kind (tracks CSV with the score
+    parts, time courses of the signal value), all images: counts per kind."""
+    import csv
+
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    from . import track_signal as ts
+    tp = win.track_panel
+    files, per = [], []
+
+    def write(path, rows):
+        if not rows:
+            return
+        cols = list(dict.fromkeys(k for r in rows for k in r))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, 'w', newline='', encoding='utf-8') as f:
+            w = csv.DictWriter(f, fieldnames=cols)
+            w.writeheader()
+            for r in rows:
+                w.writerow({k: (f'{v:.6g}' if isinstance(v, float) else v) for k, v in r.items()})
+        files.append(str(path))
+
+    all_scores = []
+    for it in items:
+        rows = tp.change_rows(it)
+        if not rows:
+            continue
+        folder, stem = where(it)
+        d = Path(folder) / f'{stem}_signal_change'
+        sg = tp.signal_settings(it)
+        vals = ts.point_values(it, it.tracks, sg.channel, sg.basis, tp.z_source(it)) or {}
+        times = list(it.image.times) if it.image.times else None
+        tracks = it.tracks.tracks()
+        sel = [r for r in rows if r['selected']]
+        counts = {k: sum(1 for r in sel if r['kind'] == k) for k in ('켜짐', '켜짐→꺼짐', '꺼짐')}
+        per.append(dict(image=it.label, image_id=it.image_id, group=it.group or '', long_tracks=len(rows),
+                        reliable=sum(1 for r in rows if r['score'] >= tp.chg_score.value()), changed=len(sel),
+                        **{f'n_{k}': n for k, n in counts.items()},
+                        **{f'frac_{k}': n / max(len(rows), 1) for k, n in counts.items()}))
+        all_scores += [r['score'] for r in rows]
+        if opts.get('track_change'):
+            write(d / 'track_scores.csv', rows)
+            for k in counts:
+                rk = [r for r in sel if r['kind'] == k]
+                if not rk:
+                    continue
+                write(d / k / 'tracks.csv', rk)
+                fig, ax = plt.subplots(figsize=(8, 4))
+                for r in rk[:40]:
+                    pts = sorted(tracks[r['track_id']], key=lambda p: p['frame'])
+                    x = [times[p['frame'] - 1] / 3600 if times else p['frame'] for p in pts]
+                    ax.plot(x, [vals.get((r['track_id'], p['frame']), np.nan) for p in pts], '-', lw=1, alpha=.7)
+                ax.axhline(sg.thr, color='k', ls='--', lw=.8)
+                ax.set_xlabel('time (h)' if times else 'frame')
+                ax.set_ylabel(f'{sg.channel} ({sg.basis})')
+                ax.set_title(f'{it.label}: {k} ({len(rk)})')
+                p = d / k / 'time_courses.png'
+                fig.savefig(p, dpi=150, bbox_inches='tight')
+                plt.close(fig)
+                files.append(str(p))
+    if opts.get('track_change_all') and per:
+        d = Path(out) / '신호 변화 통합'
+        write(d / 'per_image_change.csv', per)
+        fig, ax = plt.subplots(1, 2, figsize=(11, 4))
+        ax[0].hist(all_scores, bins=40, color='0.5')
+        ax[0].axvline(tp.chg_score.value(), color='r', ls='--')
+        ax[0].set_xlabel('tracking score')
+        ax[0].set_ylabel('long tracks')
+        names = [r['image'] for r in per]
+        bottom = np.zeros(len(per))
+        for k, c in (('켜짐', '#2a9d3f'), ('켜짐→꺼짐', '#e9c46a'), ('꺼짐', '#8d99ae')):
+            v = np.array([r[f'frac_{k}'] * 100 for r in per])
+            ax[1].bar(range(len(per)), v, bottom=bottom, color=c, label=k)
+            bottom += v
+        ax[1].set_xticks(range(len(per)), names, rotation=60, ha='right', fontsize=7)
+        ax[1].set_ylabel('% of long tracks')
+        ax[1].legend(fontsize=8)
+        p = d / 'change_overview.png'
+        fig.savefig(p, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        files.append(str(p))
+    return files
+
+
+class CopyJob:
+    def __init__(self, stage: Path, out: Path, files: list):
+        import threading
+        self.stage, self.out = Path(stage), Path(out)
+        self.files = [Path(f) for f in files]
+        self.done, self.total = 0, len(self.files)
+        self.current = ''
+        self.copied: list[str] = []
+        self.errors: list[str] = []
+        self.cancelled = False
+        self.finished = False
+        self._cancel = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self):
+        self._thread.start()
+        return self
+
+    def cancel(self):
+        self._cancel.set()
+
+    def wait(self, timeout=None) -> bool:
+        self._thread.join(timeout)
+        return self.finished
+
+    def _run(self):
+        import shutil
+        try:
+            for f in self.files:
+                if self._cancel.is_set():
+                    self.cancelled = True
+                    break
+                rel = f.relative_to(self.stage)
+                dst = self.out / rel
+                self.current = str(rel)
+                try:
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    part = dst.with_name(dst.name + '.part')
+                    with open(f, 'rb') as a, open(part, 'wb') as b:
+                        while True:
+                            if self._cancel.is_set():
+                                break
+                            buf = a.read(1 << 20)
+                            if not buf:
+                                break
+                            b.write(buf)
+                    if self._cancel.is_set():
+                        part.unlink(missing_ok=True)
+                        self.cancelled = True
+                        break
+                    part.replace(dst)
+                    self.copied.append(str(dst))
+                except OSError as exc:
+                    self.errors.append(f'{rel}: {exc}')
+                self.done += 1
+        finally:
+            shutil.rmtree(self.stage, ignore_errors=True)
+            self.finished = True
+
+
+def run_staged(win, items, out, opts, progress=None):
+    """exporter.run into a local staging folder → (Result with staged paths, CopyJob not started)."""
+    import tempfile
+    stage = Path(tempfile.mkdtemp(prefix='cytosol-export-'))
+    res = run(win, items, stage, opts, progress)
+    files = sorted(p for p in stage.rglob('*') if p.is_file())
+    return res, CopyJob(stage, Path(out), files)

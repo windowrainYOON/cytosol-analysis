@@ -979,7 +979,26 @@ def signal_change_step(out: Path):
         raise AssertionError(f'track 2 {rows[2]}')
     if rows[3]['selected'] or not rows[3]['passby_dropped']:
         raise AssertionError(f'pass-by {rows[3]}')
-    return f'kinds, score {rows[2]["score"]:.0f} with a gap, pass-by dropped'
+    # 백그라운드 저장: staged files copied by a thread, cancel removes the half-written file
+    import tempfile
+
+    from .exporter import CopyJob
+    stage = Path(tempfile.mkdtemp())
+    (stage / 'a').mkdir()
+    for k in range(3):
+        (stage / 'a' / f'f{k}.bin').write_bytes(bytes(1000))
+    dst = out / 'copy_job'
+    job = CopyJob(stage, dst, sorted(stage.rglob('*.bin'))).start()
+    if not job.wait(30) or len(job.copied) != 3 or not (dst / 'a' / 'f2.bin').exists() or stage.exists():
+        raise AssertionError(f'background copy {job.copied} {job.errors}')
+    stage = Path(tempfile.mkdtemp())
+    (stage / 'big.bin').write_bytes(bytes(1 << 22))
+    job = CopyJob(stage, out / 'copy_cancel', [stage / 'big.bin'])
+    job.cancel()
+    job.start().wait(30)
+    if job.copied or not job.cancelled or any((out / 'copy_cancel').glob('*')):
+        raise AssertionError('cancelled copy left files')
+    return f'kinds, score {rows[2]["score"]:.0f} with a gap, pass-by dropped, background copy + cancel'
 
 
 def CT_default_settings():
@@ -1052,9 +1071,9 @@ def cell_track_step(out: Path):
     cp.draw()
     if not cp._scene:
         raise AssertionError('outlines not drawn')
-    res = export_run(win, [item], out / 'cell_track_export', {'cyto_track_csv': True, 'per_image': False})
+    res = export_run(win, [item], out / 'cell_track_export', {'cyto_track_csv': True, 'cyto_track_fig': True, 'per_image': False})
     got = [Path(f).name for f in res.files]
-    if not any(n.endswith('_cell_track_cells.csv') for n in got):
+    if not any(n.endswith('_cell_track_cells.csv') for n in got) or not any(n.endswith('_cell_track.png') for n in got):
         raise AssertionError(f'export {got} {res.errors}')
     # project: the state pickles (labels packed) and the settings dict round-trips
     import pickle

@@ -893,7 +893,7 @@ class CellTrackPanel(QWidget):
 
     # ---- saving -------------------------------------------------------------
 
-    def save_item(self, it, folder: Path, stem: str) -> list:
+    def save_item(self, it, folder: Path, stem: str, csv_on=True, fig=False) -> list:
         st = getattr(it, 'cell_tracks', None)
         if st is None:
             return []
@@ -901,6 +901,10 @@ class CellTrackPanel(QWidget):
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
         files = []
+        if fig:
+            files += self.save_figure(it, folder / f'{stem}_cell_track.png', cls)
+        if not csv_on:
+            return files
         for rows, suffix in (([r for r in self.frame_rows(cls) if r['image_id'] == it.image_id], 'cell_track_points'),
                              ([r for r in self.summary_rows(cls) if r['image_id'] == it.image_id], 'cell_track_cells')):
             if not rows:
@@ -914,6 +918,42 @@ class CellTrackPanel(QWidget):
                     w.writerow({k: (f'{v:.6g}' if isinstance(v, float) else v) for k, v in r.items()})
             files.append(p)
         return files
+
+
+def _save_figure(panel, it, path, cls):
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    st = it.cell_tracks
+    col = 'I_thr' if st.settings.get('thr_on') else 'I'
+    mine = {k[1]: v for k, v in cls.items() if k[0] == it.image_id}
+    names = [f.get('name') or '필터' for f in panel._filters]
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    groups = [(n, (0.85, 0.1, 0.1)) for n in names] + [('rest', (0, 0, 0))]
+    for g, c in groups:
+        ids = [cid for cid, v in mine.items() if v == g]
+        if not ids:
+            continue
+        by = {}
+        for cid in ids:
+            rs = sorted((r for r in st.rows if r['cell_id'] == cid), key=lambda r: r['frame'])
+            ax.plot([r['time_h'] for r in rs], [r.get(col, np.nan) for r in rs], '-', lw=.6, alpha=.3, color=c)
+            for r in rs:
+                by.setdefault(r['time_h'], []).append(r.get(col, np.nan))
+        t = sorted(by)
+        q = np.array([np.nanpercentile(by[x], [25, 50, 75]) for x in t])
+        ax.fill_between(t, q[:, 0], q[:, 2], color=c, alpha=.15)
+        ax.plot(t, q[:, 1], '-', lw=2.2, color=c, label=f'{CT.class_text(g)} (n = {len(ids)})')
+    ax.set_xlabel('time (h)')
+    ax.set_ylabel(col)
+    ax.set_title(it.label)
+    ax.legend(loc='upper left', bbox_to_anchor=(1.01, 1), fontsize=8)
+    fig.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    return [path]
+
+
+CellTrackPanel.save_figure = lambda self, it, path, cls: _save_figure(self, it, path, cls)
 
 
 def cell_track_live(panel):

@@ -121,6 +121,11 @@ KINDS: dict = {
              '<이름>_signal_thr<Min>/', True),
             ('track_signal_all', '모든 이미지 통합 그래프 + 이미지별 요약 (per_image_summary.csv)', '신호 기준 통합/', True),
         ]),
+        ('신호 변화 트랙 (입자 추적 › 6이 켜져 있을 때)', [
+            ('track_change', '유형별 폴더 (켜짐 / 켜짐→꺼짐 / 꺼짐): 트랙 CSV + 점수 + 시간 곡선', '<이름>_signal_change/', True),
+            ('track_change_all', '모든 이미지: 유형별 개수 · 비율 + 점수 분포 그래프', '신호 변화 통합/per_image_change.csv',
+             True),
+        ]),
         ('모든 이미지', [
             ('track_all', 'tracks_points.csv · tracks_summary.csv · tracks_cells.csv', '', True),
         ]),
@@ -139,6 +144,8 @@ KINDS: dict = {
         ('이미지마다', [
             ('cyto_track_csv', '세포 × 시점 · 세포 CSV', '<이름>_cell_track_points.csv, <이름>_cell_track_cells.csv '
              '(필터 · 나머지 · 제외 · 짧은 세포 열 포함)', True),
+            ('cyto_track_fig', '그래프 PNG: 필터 세포 / 나머지 시간 곡선 (세포별 선 + 중앙값 ± IQR)',
+             '<이름>_cell_track.png', True),
         ]),
     ]),
     'mina': ('미토 형태 (MiNA)', [
@@ -501,6 +508,56 @@ class ExportDialog(QDialog):
             'crop_which': self.crop_which.currentData(), 'roi_format': self.roi_format.currentData(),
             'graph_format': self.graph_format.currentData()})
 
+    def _copy_in_background(self, job, res, items, out):
+        """Copy the staged files with a progress row in this window; the app keeps working."""
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QProgressBar
+        win = self.win
+        bar = QProgressBar()
+        bar.setRange(0, max(job.total, 1))
+        lab = QLabel()
+        theme.secondary(lab)
+        cancel = QPushButton('취소')
+        note = theme.StatusLabel('저장은 백그라운드에서 진행됩니다. 디스크가 응답하지 않아도 앱은 멈추지 않고, 취소하면 '
+                                 '쓰던 파일만 지웁니다.', 'info')
+        row = QWidget()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addWidget(lab)
+        h.addWidget(bar, 1)
+        h.addWidget(cancel)
+        lay = self.layout()
+        lay.insertWidget(1, row)
+        lay.insertWidget(2, note)
+        cancel.clicked.connect(job.cancel)
+        self.go.setEnabled(False)
+        self._job = job
+        job.start()
+        timer = QTimer(self)
+
+        def tick():
+            bar.setValue(job.done)
+            lab.setText(f'파일 {job.done} / {job.total} · {job.current} 저장 중…' if not job.finished else '')
+            if not job.finished:
+                return
+            timer.stop()
+            row.setParent(None)
+            note.setParent(None)
+            res.files = job.copied
+            res.errors += job.errors
+            what = '취소했습니다' if job.cancelled else '저장했습니다'
+            win.statusBar().showMessage(f'내보내기: 이미지 {len(items)}개, 파일 {len(job.copied)}개 {what} → {out}')
+            msg = f'파일 {len(job.copied)}개를 {what}.\n{out}'
+            if res.skipped:
+                msg += '\n\n' + '\n'.join(res.skipped)
+            if res.errors:
+                msg += '\n\n실패:\n' + '\n'.join(res.errors[:20])
+            QMessageBox.information(self, '내보내기 완료', msg)
+            self.accept()
+
+        timer.timeout.connect(tick)
+        timer.start(150)
+
     def run(self, ask=True):
         """Write the outputs; returns exporter.Result (None when nothing ran)."""
         from . import exporter
@@ -525,10 +582,16 @@ class ExportDialog(QDialog):
 
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            res = exporter.run(self.win, items, out, opts, progress)
+            if ask:   # v0.73: written locally, copied to the destination in the background
+                res, job = exporter.run_staged(self.win, items, out, opts, progress)
+            else:
+                res, job = exporter.run(self.win, items, out, opts, progress), None
         finally:
             QApplication.restoreOverrideCursor()
             prog.setValue(prog.maximum())
+        if job is not None:
+            self._copy_in_background(job, res, items, out)
+            return res
         self.win.statusBar().showMessage(f'내보내기: 이미지 {len(items)}개, 파일 {len(res.files)}개 → {out}')
         if ask:
             msg = f'파일 {len(res.files)}개를 저장했습니다.\n{out}'
