@@ -24,6 +24,9 @@ GROUP = Qt.ItemDataRole.UserRole + 1  # group name, on folder items
 CROP = Qt.ItemDataRole.UserRole + 2  # crop index, on crop items (under their image)
 # source file of a stacked image (이미지 묶기), greyed under it and never selected
 SOURCE = Qt.ItemDataRole.UserRole + 3
+# chips under an image name (파이프라인 검토, v0.73): [(text, status kind), …]
+CHIPS = Qt.ItemDataRole.UserRole + 4
+CHIP_H = 18
 
 
 PAD = 3  # px above / below the text of a row
@@ -69,7 +72,34 @@ class WrapDelegate(QStyledItemDelegate):
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         n = len(wrap_lines(opt.text, opt.font, self._text_width(opt, index))) or 1
-        return QSize(10, n * opt.fontMetrics.lineSpacing() + 2 * PAD)
+        extra = CHIP_H + 4 if index.data(CHIPS) else 0
+        return QSize(10, n * opt.fontMetrics.lineSpacing() + 2 * PAD + extra)
+
+    @staticmethod
+    def draw_chips(painter, x, y, chips, font):
+        """Capsules: dot + text on the status tint (never colour alone)."""
+        from PySide6.QtGui import QFontMetrics  # noqa: PLC0415
+
+        from . import theme  # noqa: PLC0415
+
+        f = QFont(font)
+        f.setPointSizeF(max(f.pointSizeF() - 2, 8))
+        fm = QFontMetrics(f)
+        painter.save()
+        painter.setFont(f)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        for text, kind in chips:
+            dot, tint = theme.STATUS.get(kind, theme.STATUS['neutral'])
+            w = fm.horizontalAdvance(text) + 22
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(theme.color(tint))
+            painter.drawRoundedRect(QRectF(x, y, w, CHIP_H), CHIP_H / 2, CHIP_H / 2)
+            painter.setBrush(theme.color(dot))
+            painter.drawEllipse(QRectF(x + 7, y + CHIP_H / 2 - 3, 6, 6))
+            painter.setPen(theme.color('label'))
+            painter.drawText(QRectF(x + 16, y, w - 18, CHIP_H), Qt.AlignmentFlag.AlignVCenter, text)
+            x += w + 4
+        painter.restore()
 
     def paint(self, painter, option, index):
         opt = QStyleOptionViewItem(option)
@@ -104,11 +134,17 @@ class WrapDelegate(QStyledItemDelegate):
         painter.setPen(theme.color('on-accent') if active else opt.palette.color(QPalette.ColorRole.Text))
         fm = opt.fontMetrics
         lines = wrap_lines(text, opt.font, self._text_width(opt, index))
-        y = r.top() + max((r.height() - len(lines) * fm.lineSpacing()) / 2, 0)
+        chips = index.data(CHIPS)
+        th = r.height() - (CHIP_H + 4 if chips else 0)
+        y = r.top() + max((th - len(lines) * fm.lineSpacing()) / 2, 0)
         for line in lines:
             painter.drawText(QRectF(r.left() + 2, y, r.width(), fm.lineSpacing()),
                              Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, line)
             y += fm.lineSpacing()
+        if chips:
+            painter.restore()
+            self.draw_chips(painter, r.left() + 2, y + 2, chips, opt.font)
+            painter.save()
         removable = index.data(ROW) is not None or index.data(CROP) is not None
         if removable and hasattr(view, 'trash_rect') and (selected or option.state & QStyle.StateFlag.State_MouseOver):
             from . import hig_widgets  # noqa: PLC0415
@@ -149,6 +185,7 @@ class ImageTree(QTreeWidget):
         self._crops_collapsed: set[int] = set()  # id() of images whose crops are folded
         self._stacks_open: set[int] = set()  # id() of stacked images shown unfolded
         self._ids: list[int] = []
+        self.chips: dict[int, list] = {}  # id(item) -> [(text, kind)] (파이프라인 검토)
         self.itemCollapsed.connect(lambda n: self._folded(n, True))
         self.itemExpanded.connect(lambda n: self._folded(n, False))
         self.currentItemChanged.connect(self._current_changed)
@@ -357,6 +394,8 @@ class ImageTree(QTreeWidget):
                 text = f'{it.label} ({stacking.count_text(spec, it.image)})'
             leaf = QTreeWidgetItem([text])
             leaf.setData(0, ROW, row)
+            if self.chips.get(id(it)):
+                leaf.setData(0, CHIPS, self.chips[id(it)])
             if it.group:
                 folders[it.group].addChild(leaf)
             else:

@@ -1623,6 +1623,7 @@ class MainWindow(QMainWindow):
         center.setObjectName('hig_content')  # content layer between the two side panes
         center.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         cl = QVBoxLayout(center)
+        self.center_layout = cl
         cl.setContentsMargins(*theme.CONTENT_MARGINS)
         cl.setSpacing(12)
         cl.addLayout(bar1)
@@ -1955,14 +1956,13 @@ class MainWindow(QMainWindow):
             '모든 내보내기를 한 창에서: 이미지 TIFF / MP4, Crop 영역 이미지와 ROI, 세포 · 입자 ROI, 측정 CSV, '
             'Coloc 2, 라인 프로파일, FRAP, 스택 투영, 그래프, 이미지 정보, 일괄 분석 결과, 프로젝트 파일.')
         m.addSeparator()
-        act(m, '일괄 분석 실행…', self.batch_dialog, 'Ctrl+B',
-            '그룹을 고르고 수행할 분석(세포질 ROI, 입자, 강도 측정, Coloc 2, FRAP …)을 체크해 '
-            '그 그룹의 모든 이미지에 한 번에 실행합니다.')
+        act(m, '파이프라인…', self.pipeline_window, 'Ctrl+Shift+P',
+            '검출 → 추적 → 연산 → 측정 → 검토 → 그래프 · 저장 단계를 차례로 모든 이미지에 돌립니다 '
+            '(일괄 분석이 이리로 합쳐졌습니다). 일괄 분석 설정(.json)도 열 수 있습니다.')
+        act(m, '파이프라인 보관함…', self.pipeline_library,
+            tip='저장한 파이프라인과 기본 프리셋을 카드로 보고 열기 · 복제합니다.')
         act(m, '측정 현황 · 일괄 분석…', self.show_batch_results, 'Ctrl+Shift+B',
             '이미지별 결과를 보고, 이미지를 열어 ROI를 고친 뒤 다시 측정합니다.')
-        act(m, '일괄 분석 설정 저장…', self.save_batch_settings,
-            tip='고른 분석·그룹과 그 분석들의 탭 설정을 JSON 파일로 저장합니다 (다른 이미지셋에 다시 쓰기).')
-        act(m, '일괄 분석 설정 불러오기…', self.load_batch_settings_dialog)
         m.addSeparator()
         act(m, '작업 기록 보기…', self.open_log, 'Ctrl+Shift+L')
         s = act(m, 'Preferences…', self.open_settings, QKeySequence.StandardKey.Preferences)
@@ -2507,10 +2507,13 @@ class MainWindow(QMainWindow):
             if not self.open_project_dialog(projects[0]):
                 return
             paths = [p for p in paths if p not in projects]
+        pipes = [p for p in paths if p.suffix.lower() == '.cypipe']
+        for p in pipes:   # 파이프라인 (v0.73): opens the pipeline window with it
+            self.pipeline_window().load_file(str(p))
         batches = [p for p in paths if p.suffix.lower() == '.json' and batch.is_batch_file(p)]
         for p in batches:
             self.load_batch_settings(p)
-        paths = [p for p in paths if p not in batches]
+        paths = [p for p in paths if p not in batches and p not in pipes]
         from .tracking import is_pt_points
         from .mito import is_per_cell_csv
         tracks = [p for p in paths if p.suffix.lower() == '.csv' and is_pt_points(p)]
@@ -2708,6 +2711,11 @@ class MainWindow(QMainWindow):
             data['batch'] = self.batch.to_dict()
             data['particle_criterion'] = dict(self.particle_panel.criteria)
             data['cell_track'] = self.cell_track_panel.settings().to_dict()
+            pw = getattr(self, '_pipe_win', None)
+            if pw is not None:
+                data['pipeline'] = pw.spec.to_dict()
+            elif getattr(self, 'pipeline_spec', None):
+                data['pipeline'] = self.pipeline_spec
             write_project(path, data, files)
 
     def new_project(self):
@@ -2913,6 +2921,10 @@ class MainWindow(QMainWindow):
         self.file_list.blockSignals(False)
         self._apply_project_settings(data)
         self.batch = BatchState.from_dict(data.get('batch'))
+        self.pipeline_spec = data.get('pipeline')
+        if self.pipeline_spec and getattr(self, '_pipe_win', None) is not None:
+            from . import pipeline as P
+            self._pipe_win.set_spec(P.PipelineSpec.from_dict(self.pipeline_spec))
         rows = data.get('batch_rows') or {}
         for key, box in (('roi', self.roi_panel.measure), ('particle', self.particle_panel.measure),
                          ('intensity', self.intensity_panel.measure)):
@@ -3468,6 +3480,12 @@ class MainWindow(QMainWindow):
                 m.addAction('그룹 이름 변경…', self.rename_group)
             if any(self.items[r].group for r in rows):
                 m.addAction('그룹 해제', lambda: self.set_group(self._selected_items(), ''))
+            m.addSeparator()
+        r = getattr(self, 'pipeline_runner', None)
+        if rows and r is not None and r.state.status == 'review':
+            ids = {self.items[k].image_id for k in rows}
+            m.addAction('검토 대상에 넣기 / 빼기', lambda: self._toggle_review(ids))
+            m.addAction('이번 분석에서 제외', lambda: self._exclude_from_run(ids))
             m.addSeparator()
         if rows:
             act = m.addAction(f'이미지를 목록에서 제거… ({len(rows)})' if len(rows) > 1
@@ -4497,6 +4515,78 @@ class MainWindow(QMainWindow):
             fps=self.exp_fps.value(),
             outline=self.markers.outline_style(export=True),
         )
+
+    # ---- 파이프라인 (v0.73) ------------------------------------------------------
+    def pipeline_window(self):
+        from .pipeline_window import PipelineWindow
+        w = getattr(self, '_pipe_win', None)
+        if w is None:
+            spec = None
+            if getattr(self, 'pipeline_spec', None):
+                from . import pipeline as P
+                try:
+                    spec = P.PipelineSpec.from_dict(self.pipeline_spec)
+                except Exception:  # noqa: BLE001
+                    spec = None
+            w = self._pipe_win = PipelineWindow(self, spec)
+        w.show()
+        w.raise_()
+        return w
+
+    def pipeline_library(self):
+        from .pipeline_window import LibraryDialog
+        LibraryDialog(self, getattr(self, '_pipe_win', None)).exec()
+
+    def pipeline_band(self):
+        b = getattr(self, '_pipe_band', None)
+        if b is None:
+            from .pipeline_window import ReviewBand
+            b = self._pipe_band = ReviewBand(self)
+            self.center_layout.insertWidget(0, b)
+        return b
+
+    def update_pipeline_chips(self):
+        """검토 · 확인 · 특이 사항 chips under the image names while a pipeline runs."""
+        from . import pipeline as P
+        r = getattr(self, 'pipeline_runner', None)
+        chips = {}
+        if r is not None and r.state.status == 'review':
+            rv, ok, ex = set(r.state.review_images), set(r.state.confirmed), set(r.state.excluded)
+            for it in self.items:
+                c = []
+                if it.image_id in ex:
+                    c.append(('제외', 'neutral'))
+                elif it.image_id in ok:
+                    c.append(('확인', 'success'))
+                elif it.image_id in rv:
+                    c.append(('검토', 'info'))
+                for k, v in (r.state.chips.get(it.image_id) or {}).items():
+                    c.append((f'{P.CHIP_TEXT[k]} {v}' if k != 'failed' else P.CHIP_TEXT[k], P.CHIP_KIND[k]))
+                if c:
+                    chips[id(it)] = c
+        self.file_list.chips = chips
+        self.file_list.rebuild(self.items)
+
+    def _toggle_review(self, ids):
+        r = self.pipeline_runner
+        for i in ids:
+            if i in r.state.review_images:
+                r.state.review_images.remove(i)
+            else:
+                r.state.review_images.append(i)
+        self.pipeline_band().refresh()
+
+    def _exclude_from_run(self, ids):
+        r = self.pipeline_runner
+        for i in ids:
+            if i not in r.state.excluded:
+                r.state.excluded.append(i)
+            if i in r.state.review_images:
+                r.state.review_images.remove(i)
+            it = next((x for x in self.items if x.image_id == i), None)
+            if it is not None:
+                r.note_review(it, '이번 분석에서 제외')
+        self.pipeline_band().refresh()
 
     # ---- 일괄 분석 ----------------------------------------------------------------
 

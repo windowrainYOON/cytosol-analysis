@@ -1331,6 +1331,151 @@ def language_step(out: Path):
     return 'English ⇄ 한국어 at once, sources kept, page fits'
 
 
+def pipeline_step(out: Path):
+    """파이프라인 (v0.73): every preset loads, validates and shows each stage
+    editor; a pipeline with 연산 (keep / subtract / ring / bands …), 측정 and
+    a 검토 stop runs on synthetic images in two groups, stops at review (band,
+    chips, confirm, exclude), resumes, writes the result folder (pipeline.json,
+    summary.json, README, review_log, tables); the CLI's stages / presets /
+    validate / edit work and an old 일괄 분석 settings file converts."""
+    import json
+
+    from . import pipe as cli
+    from . import pipeline as P
+    from .selftest import _synthetic_item
+
+    app, win = _window()
+    win.show()
+    items = [_synthetic_item() for _ in range(4)]
+    for k, it in enumerate(items):
+        it.label, it.group = f'pipe_{k:02d}', ('A' if k < 2 else 'B')
+        it.image.metadata['image_id'] = f'PIPE-{k}'
+        win._add_item(it)
+    win.file_list.setCurrentRow(0)
+    app.processEvents()
+    # presets: all valid, every editor builds
+    pw = win.pipeline_window()
+    for name, _p, spec in P.library():
+        errs = P.validate(spec)
+        if errs:
+            raise AssertionError(f'preset {name}: {errs}')
+        pw.set_spec(spec.copy())
+        for i in range(len(spec.stages)):
+            pw.show_stage(i)
+            app.processEvents()
+    # every stage kind can be added and edited
+    pw.set_spec(P.PipelineSpec(stages=[P.default_stage('detect.cells')]))
+    for k in P.STAGES:
+        pw.add_stage(k)
+        app.processEvents()
+    if len(pw.spec.stages) != len(P.STAGES) + 1:
+        raise AssertionError('add stage')
+    order = [P.GROUP_ORDER[P.STAGES[s['kind']]['group']] for s in pw.spec.stages
+             if P.STAGES[s['kind']]['group'] != 'human']
+    if order != sorted(order):
+        raise AssertionError(f'stages out of group order: {order}')
+    # moving across groups is refused, inside a group allowed
+    kinds = [s['kind'] for s in pw.spec.stages]
+    pw.move_stage(kinds.index('detect.cells'), kinds.index('track.particles'))
+    if [s['kind'] for s in pw.spec.stages] != kinds:
+        raise AssertionError('moved across groups')
+    spec = P.PipelineSpec.from_dict({'name': '셀프테스트', 'stages': [
+        {'kind': 'start.auto_group'}, {'kind': 'detect.cells'}, {'kind': 'detect.particles'},
+        {'kind': 'op', 'settings': {'input': '세포', 'out': '큰 세포', 'rest': '작은 세포',
+                                    'where': {'mode': 'all', 'conds': [['Area', '>=', 100], ['edge', 'no']]},
+                                    'action': {'do': 'keep'}}},
+        {'kind': 'op', 'settings': {'input': '세포질', 'out': '세포질 (입자 뺀)',
+                                    'action': {'do': 'subtract', 'with': '입자', 'pair': 'cell'}}},
+        {'kind': 'op', 'settings': {'input': '세포', 'out': '배경 고리', 'action': {'do': 'ring', 'inner': 1,
+                                                                                  'outer': 4}}},
+        {'kind': 'op', 'settings': {'input': '세포', 'out': '띠', 'action': {'do': 'bands', 'n': 3}}},
+        {'kind': 'human.review', 'settings': {'images': ['PIPE-0', 'PIPE-2']}},
+        {'kind': 'measure.intensity', 'settings': {
+            'targets': [{'object': '세포질 (입자 뺀)', 'channels': ['GFP']}, {'object': '띠', 'channels': []}],
+            'stats': ['Area', 'Mean', 'IntDen'], 'bg': 'ring:배경 고리', 'name': '세기'}},
+        {'kind': 'measure.count', 'settings': {'object': '입자', 'parent': '세포'}},
+        {'kind': 'end.export', 'settings': {'dest': str(out / 'pipe_out'), 'opts': {}}}]})
+    if P.validate(spec, ['DAPI', 'GFP']):
+        raise AssertionError(P.validate(spec, ['DAPI', 'GFP']))
+    if not P.validate(spec, ['DAPI']):
+        raise AssertionError('missing channel not reported')
+    pw.set_spec(spec)
+    pw.show_stage(4)   # 연산 editor with the preview
+    app.processEvents()
+    dest = out / 'pipe_out' / 'run'
+    res = pw.start(spec.copy(), list(win.items), out=dest)
+    if res != 'review':
+        raise AssertionError(f'no review stop: {res}')
+    band = win.pipeline_band()
+    if not band.isVisible() and not band.isVisibleTo(win):
+        raise AssertionError('review band hidden')
+    r = pw.runner
+    if r.state.review_images != ['PIPE-0', 'PIPE-2']:
+        raise AssertionError(r.state.review_images)
+    if not win.file_list.chips:
+        raise AssertionError('no list chips during review')
+    band.confirm()
+    win._exclude_from_run({'PIPE-3'})
+    if 'PIPE-3' not in r.state.excluded:
+        raise AssertionError('exclude')
+    r.state.confirmed = list(r.state.review_images)   # skip the 'not confirmed' question
+    band._go()
+    app.processEvents()
+    if r.state.status != 'done':
+        raise AssertionError(f'run state {r.state.status}: {r.state.errors}')
+    for f in ('pipeline.json', 'summary.json', 'README.txt', 'review_log.csv', 'progress.jsonl',
+              'project.cyproj', '1_통합데이터/세기.csv'):
+        if not (dest / f).exists():
+            raise AssertionError(f'missing {f}')
+    summ = json.loads((dest / 'summary.json').read_text(encoding='utf-8'))
+    if summ['images'] != 3 or summ['tables']['세기'] < 3:
+        raise AssertionError(summ)
+    objs = summ['objects']['pipe_00']
+    for name in ('큰 세포', '세포질 (입자 뺀)', '배경 고리', '띠'):
+        if not objs.get(name):
+            raise AssertionError(f'object {name}: {objs}')
+    rows = r.state.tables['세기']
+    if not any('bg (GFP)' in x for x in rows) or 'Mean (GFP)' not in rows[0]:
+        raise AssertionError(rows[0])
+    # rerun from the 측정 stage keeps the ROIs
+    n_cells = len(items[0].cells)
+    r.rerun_from(8)
+    if len(items[0].cells) != n_cells or r.state.status != 'done':
+        raise AssertionError(f'rerun: {len(items[0].cells)} vs {n_cells}, {r.state.status}, {r.state.errors}')
+    # CLI
+    import contextlib
+    import io as _io
+    buf = _io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        cli.main(['stages', '--json'])
+        cli.main(['presets', '--json'])
+    if 'op' not in buf.getvalue() or '세포질 세기' not in buf.getvalue():
+        raise AssertionError('cli output')
+    f = out / 'cli.cypipe'
+    with contextlib.redirect_stdout(_io.StringIO()):
+        cli.main(['new', str(f), '--from', '세포질 세기'])
+        cli.main(['edit', str(f), '--set', 'stages[1].settings.bg="none"'])
+        code = cli.main(['validate', str(f)])
+    if code or P.PipelineSpec.load(f).stages[1]['settings']['bg'] != 'none':
+        raise AssertionError('cli edit / validate')
+    # old 일괄 분석 settings → pipeline
+    from . import batch
+    win.batch.steps = ['cells', 'particles', 'coloc']
+    b = P.PipelineSpec.from_dict(batch.settings_dict(win, win.batch))
+    if [s['kind'] for s in b.stages] != ['detect.cells', 'detect.particles', 'measure.coloc'] \
+            or not b.stages[0]['settings'].get('panel'):
+        raise AssertionError([s['kind'] for s in b.stages])
+    # review chips: a nucleus with a hole is odd
+    m = np.zeros((40, 40), bool)
+    m[8:32, 8:32] = True
+    m[16:22, 16:22] = False
+    if not P.nucleus_odd(m) or P.nucleus_odd(np.pad(np.ones((20, 20), bool), 10)):
+        raise AssertionError('nucleus shape')
+    win.pipeline_runner = None
+    pw.close()
+    _close(win)
+
+
 STEPS = [
     ('image stacking', stacking_step),
     ('graph correlation', graph_corr_step),
@@ -1342,6 +1487,7 @@ STEPS = [
     ('particle tracking (ParticleTracker method)', tracking_pt_step),
     ('cell intensity tracking', cell_track_step),
     ('signal change tracks', signal_change_step),
+    ('pipeline', pipeline_step),
     ('mitoROI', mito_step),
     ('language', language_step),
 ]
