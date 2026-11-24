@@ -2534,9 +2534,9 @@ def run(out_dir) -> int:
         if not (m.x == 'group' and m.x_cat and m.ys == ['a'] and wz.spec.chart == 'strip'):
             raise AssertionError(f'wizard guess {m} {wz.spec.chart}')
         wz._kind('bar')
-        wz.go(1)
+        wz.go(2)  # 표 가져오기 (0) → 종류 (1) → 축 배치 (2) → 그룹 (3)
         wz.mapping._add_y()
-        wz.go(2)
+        wz.go(3)
         wz.groups.refresh()
         it = wz.groups.tree.topLevelItem(2)  # Drug: left out
         it.setCheckState(0, Qt.CheckState.Unchecked)

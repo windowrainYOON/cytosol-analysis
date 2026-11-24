@@ -418,9 +418,9 @@ class GraphWindow(QMainWindow):
             c.clicked.connect(lambda _=False, k=key: QTimer.singleShot(0, lambda: self.start_wizard(k)))
             self.chips[key] = c
             cr.addWidget(c)
-        csv_chip = hig_widgets.Chip('CSV…', False)
+        csv_chip = hig_widgets.Chip('파일 불러오기…', False)
         csv_chip.setCheckable(False)
-        csv_chip.setToolTip('CSV 표(첫 줄 = 열 이름)로 새 그래프를 만듭니다.')
+        csv_chip.setToolTip('CSV · Excel 표로 새 그래프를 만듭니다: 표 가져오기 (읽는 방법, 열 역할, 그룹) → 종류 → 축 → 그룹.')
         csv_chip.clicked.connect(lambda: QTimer.singleShot(0, lambda: self.start_wizard_csv()))
         cr.addWidget(csv_chip)
         self.zoom_label = QLabel('100 %')
@@ -729,7 +729,7 @@ class GraphWindow(QMainWindow):
             p.setExpanded(True)
         if orig is not None:
             orig.setExpanded(False)
-        csv = QTreeWidgetItem(['CSV 불러오기…'])
+        csv = QTreeWidgetItem(['파일 불러오기… (CSV · Excel)'])
         csv.setData(0, Qt.ItemDataRole.UserRole, '@csv')
         self.data_list.addTopLevelItem(csv)
 
@@ -815,17 +815,29 @@ class GraphWindow(QMainWindow):
         return self._wizard(title, data, key, fn, run)
 
     def start_wizard_csv(self, path=None, run=True):
-        t = self.read_csv(path)
-        if t is None:
-            return None
-        data = G.GraphData(t.name, [t], G.GraphSpec(), G.safe_name(t.name))
-        return self._wizard(t.name, data, None, None, run, extra=[t])
+        """파일 불러오기 (CSV · Excel, v0.73): the 새 그래프 window starts with
+        표 가져오기 (how to read, column roles, groups)."""
+        from . import table_import as T
 
-    def _wizard(self, title, data, key, fn, run, extra=()):
+        if path is None:
+            path, _ = QFileDialog.getOpenFileName(self, '파일 불러오기', self._default(''), T.FILTER)
+            if not path:
+                return None
+        try:
+            if not T.read_grid(path, (T.sheets(path) or [''])[0]):
+                QMessageBox.information(self, '파일 불러오기', '빈 파일입니다.')
+                return None
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, '파일 불러오기', str(exc))
+            return None
+        return self._wizard(Path(path).stem, None, None, None, run, import_path=path)
+
+    def _wizard(self, title, data, key, fn, run, extra=(), import_path=None):
         from .graph_editors import GraphWizard
 
-        wz = GraphWizard(title, data, self)
-        wz.finish = lambda: self.add_from_wizard(wz, title, data, key, fn, extra)
+        wz = GraphWizard(title, data, self, import_path=import_path)
+        wz.finish = lambda: self.add_from_wizard(wz, wz.data.title if import_path else title, wz.data, key, fn,
+                                                 list(wz.data.tables) if import_path else extra)
         if not run:
             return wz
         if wz.exec() == QDialog.DialogCode.Accepted:
@@ -2307,8 +2319,16 @@ class GraphWindow(QMainWindow):
         import csv
 
         if path is None:
-            path, _ = QFileDialog.getOpenFileName(self, 'CSV 불러오기', self._default(''), 'CSV (*.csv *.txt)')
+            from . import table_import as T
+            path, _ = QFileDialog.getOpenFileName(self, 'CSV 불러오기', self._default(''), T.FILTER)
             if not path:
+                return None
+        if Path(path).suffix.lower() in ('.xlsx', '.xlsm', '.xls'):
+            from . import table_import as T
+            try:
+                return T.read_table(path)
+            except Exception as exc:  # noqa: BLE001
+                QMessageBox.warning(self, 'CSV 불러오기', str(exc))
                 return None
         try:
             with open(path, newline='', encoding='utf-8-sig') as f:

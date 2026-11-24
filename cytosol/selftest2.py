@@ -129,6 +129,63 @@ def stacking_step(out: Path):
     return '2 RGB sets stacked, dialog order, same pattern, T stack, pad, project'
 
 
+def graph_import_step(out: Path):
+    """파일 불러오기 (CSV · Excel, v0.73): 표 가져오기 finds the header under
+    notes, roles, groups from the sample names (자동, renamed), a wide table's
+    column names as groups, then the graph."""
+    import openpyxl
+
+    from . import table_import as T
+
+    app, win = _window()
+    d = out / 'graph_import'
+    d.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(5)
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'data'
+    ws.append(["exported by a microscope"])
+    ws.append([])
+    ws.append(['sample', 'area', 'mean'])
+    for g in ('Split mNG, BafA1', 'Split mNG, DMSO'):
+        for k in range(1, 6):
+            ws.append([f'{g}_000{k}.oir - C=1', float(k), float(rng.normal(5, 1))])
+    ws2 = wb.create_sheet('wide')
+    ws2.append(['Ctrl', 'KO'])
+    for k in range(6):
+        ws2.append([float(rng.normal(1, 0.1)), float(rng.normal(2, 0.1))])
+    xp = d / 'names.xlsx'
+    wb.save(xp)
+    if T.sheets(xp) != ['data', 'wide']:
+        raise AssertionError(f'sheets {T.sheets(xp)}')
+    gw = win.graph_window()
+    wz = gw.start_wizard_csv(str(xp), run=False)
+    if wz.bar.steps[0] != '표 가져오기' or wz.imp.head.value() != 3 or wz.gcard.mode() != 'auto':
+        raise AssertionError(f'import page {wz.bar.steps} header {wz.imp.head.value()} {wz.gcard.mode()}')
+    t = wz.gcard.result()
+    if t.columns != ['sample', 'group', 'area', 'mean'] or sorted(set(t.values('group'))) != ['BafA1', 'DMSO']:
+        raise AssertionError(f'auto groups {t.columns} {set(t.values("group"))}')
+    wz.gcard.list.item(0, 0).setText('Baf')
+    if sorted(set(wz.gcard.result().values('group'))) != ['Baf', 'DMSO']:
+        raise AssertionError('group rename')
+    wz.go(1)
+    if wz.spec.mapping.x != 'group' or not wz.spec.mapping.x_cat:
+        raise AssertionError(f'mapping after import {wz.spec.mapping}')
+    doc = wz.finish()
+    if doc is None or len(doc.data.tables[0].rows) != 10:
+        raise AssertionError('graph from the imported table')
+    # the wide sheet: column names are the groups
+    wz = gw.start_wizard_csv(str(xp), run=False)
+    wz.imp.sheet.setCurrentText('wide')
+    wz.gcard.set_mode('wide')
+    t = wz.gcard.result()
+    if len(t.rows) != 12 or sorted(set(t.values('그룹'))) != ['Ctrl', 'KO']:
+        raise AssertionError(f'wide table {t.columns} {len(t.rows)}')
+    wz.reject()
+    app.processEvents()
+    return f'header row 3, groups BafA1 / DMSO → Baf, wide sheet 12 rows, {len(gw.docs)} graphs'
+
+
 def _cells_csv(path: Path, seed=0) -> Path:
     import csv
 
@@ -312,7 +369,7 @@ def data_display_step(out: Path):
     names = [gw.data_list.topLevelItem(k).text(0) for k in range(gw.data_list.topLevelItemCount())]
     orig = gw.data_list.topLevelItem(names.index('기능별 표 (원본)')) if '기능별 표 (원본)' in names else None
     subs = [orig.child(k).text(0) for k in range(orig.childCount())] if orig else []
-    if names[0] != '통합 데이터' or '세포질 ROI' not in subs or names[-1] != 'CSV 불러오기…':
+    if names[0] != '통합 데이터' or '세포질 ROI' not in subs or names[-1] != '파일 불러오기… (CSV · Excel)':
         raise AssertionError(f'graph window data list {names} {subs}')
     wz = gw.start_data('세포질 ROI · 세포', run=False)
     if box.stale_items() or len([r for r in box.batch_rows if r['image_id'] == second.image_id]) * 3 != \
@@ -1110,6 +1167,7 @@ def language_step(out: Path):
 STEPS = [
     ('image stacking', stacking_step),
     ('graph correlation', graph_corr_step),
+    ('graph table import', graph_import_step),
     ('data display', data_display_step),
     ('particle criterion + HT cells', particle_criterion_step),
     ('particle tracking', tracking_step),

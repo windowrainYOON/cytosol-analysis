@@ -343,6 +343,10 @@ class GroupCard(QWidget):
         self.parts.valueChanged.connect(lambda _v: self.refresh())
         self.short.toggled.connect(lambda _v: self.refresh())
         page.changed.connect(self.refresh)
+        if 'group' in page.roles.values():
+            self.col.setChecked(True)
+        elif page.name_column() is None:
+            self.none.setChecked(True)
         self._mode_changed()
 
     def buttons(self):

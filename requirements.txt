@@ -14,3 +14,6 @@ scikit-image  # cell ROI segmentation
 roifile     # ImageJ .roi / RoiSet.zip
 imageio-ffmpeg  # MP4 export (bundled ffmpeg binary)
 pyobjc-framework-Cocoa; sys_platform == "darwin"  # Liquid Glass sidebar material (NSVisualEffectView)
+openpyxl    # graph window: Excel .xlsx / .xlsm import
+xlrd        # graph window: old Excel .xls import
+PyOpenGL    # 3D 투영 view on the GPU (QOpenGLWidget ray marching; CPU fallback without it)

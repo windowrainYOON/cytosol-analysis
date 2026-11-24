@@ -266,6 +266,7 @@ def read_table(path, opts: ImportOptions | None = None) -> G.Table:
 # ---------------------------------------------------------------------------
 
 ROLES = ('name', 'group', 'cat', 'value', 'off')
+GROUP_NAMES = ('group', 'groups', '그룹', 'condition', 'conditions', '조건', 'treatment', '처리')
 ROLE_TEXT = {'name': '이름', 'group': '그룹', 'cat': '범주', 'value': '값', 'off': '빼기'}
 
 _CHANNEL = re.compile(r'\s*[-_ ]\s*(C|Ch|ch|channel)\s*=?\s*\d+\s*$')
@@ -287,6 +288,9 @@ def guess_roles(t: G.Table) -> dict:
         if t.is_numeric(c):
             roles[c] = 'value'
             continue
+        if str(c).strip().lower() in GROUP_NAMES and 'group' not in roles.values():
+            roles[c] = 'group'
+            continue
         vals = [str(v) for v in t.values(c) if str(v).strip()]
         k = len(set(vals))
         if name is None and k > max(2, len(vals) // 10):
@@ -294,7 +298,7 @@ def guess_roles(t: G.Table) -> dict:
         else:
             roles[c] = 'cat'
     if name is None:
-        texts = [c for c in t.columns if roles[c] != 'value']
+        texts = [c for c in t.columns if roles[c] not in ('value', 'group')]
         if texts:
             roles[texts[0]] = 'name'
     return roles
@@ -343,7 +347,7 @@ def apply_roles(t: G.Table, roles: dict, groups: dict | None = None) -> G.Table:
     gcol = next((c for c in t.columns if roles.get(c) == 'group'), None)
     vals = [c for c in t.columns if roles.get(c, 'value') == 'value']
     extra = [c for c in t.columns if roles.get(c) == 'cat']
-    cols = ([name] if name else []) + ['group'] + extra + vals
+    cols = ([name] if name and name != 'group' else ([] if not name else ['name'])) + ['group'] + extra + vals
     rows = []
     for r in t.rows:
         nm = r[t.index(name)] if name else ''
