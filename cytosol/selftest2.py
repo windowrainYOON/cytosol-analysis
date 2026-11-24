@@ -1428,7 +1428,7 @@ def pipeline_step(out: Path):
         if not (dest / f).exists():
             raise AssertionError(f'missing {f}')
     summ = json.loads((dest / 'summary.json').read_text(encoding='utf-8'))
-    if summ['images'] != 3 or summ['tables']['세기'] < 3:
+    if summ['images'] != 3 or summ['status'] != 'done' or summ['tables']['세기'] < 3:
         raise AssertionError(summ)
     objs = summ['objects']['pipe_00']
     for name in ('큰 세포', '세포질 (입자 뺀)', '배경 고리', '띠'):

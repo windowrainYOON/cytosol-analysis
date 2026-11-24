@@ -1057,6 +1057,11 @@ class Runner:
                 return 'review'
         st.status = 'done'
         self._log(event='done', errors=st.errors)
+        if st.out and (Path(st.out) / 'summary.json').exists():
+            try:  # the export stage wrote it while still 'running'
+                self.write_meta()
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
         return 'done'
 
     def resume(self) -> str:
