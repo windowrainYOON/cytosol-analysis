@@ -18,7 +18,7 @@ appears on screen, followed by its meaning in parentheses, e.g.
 - **Right panel**: at first only **LUT**, **마커** (Markers) and **이미지 정보**
   (Image info), switched with capsule buttons; the other tabs are opened with
   the **View** menu (or **… 탭 열기**, Open … tab, in each feature's menu).
-- **View icons at the canvas' top right**: **line profile**, **sections**, **3D projection**
+- **View icons at the canvas' top right**: **line profile**, **ruler**, **sections**, **3D projection**
   ([3D and sections](06-stack.md), [Line profile](07-line-profile.md)).
 - **Menu bar**: **파일** (File: projects, loading with automatic detection, **내보내기…**
   (Export), **파이프라인…** (Pipeline), work log, settings), **Tool** (**검출** › 세포질 ROI · 입자 ROI ·

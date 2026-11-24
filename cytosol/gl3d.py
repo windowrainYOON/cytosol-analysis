@@ -1,6 +1,6 @@
 """3D 투영 view on the canvas (v0.73): GPU ray marching with a CPU fallback.
 
-``make_volume_view`` returns a ``GLVolumeView`` (QOpenGLWidget + a 3D
+``make_volume_view`` returns a ``GLVolumeView`` (offscreen GL context + FBO read back into a plain widget, a 3D
 texture ray-marching shader: MIP / emission-absorption / surface) when an
 OpenGL 3.3+ context can be made, else a ``CPUVolumeView`` that paints
 ``vol3d.render_cpu`` images (reduced while dragging, exact once released).
@@ -345,17 +345,27 @@ class CPUVolumeView(_Interaction, QWidget):
 
 def _gl_view_class():
     from OpenGL import GL
-    from PySide6.QtOpenGLWidgets import QOpenGLWidget
+    from PySide6.QtGui import QOffscreenSurface, QOpenGLContext
+    from PySide6.QtOpenGL import QOpenGLFramebufferObject, QOpenGLFramebufferObjectFormat
 
-    class GLVolumeView(_Interaction, QOpenGLWidget):
-        """GPU ray marching of the prepared volume (one upload per timepoint)."""
+    class GLVolumeView(_Interaction, QWidget):
+        """GPU ray marching of the prepared volume (one upload per timepoint).
+
+        v0.74 (owner report 2026-11-24: the 3D view showed a shrunken, mirrored
+        copy of the whole window): it no longer is a QOpenGLWidget. On macOS the
+        window's compositor context could not share with the widget's 4.1 core
+        context ("Could not create NSOpenGLContext with shared context"), so the
+        compositor drew whatever texture had the widget's texture name: the
+        window's own backing store. Now the view renders in its own offscreen
+        context into a framebuffer object, reads the pixels back and paints them
+        as an image in a plain widget: no context sharing, no GL composition of
+        the window (Liquid Glass and the other widgets stay as they are)."""
         turned = Signal()
         failed = Signal(str)
         backend = 'gl'
 
         def __init__(self, parent=None):
-            QOpenGLWidget.__init__(self, parent)
-            self.setFormat(_format())
+            QWidget.__init__(self, parent)
             self._init_interaction()
             self.vol = None
             self.colors, self.visible = [], []
@@ -366,6 +376,31 @@ def _gl_view_class():
             self._pending = None
             self._fast = False
             self.error = None
+            self.image: QImage | None = None
+            self.last_ms = 0.0
+            self._fbo = None
+            self.ctx = QOpenGLContext()
+            self.ctx.setFormat(_format())
+            if not self.ctx.create():
+                raise RuntimeError('OpenGL context')
+            self.surf = QOffscreenSurface()
+            self.surf.setFormat(self.ctx.format())
+            self.surf.create()
+            if not self.ctx.makeCurrent(self.surf):
+                raise RuntimeError('OpenGL makeCurrent')
+            try:
+                self.prog = self._program()
+                self.vao = GL.glGenVertexArrays(1)
+            finally:
+                self.ctx.doneCurrent()
+            self._timer = QTimer(self)
+            self._timer.setSingleShot(True)
+            self._timer.setInterval(0)
+            self._timer.timeout.connect(self._render_now_cb)
+            self._idle = QTimer(self)
+            self._idle.setSingleShot(True)
+            self._idle.setInterval(150)
+            self._idle.timeout.connect(lambda: self._redraw(fast=False))
 
         # --- data ------------------------------------------------------------
 
@@ -374,26 +409,29 @@ def _gl_view_class():
             self.vol, self.colors, self.visible = vol, list(colors), list(visible)
             if not same:
                 self._pending = vol
-            self.update()
+            self._redraw(fast=False)
 
         def set_method(self, method, level=0.35):
             self.method, self.level = method, level
-            self.update()
+            self._redraw(fast=False)
 
         def _redraw(self, fast=False):
             self._fast = fast
+            if self.vol is None:
+                self.image = None
+                self.update()
+                return
+            self._timer.start()  # coalesce several moves into one frame
+            if fast:
+                self._idle.start()
+
+        def _render_now_cb(self):
+            img = self._render(self._fast)
+            if img is not None:
+                self.image = img
             self.update()
 
         # --- GL --------------------------------------------------------------
-
-        def initializeGL(self):
-            try:
-                self.prog = self._program()
-                self.vao = GL.glGenVertexArrays(1)
-            except Exception as exc:  # noqa: BLE001
-                self.error = str(exc)
-                traceback.print_exc()
-                QTimer.singleShot(0, lambda: self.failed.emit(self.error))
 
         def _program(self):
             def sh(kind, src):
@@ -432,30 +470,59 @@ def _gl_view_class():
                                 GL.GL_UNSIGNED_BYTE, np.ascontiguousarray(pack))
                 self.tex.append(tid)
 
-        def paintGL(self):
-            bg = _bg_rgb(self)
-            GL.glClearColor(bg[0], bg[1], bg[2], 1.0)
-            GL.glClear(GL.GL_COLOR_BUFFER_BIT)
+        def _size(self, fast):
+            dpr = self.devicePixelRatioF() or 1.0
+            w, h = max(8, self.width()), max(8, self.height())
+            f = dpr
+            if fast:  # while turning: a lighter frame, the exact one follows
+                f = min(dpr, max(0.35, 700 / max(w, h)))
+            return max(8, int(w * f)), max(8, int(h * f)), f
+
+        def _render(self, fast) -> QImage | None:
             if self.prog is None or self.vol is None:
-                return
+                return None
+            import time
+
+            t0 = time.perf_counter()
+            w, h, scale = self._size(fast)
+            if not self.ctx.makeCurrent(self.surf):
+                self._fail('OpenGL makeCurrent')
+                return None
             try:
+                if self._fbo is None or self._fbo.width() != w or self._fbo.height() != h:
+                    fmt = QOpenGLFramebufferObjectFormat()
+                    fmt.setAttachment(QOpenGLFramebufferObject.Attachment.NoAttachment)
+                    self._fbo = QOpenGLFramebufferObject(w, h, fmt)
                 if self._pending is not None:
                     self._upload(self._pending)
                     self._pending = None
-                self._draw(bg)
+                self._fbo.bind()
+                bg = _bg_rgb(self)
+                GL.glViewport(0, 0, w, h)
+                GL.glClearColor(bg[0], bg[1], bg[2], 1.0)
+                GL.glClear(GL.GL_COLOR_BUFFER_BIT)
+                self._draw(bg, w, h, scale)
+                GL.glFinish()
+                img = self._fbo.toImage().convertToFormat(QImage.Format.Format_RGB888)
+                self._fbo.release()
             except Exception as exc:  # noqa: BLE001
-                self.error = str(exc)
                 traceback.print_exc()
-                self.prog = None
-                QTimer.singleShot(0, lambda: self.failed.emit(self.error))
+                self.ctx.doneCurrent()
+                self._fail(str(exc))
+                return None
+            self.ctx.doneCurrent()
+            self.last_ms = (time.perf_counter() - t0) * 1000
+            return img
 
-        def _draw(self, bg):
+        def _fail(self, msg):
+            self.error = msg
+            self.prog = None
+            QTimer.singleShot(0, lambda: self.failed.emit(self.error))
+
+        def _draw(self, bg, w, h, scale):
             c, nz, ny, nx = self.vol.shape
             p = self.prog
             GL.glUseProgram(p)
-            dpr = self.devicePixelRatioF()
-            w, h = self.width() * dpr, self.height() * dpr
-            GL.glViewport(0, 0, int(w), int(h))
             u = lambda n: GL.glGetUniformLocation(p, n)  # noqa: E731
             GL.glUniform2f(u('viewport'), w, h)
             GL.glUniform1i(u('nch'), min(c, 8))
@@ -468,7 +535,7 @@ def _gl_view_class():
             GL.glUniformMatrix3fv(u('Rt'), 1, GL.GL_TRUE, np.ascontiguousarray(Rt))
             GL.glUniform3f(u('ext'), nx, ny, nz)
             GL.glUniform1f(u('zoom'), self.ball.zoom)
-            GL.glUniform2f(u('pan'), self.ball.pan[0] * dpr, self.ball.pan[1] * dpr)
+            GL.glUniform2f(u('pan'), self.ball.pan[0] * scale, self.ball.pan[1] * scale)
             GL.glUniform1i(u('method'), METHOD_INDEX.get(self.method, 0))
             GL.glUniform1f(u('level'), self.level)
             GL.glUniform1f(u('stepv'), 1.0 if self._fast else 0.5)
@@ -481,17 +548,54 @@ def _gl_view_class():
             GL.glBindVertexArray(self.vao)
             GL.glDrawArrays(GL.GL_TRIANGLES, 0, 3)
             GL.glBindVertexArray(0)
+            GL.glActiveTexture(GL.GL_TEXTURE0)
+            GL.glUseProgram(0)
 
         def render_now(self) -> np.ndarray | None:
             """Exact RGB of the current view, read back from the GPU."""
             if self.vol is None:
                 return None
             self._fast = False
-            img = self.grabFramebuffer().convertToFormat(QImage.Format.Format_RGB888)
+            img = self._render(False)
+            if img is None:
+                return None
+            self.image = img
             w, h = img.width(), img.height()
             arr = np.frombuffer(img.constBits(), np.uint8, img.bytesPerLine() * h)
             arr = arr.reshape(h, img.bytesPerLine())[:, :3 * w].reshape(h, w, 3)
             return arr.astype(np.float32) / 255
+
+        def paintEvent(self, _ev):
+            p = QPainter(self)
+            p.fillRect(self.rect(), QColor.fromRgbF(*_bg_rgb(self)))
+            if self.image is not None:
+                p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+                p.drawImage(self.rect(), self.image)
+            p.end()
+
+        def resizeEvent(self, ev):
+            super().resizeEvent(ev)
+            if self.vol is not None:
+                self._redraw(fast=False)
+
+        def _drag_end(self):
+            self._idle.stop()
+            self._redraw(fast=False)
+
+        def closeEvent(self, ev):
+            self._release_gl()
+            super().closeEvent(ev)
+
+        def _release_gl(self):
+            try:
+                if self.ctx.makeCurrent(self.surf):
+                    if self.tex:
+                        GL.glDeleteTextures(self.tex)
+                    self.tex = []
+                    self._fbo = None
+                    self.ctx.doneCurrent()
+            except Exception:  # noqa: BLE001
+                pass
 
     return GLVolumeView
 

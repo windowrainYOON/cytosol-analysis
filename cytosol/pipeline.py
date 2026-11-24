@@ -1423,6 +1423,17 @@ def chip_summary(spec: PipelineSpec) -> dict:
     return out
 
 
+def stage_flow(spec: PipelineSpec) -> list:
+    """[(group title, stage title, group key, enabled)] in run order, for the
+    library's top-to-bottom chip flow (v0.74); 검토 stays under the group before it."""
+    out = []
+    for st in spec.stages:
+        g = STAGES[st['kind']]['group']
+        title = stage_title(st) if st['kind'] != 'op' else (st['settings'].get('out') or '연산')
+        out.append((dict(GROUPS)[g], title, g, st.get('enabled', True)))
+    return out
+
+
 def set_path(d: dict, path: str, value):
     """edit helper: stages[3].settings.k=8 style paths."""
     parts = re.findall(r'[^.\[\]]+|\[\d+\]', path)

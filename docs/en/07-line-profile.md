@@ -8,6 +8,19 @@ row under the plot holds **Line width**, **leave out channels hidden in the LUT*
 **Clear Line** and **Export…** (the **Line Profile** kind of 파일 › 내보내기). Line ROIs are read with
 **파일 › 불러오기**. Button names further down are those of the tab up to v0.72; values and files are the same.
 
+The plot's legend (channel names and line colours) is drawn outside the plot, on its left (v0.74): instead
+of the number tiles (line length · per-channel maximum) the plot's white background goes on to the left and
+holds the legend; the plot itself keeps its size and ratio. Saved plot figures (PNG · PDF …) keep the legend
+inside as before.
+
+## Ruler (v0.74)
+
+Turn on the **Ruler** icon at the canvas' top right (next to Line profile) and drag a line on the image to
+measure it. The line has a tick every 1 µm (longer ones every 5 µm and 10 µm) and its length beside the end
+(e.g. `10.3 µm`). `Shift` = horizontal, vertical or 45°. A new line replaces the old one; turning the icon
+off removes the line and its ticks (a temporary line, never saved). Zoomed far out, when 1 µm ticks would be
+too dense, only the 5 µm / 10 µm ticks are drawn.
+
 Plots each channel's raw intensity along a line, like ImageJ's RGB Profiler
 (Plot Profile per channel), in the channel colors, against distance in µm.
 

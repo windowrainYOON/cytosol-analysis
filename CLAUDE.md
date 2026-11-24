@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.73.1)
+## Window structure (v0.74.0)
 
 - **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
   v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
@@ -238,8 +238,10 @@ owner writes in Korean, so reply in Korean.
   세포질 강도 추적) / 측정 (등거리 띠, Coloc 2, FRAP 측정, 미토 형태 (MiNA)). No 강도 측정 tab
   (`MainWindow.HIDDEN_TABS = ('intensity_tab',)`, `export_dialog.HIDDEN_KINDS`; the panel stays
   for old projects and the pipeline), no 스택 / 라인 프로파일 tabs: canvas view icons
-  `view_btns` [라인 프로파일 · 단면 · 3D 투영] (`canvas_views.SectionView` / `View3DPane`,
-  `gl3d` OpenGL volume view with CPU fallback, `vol3d.VolumeCache` pre-render of every
+  `view_btns` [라인 프로파일 · 자 · 단면 · 3D 투영] (`canvas_views.SectionView` with a MIP check box
+  for the XY panel and a scale bar per panel / `View3DPane`, `ruler.RulerItem` = 자, temporary, cleared when
+  off; `gl3d` OpenGL volume view rendered offscreen into an FBO and painted as an image (never a
+  QOpenGLWidget: on macOS it showed the window's backing store) with CPU fallback, `vol3d.VolumeCache` pre-render of every
   timepoint; Preferences › 3D 스택 보기 / 단면 보기), the profile plot + `profile_strip` in the
   live box. LUT presets / marker settings: 파일 › 불러오기 and export kind `settings`.
 - **세포질 강도 추적 tab** (`cyto_track_tab`, `cell_track.py`, `cell_track_panel.py`): cells per
@@ -422,6 +424,7 @@ per-widget style sheets.
 | `mina_panel.py` | 미토 형태 (MiNA) tab on mitoROI fragments |
 | `canvas_views.py`, `gl3d.py`, `vol3d.py` | Canvas view icons: section view, GPU 3D projection (OpenGL, CPU fallback), volume pre-render cache |
 | `table_import.py`, `table_import_page.py` | Graph window 파일 불러오기: CSV / Excel tables, column roles, groups |
+| `ruler.py` | 자 on the canvas: `RulerItem` (screen-pixel ticks every 1 µm, length label), `ticks`, `label` |
 | `app.py` | `MainWindow`, `Canvas`, menus, loading (`import_paths`, `add_files`, `_attach_file`), projects |
 
 ## Project files (`.cyproj`)
@@ -574,5 +577,6 @@ not affected.
 | dev branch | 0.72.0 | Owner request (2026-11-19, after the 261118 pHrodo / Cy5-PRD batch; mockup v2 approved): 입자 추적 **5 신호 기준 (긴 트랙)** card: split long tracks by a channel's signal (ROI max / mean ≥ that channel's LUT Min in ≥ n frames) instead of inside / outside; histogram + Min / Max sliders that are the LUT tab's values (both ways, `lut_changed`), Auto / Min/Max / 전체 이미지에 적용, canvas rings preview, chips / summary / tables follow; export 입자 추적 › 신호 기준 (`track_signal`, `track_signal_all`); `from_pt` keeps `I_B_max` as `I_<measure>_max`; `scripts/batch_folder.py` (+ `run_batch_bg.sh`, `track_green*.py`, `track_integrate.py`) for headless batch runs. Docs 21 |
 | dev branch | 0.72.1 | Crash fix (owner report 2026-11-20: the app quit while making a graph from 그래프 편집 창 › 데이터 › CSV 불러오기…; macOS report: segmentation fault in the backing-store flush under the 새 그래프 window opened from the data list's click): the graph window's tool chips no longer get a `QGraphicsOpacityEffect` (replacing it on every `refresh_chips` segfaulted, also in the self-test on macOS; disabled chips use the style sheet's `:disabled` look), the data list / chips open the file chooser and the 새 그래프 window after the click handler returns (`QTimer.singleShot(0)`; finishing the wizard rebuilds that list and deleted the clicked item under `QTreeView::mouseReleaseEvent`) |
 | dev branch | 0.73.0 | Owner approval (2026-11-24 10:54, "지금까지 수정 사항 전부 반영해서 개발 시작해", pipeline design v3.x + mockups pipe-1…22): **파이프라인** (stages 시작 / 검출 / 추적 / 연산 / 측정 / 사람 / 끝, named objects, operations with conditions, object × channel measurement, review stops with a band + list chips, result folder under `Processed/`, presets, library, `cytosol-pipe` CLI) replacing 일괄 분석 and the 강도 측정 tab; Tool › 검출 / 추적 / 측정; canvas icons 라인 프로파일 · 단면 · 3D 투영 (GPU, pre-rendered time series, 3-axis rotation) replacing the 스택 / 라인 프로파일 tabs; mitoROI detection + 미토 형태 (MiNA) tab; 세포질 강도 추적 tab; 입자 추적 › 6 신호 변화 트랙; background export with cancel; graph CSV / Excel import; docs 24 / 25 |
+| dev branch | 0.74.0 | Owner request (2026-11-24, "반영해서 바로 개발해줘"): 3D view fixed (macOS drew a mirrored copy of the window: the GL view now renders into an offscreen FBO and paints the image, fast lower-resolution frames while dragging); 단면 보기 MIP check box (XY = Z max, sections unchanged) and a scale bar per panel; 자 canvas icon (1 µm ticks, `N µm` label, gone when off); line profile legend beside the plot in the live box (`PlotLegend`, number tiles hidden, plot size unchanged); 파일 › 새 파이프라인 (empty; the window also starts empty), library cards as top-to-bottom chip flows (`stage_flow_widget`); View menu grouped 검출 / 추적 / 측정 (`MainWindow.TAB_GROUPS`, `view_groups`) |
 | dev branch | 0.73.1 | Pipeline fix: the result folder's `summary.json` / `README.txt` are written again after the last stage, so `status` reads `done` (it stayed `running` because the export stage wrote them first) |
 | #50 (main) | 0.53.0 (main) | 핵 다시 찾기: nuclei re-detected inside the (edited) cell ROIs, cells untouched, one nucleus per cell, each cell its own threshold (자동 = own LUT stretch + Otsu over the cell and a 2 µm ring, or a manual value per cell, live), noise in nucleus-free cells dropped (`cellroi.cell_nucleus`, `CellRois.redetect_nucleus`, `nuc_thr` saved in projects); PRD 24h ref-cell nucleus IoU 0.969 |

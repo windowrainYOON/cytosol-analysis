@@ -274,6 +274,11 @@ class Canvas(QGraphicsView):
         self._line_origin = None
         self._line_items = []
         self._line = None  # (x0, y0, x1, y1, width) in scene coordinates
+        # 자 (ruler, v0.74): a temporary line with 1 µm ticks, cleared when off
+        self.ruler_mode = False
+        self.ruler_pixel_um = None  # callable -> µm per pixel of the image shown
+        self._ruler = None  # ruler.RulerItem
+        self._ruler_origin = None
         # crop regions shown (dragging one moves it)
         self._crops = []
         self._crop_sel = None
@@ -738,6 +743,30 @@ class Canvas(QGraphicsView):
         self.line_mode = on
         self._apply_mode()
 
+    def set_ruler_mode(self, on: bool):
+        self.ruler_mode = bool(on)
+        if not on:
+            self.show_ruler(None)
+        self._apply_mode()
+
+    def ruler_line(self):
+        return None if self._ruler is None else self._ruler.line
+
+    def show_ruler(self, line):
+        """Draw (or with None remove) the ruler line, scene coordinates."""
+        from .ruler import RulerItem
+        if line is None:
+            if self._ruler is not None:
+                self.scene().removeItem(self._ruler)
+                self._ruler = None
+            return
+        if self._ruler is None:
+            self._ruler = RulerItem(line, lambda: self.ruler_pixel_um() if self.ruler_pixel_um else None,
+                                    self.pix.boundingRect())
+            self.scene().addItem(self._ruler)
+        else:
+            self._ruler.set_line(line)
+
     def _fixed_rect(self, pos):
         """crop_size box centred on pos, in whole pixels, kept inside the image."""
         size = self.pix.pixmap().size()
@@ -748,7 +777,7 @@ class Canvas(QGraphicsView):
         return QRectF(x, y, w, h)
 
     def _drawing(self):
-        return (self.zoom_mode or self.crop_mode or self.line_mode
+        return (self.zoom_mode or self.crop_mode or self.line_mode or self.ruler_mode
                 or self.roi_tool in LASSO_COLORS)
 
     def _crop_at(self, pos):
@@ -873,6 +902,10 @@ class Canvas(QGraphicsView):
             self.rect_item.setRect(self._fixed_rect(pos) if self.crop_size
                                    else QRectF(self._origin, self._origin))
             self.rect_item.show()
+            return
+        if self.ruler_mode and btn == Qt.MouseButton.LeftButton:
+            self._ruler_origin = (pos.x(), pos.y())
+            self.show_ruler(None)  # a new line replaces the old one
             return
         if self.line_mode and btn == Qt.MouseButton.LeftButton:
             self._line_origin = (pos.x(), pos.y())
@@ -1032,6 +1065,17 @@ class Canvas(QGraphicsView):
             else:
                 self.rect_item.setRect(QRectF(self._origin, p).normalized())
             return
+        if self.ruler_mode and self._ruler_origin is not None:
+            p = self.mapToScene(event.position().toPoint())
+            x0, y0 = self._ruler_origin
+            x1, y1 = p.x(), p.y()
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                dx, dy = x1 - x0, y1 - y0
+                ang = round(np.degrees(np.arctan2(dy, dx)) / 45) * 45
+                r = float(np.hypot(dx, dy))
+                x1, y1 = x0 + r * np.cos(np.radians(ang)), y0 + r * np.sin(np.radians(ang))
+            self.show_ruler((x0, y0, x1, y1))
+            return
         if self.line_mode and self._line_origin is not None:
             p = self.mapToScene(event.position().toPoint())
             x0, y0 = self._line_origin
@@ -1121,6 +1165,13 @@ class Canvas(QGraphicsView):
             r = self.rect_item.rect()
             self._origin = None
             self.cropDrawn.emit(r.left(), r.top(), r.right(), r.bottom())
+            return
+        if self.ruler_mode and self._ruler_origin is not None:
+            self._ruler_origin = None
+            line = self.ruler_line()
+            scale = self.transform().m11() or 1.0
+            if line is not None and np.hypot(line[2] - line[0], line[3] - line[1]) * scale < 3:
+                self.show_ruler(None)  # a click: no ruler
             return
         if self.line_mode and self._line_origin is not None:
             self._line_origin = None
@@ -1560,6 +1611,8 @@ class MainWindow(QMainWindow):
         self.view_btns = {
             'line': hig_widgets.IconButton('line.profile', '라인 프로파일\n선을 그리면 캔버스 아래에 채널별 강도',
                                            checkable=True),
+            'ruler': hig_widgets.IconButton('ruler', '자\n선을 그어 길이 재기 (1 µm 눈금, Shift: 0° / 45° / 90°)\n'
+                                            '끄면 선이 사라집니다.', checkable=True),
             'sect': hig_widgets.IconButton('section.xyz', '단면 보기\n클릭한 점의 X 단면(아래) · Y 단면(오른쪽)',
                                            checkable=True),
             '3d': hig_widgets.IconButton('cube', '3D 투영 보기\n드래그로 3축 회전 (설정은 Preferences › 3D 스택 보기)',
@@ -1827,6 +1880,8 @@ class MainWindow(QMainWindow):
             'cyto_track_tab': (scrolled(self.cell_track_panel), '세포질 강도 추적'),
         }
         self.canvas.lineDrawn.connect(self._line_drawn)
+        self.canvas.ruler_pixel_um = lambda: self.current.pixel_um if self.current is not None else None
+        self.crop_btn.toggled.connect(lambda on: on and self.view_btns['ruler'].setChecked(False))
         for mode, btn in self.view_btns.items():
             btn.toggled.connect(lambda on, m=mode: self.set_view_mode(m if on else ''))
         self.profile_panel.draw_btn.toggled.connect(self.line_btn.setChecked)
@@ -1903,6 +1958,21 @@ class MainWindow(QMainWindow):
 
     # ---- menus ------------------------------------------------------------
 
+    # View › 검출 / 추적 / 측정: the feature tabs in the Tool menu's groups
+    TAB_GROUPS = (('검출', ('roi_tab', 'particle_tab', 'mito_tab')),
+                  ('추적', ('track_tab', 'cyto_track_tab')),
+                  ('측정', ('bands_tab', 'coloc_tab', 'frap_tab', 'mina_tab')))
+
+    def _view_tab_action(self, menu, name) -> QAction:
+        title = self.tab_pages[name][1]
+        a = QAction(title, self, checkable=True)
+        a.setToolTip(f'‘{title}’ 탭을 오른쪽에 열거나 닫습니다.')
+        a.setChecked(self.tab_open(name))
+        a.toggled.connect(lambda on, n=name: self.show_tab(n) if on else self.hide_tab(n))
+        menu.addAction(a)
+        self.view_actions[name] = a
+        return a
+
     def _act(self, menu, text, fn, shortcut=None, tip=None) -> QAction:
         a = QAction(text, self)
         if shortcut is not None:
@@ -1960,6 +2030,7 @@ class MainWindow(QMainWindow):
             '모든 내보내기를 한 창에서: 이미지 TIFF / MP4, Crop 영역 이미지와 ROI, 세포 · 입자 ROI, 측정 CSV, '
             'Coloc 2, 라인 프로파일, FRAP, 스택 투영, 그래프, 이미지 정보, 일괄 분석 결과, 프로젝트 파일.')
         m.addSeparator()
+        act(m, '새 파이프라인', self.new_pipeline, tip='단계가 없는 빈 파이프라인을 파이프라인 창에서 만듭니다.')
         act(m, '파이프라인…', self.pipeline_window, 'Ctrl+Shift+P',
             '검출 → 추적 → 연산 → 측정 → 검토 → 그래프 · 저장 단계를 차례로 모든 이미지에 돌립니다 '
             '(일괄 분석이 이리로 합쳐졌습니다). 일괄 분석 설정(.json)도 열 수 있습니다.')
@@ -2036,18 +2107,23 @@ class MainWindow(QMainWindow):
             if acts and acts[-1].isSeparator():
                 sub.removeAction(acts[-1])
 
-        # View: open / close each feature tab (same state as Tool › … 탭 열기)
+        # View: open / close each feature tab (same state as Tool › … 탭 열기),
+        # in the Tool menu's groups 검출 / 추적 / 측정 (owner request 2026-11-24, v0.74)
         self.view_menu = view = mb.addMenu('View')
         self.view_actions = {}
-        for name, (_, title) in self.tab_pages.items():
-            if name in self.HIDDEN_TABS:
-                continue
-            a = QAction(title, self, checkable=True)
-            a.setToolTip(f'‘{title}’ 탭을 오른쪽에 열거나 닫습니다.')
-            a.setChecked(self.tab_open(name))
-            a.toggled.connect(lambda on, n=name: self.show_tab(n) if on else self.hide_tab(n))
-            view.addAction(a)
-            self.view_actions[name] = a
+        self.view_groups = {}
+        for gname, tabs in self.TAB_GROUPS:
+            sub = None
+            for name in tabs:
+                if name not in self.tab_pages or name in self.HIDDEN_TABS:
+                    continue
+                if sub is None:
+                    sub = self.view_groups[gname] = view.addMenu(gname)
+                self._view_tab_action(sub, name)
+        grouped = {n for _g, tabs in self.TAB_GROUPS for n in tabs}
+        for name in self.tab_pages:  # any tab without a group: at the top level
+            if name not in grouped and name not in self.HIDDEN_TABS:
+                self._view_tab_action(view, name)
         view.addSeparator()
         act(view, '모든 기능 탭 열기', lambda: [self.show_tab(n, focus=False) for n in self.tab_pages
                                               if n not in self.HIDDEN_TABS])
@@ -3899,11 +3975,13 @@ class MainWindow(QMainWindow):
         if mode == 'line':
             self.crop_btn.setChecked(False)
         self.canvas.set_line_mode(mode == 'line')
+        self.canvas.set_ruler_mode(mode == 'ruler')
         if old == '3d':
             self.view3d_pane.stop_all()
         if mode == 'sect' and self.current is not None and self.current.z == 'mip':
-            self.z_mip.setChecked(False)  # sections cut one Z plane
+            self.z_mip.setChecked(False)  # sections cut one Z plane ...
             self._z_changed()
+            self.section_pane.mip_check.setChecked(True)  # ... the XY panel keeps the MIP
         self.view_stack.setCurrentWidget({'sect': self.section_pane, '3d': self.view3d_pane}
                                          .get(mode, self.canvas))
         it = self.current
@@ -4535,6 +4613,13 @@ class MainWindow(QMainWindow):
             w = self._pipe_win = PipelineWindow(self, spec)
         w.show()
         w.raise_()
+        return w
+
+    def new_pipeline(self):
+        """파일 › 새 파이프라인 (owner request 2026-11-24, v0.74): an empty pipeline."""
+        from . import pipeline as P
+        w = self.pipeline_window()
+        w.set_spec(P.PipelineSpec())
         return w
 
     def pipeline_library(self):
