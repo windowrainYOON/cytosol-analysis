@@ -135,6 +135,12 @@ KINDS: dict = {
             ('mito_all', 'mito_per_cell.csv · mito_per_mito.csv · mito_green_puncta.csv', '', True),
         ]),
     ]),
+    'cyto_track': ('세포질 강도 추적', [
+        ('이미지마다', [
+            ('cyto_track_csv', '세포 × 시점 · 세포 CSV', '<이름>_cell_track_points.csv, <이름>_cell_track_cells.csv '
+             '(필터 · 나머지 · 제외 · 짧은 세포 열 포함)', True),
+        ]),
+    ]),
     'mina': ('미토 형태 (MiNA)', [
         ('이미지마다', [
             ('mina_csv', '세포 · 미토 조각 CSV', '<이름>_mina_per_cell.csv, <이름>_mina_per_mito.csv', True),

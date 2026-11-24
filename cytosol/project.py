@@ -459,6 +459,12 @@ def item_files(it, n: int, panel_particles, files: dict, tmpdir: Path) -> dict:
             names['tracks'] = pre + 'tracks.pkl'
         except Exception:
             pass
+    if getattr(it, 'cell_tracks', None) is not None:
+        try:
+            files[pre + 'cell_tracks.pkl'] = pickle.dumps(it.cell_tracks)
+            names['cell_tracks'] = pre + 'cell_tracks.pkl'
+        except Exception:  # noqa: BLE001
+            pass
     if getattr(it, 'mina', None) is not None:
         try:
             files[pre + 'mina.pkl'] = pickle.dumps(it.mina)
@@ -511,6 +517,11 @@ def restore_item_files(it, names: dict, files: dict, tmpdir: Path, notes: list):
             it.tracks = pickle.loads(files[names['tracks']])
         except Exception as exc:
             notes.append(f'{it.label}: 입자 추적 결과 복원 실패 ({exc})')
+    if names.get('cell_tracks') in files:
+        try:
+            it.cell_tracks = pickle.loads(files[names['cell_tracks']])
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f'{it.label}: 세포질 강도 추적 결과 복원 실패 ({exc})')
     if names.get('mina') in files:
         try:
             it.mina = pickle.loads(files[names['mina']])

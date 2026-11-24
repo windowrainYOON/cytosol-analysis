@@ -290,6 +290,22 @@ def mito(panel) -> G.GraphData | None:
     return G.GraphData('mitoROI', tables, spec, _stem(it, 'mito') if it else 'mito', _folder(it) if it else '')
 
 
+def panel_tables(panel, title, key) -> G.GraphData | None:
+    """A tab's data tables as they are (미토 형태 (MiNA), 세포질 강도 추적; v0.73)."""
+    tabs = [(name, rows) for name, _u, rows in panel.data_tables() if rows]
+    if not tabs:
+        return None
+    tables = [G.Table.from_dicts(name, rows) for name, rows in tabs]
+    spec = G.GraphSpec()
+    if key == 'cyto_track':
+        t = tables[0]
+        y = 'I_thr' if 'I_thr' in t.columns and any(np.isfinite(v) for v in t.numbers('I_thr')) else 'I'
+        spec.chart = 'xy'
+        spec.series = [G.Series(table=t.name, x='time_h', y=y, split='cls', agg='mean', label=y)]
+    it = panel.win.current
+    return G.GraphData(title, tables, spec, _stem(it, key) if it else key, _folder(it) if it else '')
+
+
 # ---- 통합 데이터 (v0.68) ----------------------------------------------------------------------------
 
 def integrated(win) -> G.GraphData | None:

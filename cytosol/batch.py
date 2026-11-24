@@ -60,6 +60,8 @@ STEPS = [
      '시간축이 있는 이미지마다 bleach / control / background ROI를 놓고 회복 곡선을 맞춥니다.'),
     ('track', '입자 추적', 'track_tab',
      '시간축이 있는 이미지마다 입자 추적 탭의 설정으로 입자를 찾고 프레임 사이를 잇습니다.'),
+    ('cyto_track', '세포질 강도 추적', 'cyto_track_tab',
+     '시간축이 있는 이미지마다 세포질 강도 추적 탭의 설정으로 세포를 프레임마다 찾고 이어 밝기를 잽니다.'),
     ('mito', 'mitoROI', 'mito_tab',
      '세포 ROI가 있는 이미지마다 mitoROI 탭의 설정으로 미토콘드리아와 관심 단백질을 측정합니다.'),
 ]
@@ -234,6 +236,22 @@ def run(win, state: BatchState, items, detect=True) -> list[str]:
                 errors.append(f'{it.label} 입자 추적: {exc}')
             _release(win, it)
         tp.refresh()
+    if 'cyto_track' in steps:
+        cp = win.cell_track_panel
+        for it in items:
+            if it.nt < 2:
+                res[it.label]['cyto_track'] = 'T 없음'
+                continue
+            if detect or getattr(it, 'cell_tracks', None) is None:
+                try:
+                    it.cell_tracks = cp.run(it)
+                except Exception as exc:
+                    traceback.print_exc()
+                    errors.append(f'{it.label} 세포질 강도 추적: {exc}')
+                    continue
+                _release(win, it)
+            res[it.label]['cyto_track'] = f'세포 {len(it.cell_tracks.cells())}'
+        cp.refresh()
     if 'mito' in steps:
         mp = win.mito_panel
         for it in items:
@@ -270,7 +288,7 @@ def columns(state) -> list[tuple[str, str]]:
     heads = {'cells': '세포 ROI', 'particles': '입자', 'roi_measure': '세포질 ROI 측정 (행)',
              'particle_measure': '입자 측정 (행)', 'intensity': '강도 측정 (행)',
              'bands': '등거리 띠 (행)', 'coloc': 'Coloc 2 (ROI)', 'frap': 'FRAP',
-             'track': '입자 추적', 'mito': 'mitoROI'}
+             'track': '입자 추적', 'cyto_track': '세포질 강도 추적', 'mito': 'mitoROI'}
     return [(k, heads[k]) for k, *_ in STEPS if k in state.steps]
 
 
@@ -418,6 +436,14 @@ def save_results(win, out, state=None) -> tuple[list[str], list[str]]:
                 except Exception as exc:
                     traceback.print_exc()
                     errors.append(f'{it.label} 입자 추적: {exc}')
+    if 'cyto_track' in steps:
+        for it in items:
+            if getattr(it, 'cell_tracks', None) is not None:
+                try:
+                    files += [str(f) for f in win.cell_track_panel.save_item(it, out / item_folder(it), item_stem(it))]
+                except Exception as exc:
+                    traceback.print_exc()
+                    errors.append(f'{it.label} 세포질 강도 추적: {exc}')
     if 'mito' in steps:
         for it in items:
             if getattr(it, 'mito', None) is not None:

@@ -923,6 +923,121 @@ def tracking_pt_step(out: Path):
     return f'PT detection {found}/{len(spots)}; TCF {len(whole)}/{n} spots whole over {T} frames, {st.seconds:.1f} s'
 
 
+def _cyto_cells_movie(T=30, size=(200, 260), seed=3):
+    """5 cells (cytosol, nucleus, measure channels) drifting slowly over T
+    frames of 20 min; cells 1 and 3 rise in the measure channel at 2–6 h and
+    lose it again by 8 h; cell 5 sits at the image edge."""
+    rng = np.random.default_rng(seed)
+    H, W = size
+    centres = [(50, 60), (50, 150), (140, 70), (140, 170), (100, 248)]
+    yy, xx = np.mgrid[0:H, 0:W]
+    frames = []
+    for t in range(T):
+        h = t / 3
+        cyto = rng.normal(10, 2, size)
+        nuc = rng.normal(10, 2, size)
+        mea = rng.normal(20, 1, size)
+        for i, (cy, cx) in enumerate(centres):
+            cy, cx = cy + 0.4 * t, cx + 0.3 * t * (1 if i % 2 else -1)
+            d = np.hypot(yy - cy, xx - cx)
+            cell = d < 26
+            cyto[cell] += 120
+            nuc[d < 10] += 150
+            bump = 60 * np.exp(-((h - 4.0) / 1.2) ** 2) if i in (0, 2) else 0.0
+            mea[cell] += 30 + bump
+        frames.append(np.stack([cyto, nuc, mea])[:, None].astype(np.float32))
+    return frames
+
+
+def CT_default_settings():
+    from .cell_track import CellTrackSettings
+    return CellTrackSettings().to_dict()
+
+
+def cell_track_step(out: Path):
+    """세포질 강도 추적 (v0.73): cells per frame with the 세포질 ROI algorithm
+    on a cell + nucleus channel, linked over 30 frames, the edge cell left
+    out, the default filter (rise 2–6 h, lost by 7–9.5 h) finds the two
+    responding cells, data tables, graph source, export, project round trip."""
+    from .exporter import run as export_run
+    from .io import Image
+    from .lut import ImageItem
+
+    frames = _cyto_cells_movie()
+    T = len(frames)
+    image = Image(frames[0].copy(), ['cyto', 'dapi', 'green'], {'Z': None, 'Y': 0.3, 'X': 0.3},
+                  colors=[(1, 1, 1), (0, 0, 1), (0, 1, 0)], metadata={'image_id': 'CELLTRACK'},
+                  times=[1200.0 * t for t in range(T)], loader=lambda t: frames[t].copy())
+    item = ImageItem(path=out / 'celltrack.tif', image=image, label='celltrack')
+    item.reset_luts()
+    item.roi_roles = {'bg': 0, 'nuc': 1}
+    app, win = _window()
+    win.show()
+    win._add_item(item)
+    win.file_list.setCurrentRow(0)
+    win.show_tab('cyto_track_tab')
+    cp = win.cell_track_panel
+    cp.algorithm.setCurrentIndex(cp.algorithm.findData('roi'))
+    cp.bind(item)
+    cp.cell_ch.setCurrentIndex(cp.cell_ch.findData('cyto'))
+    cp.nuc_ch.setCurrentIndex(cp.nuc_ch.findData('dapi'))
+    cp.meas_ch.setCurrentIndex(cp.meas_ch.findData('green'))
+    cp.min_frames.setValue(20)
+    cp.ex_div.setChecked(True)
+    cp.ex_edge.setChecked(True)
+    cp._filters[0]['conditions'][0].update(inc_mode='top', inc=50.0)
+    cp._build_filters()
+    if win.measure_bar.isHidden():
+        raise AssertionError('measure bar hidden on the 세포질 강도 추적 tab')
+    st = cp.run_current(item)
+    if st is None:
+        raise AssertionError('cell tracking failed')
+    cells = st.cells()
+    long_ = [c for c, rs in cells.items() if len(rs) >= 28]
+    if len(long_) != 5:
+        raise AssertionError(f'cells not followed: {[(c, len(r)) for c, r in cells.items()]}')
+    cls = {k[1]: v for k, v in cp.classes().items()}
+    picked = sorted(c for c, v in cls.items() if v == '필터 1')
+    edge = [c for c, v in cls.items() if v == 'excluded']
+    if len(picked) != 2 or len(edge) != 1:
+        raise AssertionError(f'classes {cls}')
+    xs = {round(np.mean([r['x'] for r in cells[c]])) for c in picked}
+    if not all(x < 200 for x in xs):
+        raise AssertionError(f'wrong cells picked {picked} {xs}')
+    r0 = next(r for r in st.rows if r['frame'] == 13 and r['cell_id'] == picked[0])
+    if not (r0['I'] > 40 and r0['bg'] < 25 and np.isfinite(r0['I_thr'])):
+        raise AssertionError(f'measurement {r0}')
+    names = [n for n, _u, rows in cp.data_tables() if rows]
+    if len(names) != 2 or not any(e['key'] == 'cyto_track' for e in win.data_entries()):
+        raise AssertionError(f'data tables {names}')
+    gw = win.graph_window()
+    wz = gw.start_wizard('cyto_track', run=False)
+    if wz is None or wz.spec.mapping.x != 'time_h':
+        raise AssertionError('graph of the cell tracks')
+    wz.reject()
+    app.processEvents()
+    cp.draw()
+    if not cp._scene:
+        raise AssertionError('outlines not drawn')
+    res = export_run(win, [item], out / 'cell_track_export', {'cyto_track_csv': True, 'per_image': False})
+    got = [Path(f).name for f in res.files]
+    if not any(n.endswith('_cell_track_cells.csv') for n in got):
+        raise AssertionError(f'export {got} {res.errors}')
+    # project: the state pickles (labels packed) and the settings dict round-trips
+    import pickle
+    st2 = pickle.loads(pickle.dumps(st))
+    if len(st2.cells()) != len(cells) or st2.labels_at(st.frames[3]) is None:
+        raise AssertionError('state pickle')
+    d = cp.settings().to_dict()
+    cp.set_settings(CT_default_settings())
+    cp.set_settings(d)
+    if cp.settings().filters[0]['conditions'][0]['inc'] != 50.0 or cp.settings().nuc_channel != 'dapi':
+        raise AssertionError('settings round trip')
+    _close(win)
+    app.processEvents()
+    return f'{len(cells)} cells, filter {len(picked)}, edge 1, {len(got)} files'
+
+
 def _mito_field(seed=7, n=320):
     """Mito (tubules), POI (on mito in cell 1, faint in cell 2), nuclei: three
     channels and the cell labels."""
@@ -1173,6 +1288,7 @@ STEPS = [
     ('particle tracking', tracking_step),
     ('particle tracking on a Z projection', tracking_z_step),
     ('particle tracking (ParticleTracker method)', tracking_pt_step),
+    ('cell intensity tracking', cell_track_step),
     ('mitoROI', mito_step),
     ('language', language_step),
 ]

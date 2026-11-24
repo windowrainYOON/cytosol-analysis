@@ -1771,6 +1771,9 @@ class MainWindow(QMainWindow):
         self.mito_panel = MitoPanel(self)
         from .mina_panel import MinaPanel
         self.mina_panel = MinaPanel(self)
+        # 세포질 강도 추적 (v0.73)
+        from .cell_track_panel import CellTrackPanel
+        self.cell_track_panel = CellTrackPanel(self)
         self.live_box.adopt_plots()  # FRAP curve, profile, Coloc 2 plots under the canvas (v0.64)
         # 라인 프로파일 icon (v0.73): the line settings and 내보내기… under the plot
         pp = self.profile_panel
@@ -1816,6 +1819,7 @@ class MainWindow(QMainWindow):
             'track_tab': (scrolled(self.track_panel), '입자 추적'),
             'mito_tab': (scrolled(self.mito_panel), 'mitoROI'),
             'mina_tab': (scrolled(self.mina_panel), '미토 형태 (MiNA)'),
+            'cyto_track_tab': (scrolled(self.cell_track_panel), '세포질 강도 추적'),
         }
         self.canvas.lineDrawn.connect(self._line_drawn)
         for mode, btn in self.view_btns.items():
@@ -1858,6 +1862,8 @@ class MainWindow(QMainWindow):
                                  self.mito_panel.bar_status),
             'mina_tab': Measurer(lambda: self.mina_panel.run_current(), self.mina_panel.run_all,
                                  self.mina_panel.bar_status),
+            'cyto_track_tab': Measurer(lambda: self.cell_track_panel.run_current(), self.cell_track_panel.run_all,
+                                       self.cell_track_panel.bar_status),
         }
         inspector.setMinimumWidth(RIGHT_MIN_W)
 
@@ -2093,6 +2099,11 @@ class MainWindow(QMainWindow):
                       '입자 추적 탭에서 시간축이 있는 이미지를 먼저 추적하세요.'),
             'mito': ('mitoROI', 'mito_tab', lambda: S.mito(self.mito_panel),
                      'mitoROI 탭에서 먼저 분석하세요.'),
+            'mina': ('미토 형태 (MiNA)', 'mina_tab', lambda: S.panel_tables(self.mina_panel, '미토 형태 (MiNA)', 'mina'),
+                     '미토 형태 (MiNA) 탭에서 먼저 측정하세요.'),
+            'cyto_track': ('세포질 강도 추적', 'cyto_track_tab',
+                           lambda: S.panel_tables(self.cell_track_panel, '세포질 강도 추적', 'cyto_track'),
+                           '세포질 강도 추적 탭에서 시간축이 있는 이미지를 먼저 추적하세요.'),
             'integrated': ('통합 데이터', None, lambda: S.integrated(self),
                            '측정한 결과가 없습니다. 측정 탭에서 먼저 측정하세요.'),
         }
@@ -2125,6 +2136,10 @@ class MainWindow(QMainWindow):
             if rows:
                 out.append({'feature': '미토 형태 (MiNA)', 'name': name, 'unit': unit, 'rows': len(rows),
                             'state': 'ok', 'key': 'mina', 'table': name})
+        for name, unit, rows in self.cell_track_panel.data_tables():
+            if rows:
+                out.append({'feature': '세포질 강도 추적', 'name': name, 'unit': unit, 'rows': len(rows),
+                            'state': 'ok', 'key': 'cyto_track', 'table': name})
         for name, unit, rows in self.track_panel.data_tables():
             if rows:
                 out.append({'feature': '입자 추적', 'name': name, 'unit': unit, 'rows': len(rows), 'state': 'ok',
@@ -2692,6 +2707,7 @@ class MainWindow(QMainWindow):
             data['log'] = self.worklog.entries
             data['batch'] = self.batch.to_dict()
             data['particle_criterion'] = dict(self.particle_panel.criteria)
+            data['cell_track'] = self.cell_track_panel.settings().to_dict()
             write_project(path, data, files)
 
     def new_project(self):
@@ -2753,6 +2769,8 @@ class MainWindow(QMainWindow):
         self.batch.steps, self.batch.groups, self.batch.redo = b.steps, b.groups, b.redo
         self.particle_panel.criteria = {k: dict(v) for k, v in (data.get('particle_criterion') or {}).items()
                                         if isinstance(v, dict) and 'k' in v}
+        if data.get('cell_track'):
+            self.cell_track_panel.set_settings(data['cell_track'])
         # graph editor settings: used when that graph window opens (open ones take them as style)
         graphs = data.get('graphs') or {}
         if isinstance(graphs, dict):
@@ -3524,6 +3542,7 @@ class MainWindow(QMainWindow):
             self.track_panel.bind(None)
             self.mito_panel.bind(None)
             self.mina_panel.bind(None)
+            self.cell_track_panel.bind(None)
             self.particle_panel.bind(None)
             self.intensity_panel.bind(None)
             self.info_panel.bind(None)
@@ -3579,6 +3598,7 @@ class MainWindow(QMainWindow):
         self.track_panel.bind(it)
         self.mito_panel.bind(it)
         self.mina_panel.bind(it)
+        self.cell_track_panel.bind(it)
         self.particle_panel.bind(it)
         self.intensity_panel.bind(it)
         self.info_panel.bind(it)
@@ -4195,6 +4215,7 @@ class MainWindow(QMainWindow):
         self.draw_frap()
         self.track_panel.draw()
         self.mito_panel.draw()
+        self.cell_track_panel.draw()
         if not light:
             self.profile_panel.schedule()
 

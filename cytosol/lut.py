@@ -104,6 +104,7 @@ class ImageItem:
     # 입자 추적 (cytosol.tracking.TrackState), None until tracked or loaded
     tracks: object = None
     mito: object = None           # mito.MitoResult (mitoROI tab, v0.67)
+    cell_tracks: object = None    # cell_track.CellTrackState (세포질 강도 추적 tab, v0.73)
     mina: object = None           # mina_panel.MinaResult (미토 형태 (MiNA) tab, v0.73)
     _bleach: list | None = field(default=None, repr=False)  # overrides the file's bleach ROIs
     _planes: np.ndarray | None = field(default=None, repr=False)

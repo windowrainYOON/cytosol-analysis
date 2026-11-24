@@ -191,6 +191,12 @@ def run(win, items, out, opts, progress=None) -> Result:
     # ---- 입자 추적 ----
     if _kind_on(opts, 'track_csv', 'track_rois', 'track_all', 'track_ptdir', 'track_signal', 'track_signal_all'):
         _try(res, lambda: _tracks(win, items, out, opts, where))
+    # ---- 세포질 강도 추적 ----
+    if opts.get('cyto_track_csv'):
+        for it in items:
+            if getattr(it, 'cell_tracks', None) is not None:
+                folder, stem = where(it)
+                _try(res, lambda it=it, folder=folder, stem=stem: win.cell_track_panel.save_item(it, folder, stem))
     # ---- 미토 형태 (MiNA) ----
     if opts.get('mina_csv'):
         for it in items:
