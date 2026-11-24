@@ -197,7 +197,10 @@ owner writes in Korean, so reply in Korean.
   `RoiParams` default). Editing: Shift+click (`Canvas.cellShiftClicked`)
   builds a multi-selection (`RoiPanel.selection()`), 합치기 (M) joins it
   (`CellRois.merge`, bridges gaps ≤ 3 µm), Option/Alt+drag with 선택 draws a
-  cut line (`Canvas.roi_edit_active`, `_lasso_tool`).
+  cut line (`Canvas.roi_edit_active`, `_lasso_tool`). The **핵 다시 찾기**
+  box under 확인 · 수정 re-draws nuclei inside the existing cell ROIs (never
+  changing them), one per cell, with a per-cell threshold (`cn_auto`,
+  `cn_spin` / `cn_slider` follow the selected cell, `CellRois.nuc_thr`).
   - Rule from the owner (2026-10-27, v0.26): the plain manual threshold mode
     (at or above the threshold = ROI, below = discarded, nothing else) must
     always stay, whatever detection algorithms are added later; automatic
@@ -532,3 +535,4 @@ not affected.
 | dev branch | 0.71.0 | Owner request (2026-11-18): output data matched to ParticleTracker: export 입자 추적 › **ParticleTracker 결과 폴더** (`track_ptdir` on, `track_ptfig` on, `track_ptmovie` off; `<stem>_ParticleTracker/`): with the ParticleTracker method every CSV, `particle_labels.tif`, `config_used.yaml`, appearance JSON byte-equal to ParticleTracker's on BafA1 P02 (dataset.json differs only by name / out_dir), its 9 PNGs and 7 MP4s by its own code (`ptcore/plots`, `movies`); this app's method writes the same names and columns (empty where it has no value). Docs 17 / 21 |
 | dev branch | 0.72.0 | Owner request (2026-11-19, after the 261118 pHrodo / Cy5-PRD batch; mockup v2 approved): 입자 추적 **5 신호 기준 (긴 트랙)** card: split long tracks by a channel's signal (ROI max / mean ≥ that channel's LUT Min in ≥ n frames) instead of inside / outside; histogram + Min / Max sliders that are the LUT tab's values (both ways, `lut_changed`), Auto / Min/Max / 전체 이미지에 적용, canvas rings preview, chips / summary / tables follow; export 입자 추적 › 신호 기준 (`track_signal`, `track_signal_all`); `from_pt` keeps `I_B_max` as `I_<measure>_max`; `scripts/batch_folder.py` (+ `run_batch_bg.sh`, `track_green*.py`, `track_integrate.py`) for headless batch runs. Docs 21 |
 | dev branch | 0.72.1 | Crash fix (owner report 2026-11-20: the app quit while making a graph from 그래프 편집 창 › 데이터 › CSV 불러오기…; macOS report: segmentation fault in the backing-store flush under the 새 그래프 window opened from the data list's click): the graph window's tool chips no longer get a `QGraphicsOpacityEffect` (replacing it on every `refresh_chips` segfaulted, also in the self-test on macOS; disabled chips use the style sheet's `:disabled` look), the data list / chips open the file chooser and the 새 그래프 window after the click handler returns (`QTimer.singleShot(0)`; finishing the wizard rebuilds that list and deleted the clicked item under `QTreeView::mouseReleaseEvent`) |
+| #50 (main) | 0.53.0 (main) | 핵 다시 찾기: nuclei re-detected inside the (edited) cell ROIs, cells untouched, one nucleus per cell, each cell its own threshold (자동 = own LUT stretch + Otsu over the cell and a 2 µm ring, or a manual value per cell, live), noise in nucleus-free cells dropped (`cellroi.cell_nucleus`, `CellRois.redetect_nucleus`, `nuc_thr` saved in projects); PRD 24h ref-cell nucleus IoU 0.969 |
