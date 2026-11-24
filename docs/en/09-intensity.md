@@ -2,6 +2,8 @@
 
 [← Manual index](README.md) · [한국어](../ko/09-intensity.md)
 
+> **Since v0.73** the 강도 측정 tab and its **Tool › 강도 측정** menu are gone; logic regions (`cyto - particle` …) are made with the [pipeline](24-pipeline.md)'s **Operation** stages (subtract · overlap · merge · dilate · ring …) and measured with **Measurement › Intensity**. Old projects' 강도 측정 settings and results still load. The meaning of the measured values (ImageJ Measure) below is the same in the pipeline.
+
 Open or close this tab with **Tool › 강도 측정 › 강도 측정 탭 열기** (Open 강도 측정 tab) in the menu bar. Results are saved from **파일 › 내보내기…** ([Export window](17-export.md)); loads are in the same **강도 측정** menu.
 
 ## 강도 측정 tab

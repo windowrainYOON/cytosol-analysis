@@ -57,7 +57,14 @@ feature is added; keep the bracketed words only when the 입자 ROI tab's
 > a predicted position (cell motion by TV-L1 optical flow, neighbourhood
 > template matching and an α-β velocity filter), intensity and area changes,
 > and the per-channel particle intensity taken as the ROI mean minus the
-> median of a surrounding ring; mitochondrial networks were analysed per
+> median of a surrounding ring, with track reliability scored from the share
+> of uninterrupted links and the frame-to-frame normalised cross-correlation of
+> the surrounding refractive-index pattern; whole cells were followed over time
+> by segmenting them in every frame and linking each cell to the previous
+> frame's cell it overlapped most after a TV-L1 optical-flow prediction, with
+> dividing and border-touching cells excluded and each cell's cytosolic
+> intensity taken as the ROI mean minus the mean of a ring around it that
+> excluded other cells; mitochondrial networks were analysed per
 > cell as in MiNA (Valente et al., 2017), with the mitochondria segmented by
 > a local adaptive threshold and a watershed split of touching objects (as in
 > Mitochondria Analyzer, Chaudhry et al., 2020; or Otsu's threshold per cell)
@@ -479,6 +486,24 @@ A GUI for working on a whole set of images at once:
   to run the same pipeline on another image set. Opening a project asks
   whether to load everything (images, ROIs, results) or only its settings
   (pipeline) for the images already open.
+
+### 파이프라인 (pipeline, v0.73)
+
+**파일 › 파이프라인…** (`⇧⌘P`) builds an ordered list of stages, Start → Detect → Track → Operation →
+Measurement → End, with review stops (`cytosol/pipeline.py`, `pipeline_window.py`, presets in
+`pipeline_presets.py`; saved as `.cypipe`, JSON `format: cytosol-viewer-pipeline`). Detection and tracking
+stages reuse the tabs' own detection with settings stored in the stage; they make named objects (cells,
+nuclei, cytosol, particles, mito fragments, particle / cell tracks) that keep their parent cell number.
+Operation stages keep / drop objects by conditions (size, shape, intensity, overlap, edge, track class …),
+subtract / add / intersect two objects paired by cell number, merge, dilate / erode, make rings or distance
+bands. Measurement stages measure object × channel like ImageJ Measure (optionally minus a background ring),
+count per parent, and run the distance band, Coloc 2, FRAP and MiNA computations. A review stage pauses the
+run with a band above the canvas (findings chips such as odd nucleus shape in the image list), then it goes
+on. Results land in `<data parent>/Processed/<data>_<pipeline>_<date>_<time>/` (`pipeline.json`,
+`project.cyproj`, `README.txt`, `summary.json`, `progress.jsonl`, `review_log.csv`, `1_통합데이터/`,
+`2_그래프/`, `3_이미지/`). The same runner works headless: `python3 -m cytosol.pipe` (`stages`, `presets`,
+`inspect`, `new`, `edit`, `add`, `validate`, `run [--dry-run]`, `status`, `resume`, `rerun --from`). It
+replaces 일괄 분석 (old batch settings convert) and the 강도 측정 tab. Manual: `docs/*/24-pipeline.md`.
 
 ### Image ID and folder loading
 

@@ -2,7 +2,11 @@
 
 [← Manual index](README.md) · [한국어](../ko/07-line-profile.md)
 
-Open or close this tab with **Tool › 라인 프로파일 › 라인 프로파일 탭 열기** (Open 라인 프로파일 tab) in the menu bar. Results are saved from **파일 › 내보내기…** ([Export window](17-export.md)); loads are in the same **라인 프로파일** menu.
+**Since v0.73** there is no 라인 프로파일 tab: turn on the **Line profile** icon at the canvas' top right,
+drag a line on the image, and the per-channel intensity plot appears in the live box under the canvas. The
+row under the plot holds **Line width**, **leave out channels hidden in the LUT**, **0–1 per channel**,
+**Clear Line** and **Export…** (the **Line Profile** kind of 파일 › 내보내기). Line ROIs are read with
+**파일 › 불러오기**. Button names further down are those of the tab up to v0.72; values and files are the same.
 
 Plots each channel's raw intensity along a line, like ImageJ's RGB Profiler
 (Plot Profile per channel), in the channel colors, against distance in µm.

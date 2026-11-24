@@ -4,12 +4,16 @@
 있으면 미토 위 / 밖의 신호, 점(puncta), 공존(Pearson, Manders), green+ / green− 세포도 함께 잽니다.
 계산은 Mito Analyzer 1.8.0의 코드를 그대로 옮겨, 같은 세포 ROI면 Mito Analyzer와 같은 숫자가 나옵니다.
 
-열기: Tool › **mitoROI** › mitoROI 탭 열기 (또는 View 메뉴). 세포 ROI는 먼저 세포질 ROI 탭에서 찾습니다.
+열기: Tool › 검출 › **mitoROI** › mitoROI 탭 열기 (또는 View 메뉴). 세포 ROI는 먼저 세포질 ROI 탭에서 찾습니다.
+
+> **v0.73**: mitoROI는 **검출**(미토콘드리아 찾기 · 관심 단백질)에 속하고, 골격 형태 측정은
+> [미토 형태 (MiNA) 탭](#미토-형태-mina-탭-v073)으로 따로 나뉘었습니다. 실행은 인스펙터 아래 측정 바의
+> **이 이미지만 측정 / 전체 이미지 측정**입니다.
 
 ## 실행
 
-- **분석 실행**: 현재 이미지. **모든 이미지에 실행**: 세포 ROI가 있는 모든 이미지. 파일 › 일괄 분석의
-  **mitoROI** 단계도 같습니다.
+- **분석 실행**: 현재 이미지. **모든 이미지에 실행**: 세포 ROI가 있는 모든 이미지. [파이프라인](24-pipeline.md)의
+  **검출 › 미토콘드리아** 단계도 같습니다.
 
 ## 1 채널 · 세포
 
@@ -56,6 +60,17 @@
 - 파일 › 내보내기 › **mitoROI**: Mito Analyzer와 같은 이름 `<이름>_per_cell.csv`, `_per_mito.csv`,
   `_green_puncta.csv`, `_correlations.csv`, `_mito_RoiSet.zip`, 모든 이미지를 합친 `mito_per_cell.csv` ….
 - 결과는 프로젝트에 함께 저장됩니다.
+
+## 미토 형태 (MiNA) 탭 (v0.73)
+
+**Tool › 측정 › 미토 형태 (MiNA)**. mitoROI 탭이 찾은 미토콘드리아(미토 ROI)의 형태를 MiNA로 잽니다.
+
+- **1 대상 object**: **mitoROI 미토 조각** (미토 ROI가 있는 이미지 수 표시). 먼저 mitoROI 탭에서 미토콘드리아를 찾습니다.
+- **2 측정 항목**: 세포마다 footprint, 네트워크, 가지 수 · 길이, 도넛; 조각마다 골격 길이(`length_um`), 가지
+  (`n_branches`), 분기점, 끝점, 축, solidity. Mito Analyzer 1.8과 같은 코드라 같은 마스크면 mitoROI의 MiNA 열과
+  같은 숫자입니다.
+- 데이터: `미토 형태 (MiNA) · 세포`, `미토 형태 (MiNA) · 미토 조각`. 내보내기 › **미토 형태 (MiNA)**:
+  `<이름>_mina_per_cell.csv`, `<이름>_mina_per_mito.csv`. 파이프라인 단계 **측정 › 미토 형태 (MiNA)**.
 
 ## 주요 열
 

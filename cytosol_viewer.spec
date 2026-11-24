@@ -9,6 +9,8 @@ hiddenimports = (
     + collect_submodules('czifile')
     + collect_submodules('oirfile')
     + collect_submodules('skimage')
+    + collect_submodules('OpenGL')  # GPU 3D view (gl3d.py)
+    + collect_submodules('openpyxl')  # graph table import (.xlsx)
     + collect_submodules('cytosol')  # lazily imported panels (track, mitoROI)
     + ['h5py', 'tifffile', 'xarray', 'roifile',
        # figure export picks the backend by file type at save time

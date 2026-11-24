@@ -2,7 +2,7 @@
 
 [English manual](../en/README.md)
 
-Cytosol Viewer(v0.38)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
+Cytosol Viewer(v0.73)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
 이미지를 열어 세포·핵·세포질 ROI를 찾고, ImageJ/Fiji와 같은 방식으로 측정한
 뒤 이미지, ROI, 표, figure로 내보내는 프로그램입니다.
 
@@ -13,9 +13,10 @@ Cytosol Viewer(v0.38)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
 - **왼쪽 패널**: 이미지 목록과 그룹
 - **가운데**: 이미지. 왼쪽에 Z 슬라이더, 아래에 T 슬라이더, 위에 보기 버튼
 - **오른쪽 패널**: 처음에는 **LUT**, **마커**, **이미지 정보** 탭만 있고(위쪽 캡슐 버튼으로 전환), 나머지 기능 탭은 **View** 메뉴(또는 각 기능 메뉴의 **… 탭 열기**)로 열고 닫습니다
-- **메뉴 막대**: **파일**(프로젝트, 자동 인식 불러오기, **내보내기…**, 일괄 분석, 작업 기록, 설정),
-  **Tool**(기능마다 하위 메뉴: **LUT**, **마커**, **세포질 ROI**, **입자 ROI**, **강도 측정**,
-  **Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**; 탭 열기와 불러오기), **View**, **그래프**,
+- **캔버스 오른쪽 위 보기 아이콘**: **라인 프로파일**, **단면**, **3D 투영** ([3D 투영 · 단면](06-stack.md), [라인 프로파일](07-line-profile.md))
+- **메뉴 막대**: **파일**(프로젝트, 자동 인식 불러오기, **내보내기…**, **파이프라인…**, 작업 기록, 설정),
+  **Tool**(**검출** › 세포질 ROI · 입자 ROI · mitoROI, **추적** › 입자 추적 · 세포질 강도 추적,
+  **측정** › 등거리 띠 · Coloc 2 · FRAP 측정 · 미토 형태 (MiNA); 탭 열기와 불러오기), **View**, **그래프**,
   **Figure**. 저장은 모두 [내보내기 창](17-export.md)에서 합니다.
   [메뉴, 프로젝트 파일, 작업 기록](13-project-menus.md)
 
@@ -24,17 +25,18 @@ Cytosol Viewer(v0.38)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
 | 설명서 | 내용 |
 |---|---|
 | [시작하기: 이미지 열기·보기·그룹](01-getting-started.md) | 파일·폴더 추가, 이미지 목록, 그룹, TCF HT/FL 정렬, Z/T 이동, 확대, Crop, 이미지 ID |
-| [일괄 분석](15-batch.md) | 그룹을 고르고 분석을 체크해 한 번에 실행, 결과 확인·수정·다시 측정, 결과·설정만 저장, 프로젝트에서 설정만 불러오기 |
+| [파이프라인](24-pipeline.md) | 검출 → 추적 → 연산 → 측정 단계를 쌓아 데이터 폴더 전체에 실행, 사람 검토, 결과 폴더, 프리셋 · 보관함, 명령줄 `cytosol-pipe` (v0.73, 일괄 분석과 강도 측정 탭을 대신함) |
+| [일괄 분석](15-batch.md) | v0.72까지의 일괄 분석 (v0.73부터 파이프라인) |
 | [메뉴, 프로젝트 파일, 작업 기록](13-project-menus.md) | 파일 메뉴와 기능별 메뉴, 자동 인식 불러오기, 프로젝트 저장·열기, 작업 기록, 마우스 민감도 |
 | [LUT 탭](02-lut-export.md) | 채널 표시(LUT), 일괄 LUT 적용, 프리셋 |
 | [세포질 ROI 탭](03-cytosol-roi.md) | 세포·핵·세포질 ROI 자동 검출과 수정, ImageJ ROI 파일, 세포 강도 측정 |
 | [입자 ROI 탭](04-particle-roi.md) | 입자(점·응축체) 검출, 세포별·입자별 측정, 형태, 요약 |
 | [마커 탭](05-markers.md) | Scale bar, 타임 스탬프, CZI bleach ROI, 설정 저장·불러오기 |
-| [스택 탭](06-stack.md) | Z 스택 2D 투영, 3D 회전 보기, 저장 |
-| [라인 프로파일 탭](07-line-profile.md) | 선을 따라 채널별 강도 그래프 (ImageJ RGB Profiler) |
+| [3D 투영 · 단면 보기](06-stack.md) | 캔버스 아이콘: GPU 3D 투영(3축 회전, 미리 준비), 직교 단면, Preferences, 저장 |
+| [라인 프로파일](07-line-profile.md) | 선을 따라 채널별 강도 그래프 (ImageJ RGB Profiler) |
 | [FRAP 측정 탭](14-frap.md) | bleach 후 회복 곡선, 그룹 평균 ± 에러바, mobile fraction·t½ 요약 |
 | [Coloc 2 탭](08-coloc2.md) | 세포별 공존(colocalization) 분석 (Fiji Coloc 2) |
-| [강도 측정 탭](09-intensity.md) | 논리식 영역(예: `cyto - particle`)의 강도, 그리고 측정 탭들이 함께 쓰는 측정 결과 표 |
+| [강도 측정](09-intensity.md) | 논리식 영역과 측정값의 뜻 (v0.73부터 파이프라인의 연산 · 측정 단계) |
 | [이미지 정보 탭](10-image-info.md) | 획득 메타데이터 (레이저, 검출기, 대물렌즈, bleaching) |
 | [Figure 창](11-figure.md) | 행·열 이름, 확대 inset, scale bar가 있는 figure 표; PNG/TIFF/PDF/SVG |
 | [그래프 편집 창](16-graph.md) | 기능 탭의 그래프를 새 창에서: 그래프 종류, x·y 열, 색·굵기·글꼴·축·범례·글자 상자 수정, 그래프·데이터 내보내기 |
@@ -42,13 +44,13 @@ Cytosol Viewer(v0.38)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
 | [이미지 묶기](19-stacking.md) | 채널 · Z · 시간별로 따로 저장된 파일을 한 이미지로 쌓기, RGB TIFF 자동 묶기, 묶음 풀기 |
 | [측정 데이터 보기](20-data.md) | 측정 항목 · 데이터 카드, ROI 위 값, 탭 칩의 점, 실시간 값 박스, 그래프 창 데이터 목록 · 열 설명, 측정 현황 · 일괄 분석 |
 | [입자 추적 탭](21-tracking.md) | 모든 프레임에서 입자 검출, 프레임 사이 연결 (세포 움직임 · 주변 패턴 · 트랙 속도), 채널 비율, 트랙 표 · 꼬리, ParticleTracker 결과 불러오기 |
+| [세포질 강도 추적 탭](25-cell-tracking.md) | 세포를 프레임마다 찾아 잇고 세포마다 밝기 변화, 조건 필터로 세포 고르기 |
 | [통합 데이터](23-integrated.md) | 측정할 때마다 범주별(이미지 · 세포 · 세포 × 띠 · 입자 · 미토 조각 · 시점) 표에 저절로 합쳐지는 데이터, 그래프 · 상관 히트맵, integrated_*.csv 내보내기 |
-| [mitoROI 탭](22-mito.md) | 세포마다 미토콘드리아 분할 · MiNA 골격 · 미토 조각, 관심 단백질의 미토 위 / 밖 신호 · 점 · 공존 · green+ / −, 상관 히트맵, Mito Analyzer 결과 불러오기 |
+| [mitoROI · 미토 형태 (MiNA)](22-mito.md) | 세포마다 미토콘드리아 분할 · 미토 조각, MiNA 골격 형태 탭 (v0.73), 관심 단백질의 미토 위 / 밖 신호 · 점 · 공존 · green+ / −, 상관 히트맵, Mito Analyzer 결과 불러오기 |
 | [내보내기 창](17-export.md) | 파일 › 내보내기: 이미지, Crop, ROI, 측정 표, 그래프, 정보, 일괄 분석, 프로젝트를 한 창에서 저장 |
 | [저장되는 파일](12-output-files.md) | 프로그램이 쓰는 모든 파일과 폴더 불러오기 |
 
-세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, FRAP 측정, 스택 탭은 메뉴 막대의
-**Tool** 아래 같은 이름 메뉴(또는 **View**)에서 엽니다. 결과 저장은 **파일 › 내보내기…**입니다.
+기능 탭은 메뉴 막대의 **Tool › 검출 / 추적 / 측정** 아래 같은 이름 메뉴(또는 **View**)에서 엽니다. 결과 저장은 **파일 › 내보내기…**입니다.
 
 ## 단축키와 마우스
 
@@ -58,7 +60,7 @@ Cytosol Viewer(v0.38)는 Tomocube TCF, Zeiss CZI, Olympus/Evident OIR, TIFF
 | 폴더 불러오기 (이미지·TIFF·ROI를 ID로 짝짓기) | `Ctrl+Shift+O` |
 | 새 프로젝트 / 프로젝트 저장 / 다른 이름으로 저장 | `Ctrl+N` / `Ctrl+S` / `Ctrl+Shift+S` |
 | 내보내기 (이미지, Crop, ROI, 측정 표, 그래프, 프로젝트 …) | `Ctrl+E` |
-| 일괄 분석 실행 / 결과 보기 | `Ctrl+B` / `Ctrl+Shift+B` |
+| 파이프라인 / 측정 현황 · 일괄 분석 | `Ctrl+Shift+P` / `Ctrl+Shift+B` |
 | Figure 창 | `Ctrl+Shift+F`, 창 안에서 저장은 `Ctrl+S` |
 | 현재 탭의 그래프 편집 창 | `Ctrl+G`, 창 안에서 다시 불러오기는 `Ctrl+R` |
 | 작업 기록 보기 | `Ctrl+Shift+L` |

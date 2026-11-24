@@ -1436,6 +1436,10 @@ class VisibilityRow(QWidget):
 
 
 class MainWindow(QMainWindow):
+    # 강도 측정 moved into the pipeline (연산 + 측정 › 세기, v0.73): its panel
+    # stays for old projects and the code, the tab is no longer offered
+    HIDDEN_TABS = ('intensity_tab',)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f'Cytosol Viewer {__version__}')
@@ -2026,9 +2030,6 @@ class MainWindow(QMainWindow):
         if 'mina_tab' in self.tab_pages:
             sub = measure.addMenu('미토 형태 (MiNA)')
             tab_action(sub, 'mina_tab')
-        if 'intensity_tab' in self.tab_pages:
-            sub = measure.addMenu('강도 측정')
-            tab_action(sub, 'intensity_tab')
 
         for sub in tools.findChildren(QMenu):  # no trailing separator after the tab item
             acts = sub.actions()
@@ -2039,6 +2040,8 @@ class MainWindow(QMainWindow):
         self.view_menu = view = mb.addMenu('View')
         self.view_actions = {}
         for name, (_, title) in self.tab_pages.items():
+            if name in self.HIDDEN_TABS:
+                continue
             a = QAction(title, self, checkable=True)
             a.setToolTip(f'‘{title}’ 탭을 오른쪽에 열거나 닫습니다.')
             a.setChecked(self.tab_open(name))
@@ -2046,7 +2049,8 @@ class MainWindow(QMainWindow):
             view.addAction(a)
             self.view_actions[name] = a
         view.addSeparator()
-        act(view, '모든 기능 탭 열기', lambda: [self.show_tab(n, focus=False) for n in self.tab_pages])
+        act(view, '모든 기능 탭 열기', lambda: [self.show_tab(n, focus=False) for n in self.tab_pages
+                                              if n not in self.HIDDEN_TABS])
         act(view, '모든 기능 탭 닫기', lambda: [self.hide_tab(n) for n in self.tab_pages],
             tip='LUT와 이미지 정보 탭은 항상 열려 있습니다.')
         view.addSeparator()
@@ -2769,7 +2773,7 @@ class MainWindow(QMainWindow):
             if obj in self._measure_boxes():
                 obj.set_channels_off(off.get(key, ()))
         for name in list(self.tab_pages):
-            if name in data.get('tabs', []):
+            if name in data.get('tabs', []) and name not in self.HIDDEN_TABS:
                 self.show_tab(name, focus=False)
             else:
                 self.hide_tab(name)

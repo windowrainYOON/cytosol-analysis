@@ -1320,7 +1320,7 @@ def run(out_dir) -> int:
         groups = {a.text(): [b.text() for b in a.menu().actions() if b.menu()]
                   for a in win.tool_menu.actions() if a.menu()}
         want = {'검출': ['세포질 ROI', '입자 ROI', 'mitoROI'], '추적': ['입자 추적', '세포질 강도 추적'],
-                '측정': ['등거리 띠', 'Coloc 2', 'FRAP 측정', '미토 형태 (MiNA)', '강도 측정']}
+                '측정': ['등거리 띠', 'Coloc 2', 'FRAP 측정', '미토 형태 (MiNA)']}
         if menus != ['파일', 'Tool', 'View', '그래프', 'Figure'] or tools != list(want) \
                 or groups != want or 'marker_tab' in win.tab_pages:
             raise AssertionError(f'menus: {menus} / Tool: {groups}')
@@ -1340,7 +1340,8 @@ def run(out_dir) -> int:
         if not win.view_actions['mito_tab'].isChecked():
             raise AssertionError('View item not ticked by Tool')
         win.view_actions['mito_tab'].setChecked(False)
-        if win.tab_open('mito_tab') or list(win.view_actions) != list(win.tab_pages):
+        shown = [k for k in win.tab_pages if k not in win.HIDDEN_TABS]
+        if win.tab_open('mito_tab') or list(win.view_actions) != shown:
             raise AssertionError('View did not close the mitoROI tab')
         # 마커 is its own fixed tab; the LUT tab scrolls as one page (no inner scroll)
         from PySide6.QtWidgets import QScrollArea

@@ -2,6 +2,8 @@
 
 [← Contents](README.md) · [한국어](../ko/15-batch.md)
 
+> **Since v0.73** batch analysis is part of the [pipeline](24-pipeline.md). **파일 › 일괄 분석 실행…** (`Ctrl+B`) and the batch settings save / load items are gone; **파일 › 파이프라인…** (`Ctrl+Shift+P`) takes their place. An old `batch_settings.json` (`format: cytosol-viewer-batch`) opened in the pipeline window becomes a pipeline with the same steps. The **측정 현황 · 일괄 분석…** (`Ctrl+Shift+B`) window stays. The rest of this page describes the old batch analysis.
+
 After loading all images and grouping them, tick which analyses to run; they
 then run automatically, one after the other, on every image of the chosen
 groups. You review the results per image, open only the images that need it to

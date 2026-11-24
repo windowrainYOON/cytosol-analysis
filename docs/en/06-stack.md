@@ -1,12 +1,50 @@
-# 스택 tab (Z projections and 3D views)
+# 3D projection · section views (canvas icons)
 
 [← Manual index](README.md) · [한국어](../ko/06-stack.md)
 
-Open or close this tab with **Tool › 스택 › 스택 탭 열기** (Open 스택 tab) in the menu bar. Results are saved from **파일 › 내보내기…** ([Export window](17-export.md)); loads are in the same **스택** menu.
+**Since v0.73** there is no 스택 tab: one of the three view icons at the canvas' top right,
+**[Line profile · Sections · 3D projection]**, is on at a time; pressing it again returns to the plain XY
+view. The settings are in **Preferences › 3D Stack View** and **Section View**; saving is the **3D Stack**
+kind of **파일 › 내보내기…**.
 
-While this tab is open, the image area shows its projection instead of a
-single slice. It needs an image with a Z stack; the whole stack is loaded
-when the tab opens (status: **Z 스택 불러오는 중…**) and released afterwards.
+## 3D projection view
+
+- The whole canvas becomes the 3D view, drawn on the GPU (OpenGL) so it follows the mouse at once.
+  Without a usable GPU it draws a CPU projection and says so in a status chip.
+- **Drag** turns it freely on three axes (trackball); Shift+drag only around the screen axis, middle-drag
+  moves. The angle chip and **↺** (first angle) sit on the canvas.
+- Volumes are prepared ahead (preparation chip). For time series every timepoint's volume is prepared once
+  (from the current timepoint outwards), so moving T shows it at once. Beyond the RAM limit they go to a
+  disk cache (`.cycache`).
+
+**Preferences › 3D Stack View**
+
+| Item | Meaning |
+|---|---|
+| **Render method** | MIP: brightest value on the ray · translucent: emission-absorption · surface: where the ray first passes the threshold |
+| **Rotation** | **three axes (trackball)** or **one axis (Y)** |
+| **Z spacing** | **Auto** = the file metadata's Z spacing; off = type it in µm |
+| **Render resolution** | XY resolution of the prepared volume (**1/2 (default)**, **original** …); lower uses less memory and time |
+| **High-quality render** | **when 3D is turned on** or **when an image is picked (ahead)** |
+| **Memory limit** | RAM kept for prepared volumes |
+| **Follow LUT** | use the LUT tab's Min / Max / colour |
+| **Selected crop only** | 3D of the selected crop only |
+
+## Section view
+
+Like Fiji's Orthogonal Views: the XY plane of the current Z with the X section (XZ) below and the Y
+section (YZ) on the right, at one scale. Clicking or dragging the point in XY moves the cuts (white lines);
+clicking a section moves Z there (yellow dashed line on the sections). **Preferences › Section View**:
+**Section layout**, **Show cut lines**, **Z spacing as in 3D Stack View**.
+
+## Saving (파일 › 내보내기 › 3D Stack)
+
+- **3D projection image (current angle, PNG)**: at the 3D view's current angle and render method.
+- **3D rotation series (one turn around Y)**, **as MP4 (off = TIFF)**.
+
+---
+
+The rest of this page describes the 스택 tab up to v0.72 (the 2D projection methods mean the same).
 
 ## Projection type
 

@@ -106,6 +106,30 @@ Instead of inside / outside the cell, long tracks are split into tracks with and
 - **그래프 ›**: a new graph from `입자 추적 · 시점` (default: time vs ratio, one grey line per track +
   mean ± SD).
 
+## 6 신호 변화 트랙 (signal change tracks, reliable tracks only, v0.73)
+
+**켜짐 · 꺼짐 트랙 찾기** (find on · off tracks) gives every long track a **tracking score** (0–100 = 100 ×
+link reliability × RI surroundings continuity). Link reliability is the share of links without a missed,
+merged or hidden frame; RI continuity is the share of consecutive frames whose RI pattern around the
+particle (≈ 4.8 µm) stays alike. Among tracks scored at least the minimum it picks those whose signal
+([5 신호 기준](#5-신호-기준-signal-criterion-long-tracks-v072) Min) turns on and / or off inside the track.
+
+| Item | Default | Meaning |
+|---|---|---|
+| **최소 트래킹 점수** (minimum tracking score) | 50 | only tracks with at least this score are judged |
+| **신호 기준** (signal threshold) | | the Min of 5 신호 기준 (channel = value) |
+| **신호 프레임** (signal frames) | 3 frames or more | frames with signal |
+| **연속 신호** (signal in a row) | 2 frames or more | of those, frames in a row |
+| **다른 입자가 스쳐 간 시점은 빼고 다시 판정** (leave out pass-by frames) | on | frames where another signal particle touches it (centre distance < both radii + 2 px) and merged points are left out before judging |
+| **세포 안 트랙만** (tracks inside cells only, > 50 % of frames in the cytosol) | on | |
+
+The kind chips **켜짐** (off → on), **켜짐→꺼짐** and **꺼짐** (on → off) show only those kinds on the image and
+in the table. On the image a solid ring = signal in that frame, dashed = no signal.
+
+Export › 입자 추적 › **신호 변화 트랙**: per image `<name>_signal_change/` with a folder per kind (track CSV +
+score + time course), for all images `신호 변화 통합/per_image_change.csv` and a score histogram. The
+[pipeline](24-pipeline.md) preset **ParticleTracker 신호 기준** uses the same judgement.
+
 ## Data and export
 
 - Graph window data list: `입자 추적 · 시점` (track × time point), `입자 추적 · 트랙` (per track),

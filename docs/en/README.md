@@ -2,7 +2,7 @@
 
 [한국어 설명서](../ko/README.md)
 
-Cytosol Viewer (v0.38) opens Tomocube TCF, Zeiss CZI, Olympus/Evident OIR and
+Cytosol Viewer (v0.73) opens Tomocube TCF, Zeiss CZI, Olympus/Evident OIR and
 TIFF images, finds cell, nucleus and cytosol ROIs, measures them the way
 ImageJ/Fiji does and exports images, ROIs, tables and figures.
 
@@ -18,10 +18,12 @@ appears on screen, followed by its meaning in parentheses, e.g.
 - **Right panel**: at first only **LUT**, **마커** (Markers) and **이미지 정보**
   (Image info), switched with capsule buttons; the other tabs are opened with
   the **View** menu (or **… 탭 열기**, Open … tab, in each feature's menu).
+- **View icons at the canvas' top right**: **line profile**, **sections**, **3D projection**
+  ([3D and sections](06-stack.md), [Line profile](07-line-profile.md)).
 - **Menu bar**: **파일** (File: projects, loading with automatic detection, **내보내기…**
-  (Export), batch analysis, work log, settings), **Tool** (one submenu per feature: **LUT**,
-  **마커**, **세포질 ROI**, **입자 ROI**, **강도 측정**, **Coloc 2**, **라인 프로파일**,
-  **FRAP 측정**, **스택**; tab and loads), **View**, **그래프** (graphs) and **Figure**.
+  (Export), **파이프라인…** (Pipeline), work log, settings), **Tool** (**검출** › 세포질 ROI · 입자 ROI ·
+  mitoROI, **추적** › 입자 추적 · 세포질 강도 추적, **측정** › 등거리 띠 · Coloc 2 · FRAP 측정 ·
+  미토 형태 (MiNA); tab and loads), **View**, **그래프** (graphs) and **Figure**.
   Everything is saved from the [Export window](17-export.md). See
   [Menus, project files and the work log](13-project-menus.md).
 
@@ -30,17 +32,18 @@ appears on screen, followed by its meaning in parentheses, e.g.
 | Manual | Covers |
 |---|---|
 | [Getting started: images, viewing, groups](01-getting-started.md) | Adding files and folders, image list, groups, TCF HT/FL alignment, Z/T navigation, zoom, crops, image ID |
-| [Batch analysis](15-batch.md) | Pick groups and tick analyses to run them all at once, review / fix / measure again, save only the batch results and settings, load only a project's settings |
+| [Pipeline](24-pipeline.md) | Stack detect → track → operation → measurement stages, run them on a whole data folder, review stops, result folder, presets and library, command line `cytosol-pipe` (v0.73; replaces batch analysis and the 강도 측정 tab) |
+| [Batch analysis](15-batch.md) | Batch analysis up to v0.72 (a pipeline since v0.73) |
 | [Menus, project files and the work log](13-project-menus.md) | File menu and feature menus, loading with automatic detection, saving and opening projects, work log, mouse sensitivity |
 | [LUT tab](02-lut-export.md) | Channel display (LUT), batch LUT, presets |
 | [세포질 ROI tab](03-cytosol-roi.md) | Automatic cell/nucleus/cytosol ROI detection, editing, ImageJ ROI files, cell intensity |
 | [입자 ROI tab](04-particle-roi.md) | Particle (spot/condensate) detection, per-cell and per-particle measurements, shape, summaries |
 | [마커 (Markers tab)](05-markers.md) | Scale bar, time stamp, CZI bleach ROIs, saving and loading the settings |
-| [스택 tab](06-stack.md) | 2D Z projections and 3D rotation views, saving them |
-| [라인 프로파일 tab](07-line-profile.md) | Intensity profile along a line (ImageJ RGB Profiler) |
+| [3D projection · sections](06-stack.md) | Canvas icons: GPU 3D projection (three-axis rotation, prepared ahead), orthogonal sections, Preferences, saving |
+| [Line profile](07-line-profile.md) | Intensity profile along a line (ImageJ RGB Profiler) |
 | [FRAP 측정 tab](14-frap.md) | Recovery after photobleaching, group means ± error bars, mobile fraction / t½ summary |
 | [Coloc 2 tab](08-coloc2.md) | Per-cell colocalization (Fiji Coloc 2) |
-| [강도 측정 tab](09-intensity.md) | Intensity in regions defined by logic (e.g. `cyto - particle`), and the measurement table shared by all measuring tabs |
+| [강도 측정](09-intensity.md) | Logic regions and the meaning of the measured values (since v0.73 the pipeline's operation and measurement stages) |
 | [이미지 정보 tab](10-image-info.md) | Acquisition metadata (lasers, detectors, objective, bleaching) |
 | [Figure window](11-figure.md) | Figure tables with labels, zoom insets, scale bars; PNG/TIFF/PDF/SVG |
 | [Graph editor window](16-graph.md) | A tab's graph in its own window: chart type, x / y columns, colors, widths, fonts, axes, legend, text boxes; export of the graph and its data |
@@ -48,13 +51,13 @@ appears on screen, followed by its meaning in parentheses, e.g.
 | [Image stacking](19-stacking.md) | Stack files saved per channel, Z or time into one image, RGB TIFFs stacked on load, unstack |
 | [Viewing measured data](20-data.md) | 측정 항목 / 데이터 cards, values on ROIs, tab chip dots, the live box, the graph window data list and column notes, the measurement overview |
 | [Particle tracking tab](21-tracking.md) | Particles found on every frame, linked between frames (cell motion, neighbourhood pattern, track velocity), channel ratio, track table and tails, ParticleTracker results loaded |
+| [Cytosol intensity tracking tab](25-cell-tracking.md) | Cells found and linked frame by frame, intensity change per cell, filters that pick cells by conditions |
 | [Integrated data](23-integrated.md) | Every measurement merged by itself into per-category tables (image, cell, cell × band, particle, mito fragment, timepoint), graphs and correlation heat maps from them, integrated_*.csv export |
-| [mitoROI tab](22-mito.md) | Per-cell mitochondria segmentation, MiNA skeleton, mito objects, POI on / off mito, puncta, colocalisation, green+ / −, correlation heat map, Mito Analyzer results loaded |
+| [mitoROI · Mito morphology (MiNA)](22-mito.md) | Per-cell mitochondria segmentation, mito objects, the MiNA skeleton tab (v0.73), POI on / off mito, puncta, colocalisation, green+ / −, correlation heat map, Mito Analyzer results loaded |
 | [Export window](17-export.md) | File › Export: images, crops, ROIs, tables, graphs, info, batch results and the project saved from one window |
 | [Output files](12-output-files.md) | Every file the program writes, and folder loading |
 
-The 세포질 ROI, 입자 ROI, 강도 측정, Coloc 2, 라인 프로파일, FRAP 측정 and 스택 tabs
-are opened from the menu of the same name under **Tool** (or **View**). Results are saved
+Feature tabs are opened from the menu of the same name under **Tool › 검출 / 추적 / 측정** (or **View**). Results are saved
 from **파일 › 내보내기…** ([Export window](17-export.md)).
 
 ## Keyboard and mouse summary
@@ -65,7 +68,7 @@ from **파일 › 내보내기…** ([Export window](17-export.md)).
 | Load a folder (pair images, TIFFs and ROIs by ID) | `Ctrl+Shift+O` |
 | New project / save project / save as | `Ctrl+N` / `Ctrl+S` / `Ctrl+Shift+S` |
 | Export (images, crops, ROIs, tables, graphs, project …) | `Ctrl+E` |
-| Batch analysis / batch results | `Ctrl+B` / `Ctrl+Shift+B` |
+| Pipeline / measurement status | `Ctrl+Shift+P` / `Ctrl+Shift+B` |
 | Figure window | `Ctrl+Shift+F`; inside it, save with `Ctrl+S` |
 | Graph editor of the current tab | `Ctrl+G`; inside it, reload with `Ctrl+R` |
 | Work log | `Ctrl+Shift+L` |

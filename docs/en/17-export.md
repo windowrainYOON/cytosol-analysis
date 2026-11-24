@@ -5,8 +5,13 @@
 Everything is saved from one window, **파일 › 내보내기…** (File › Export…,
 `Ctrl+E` / `⌘E`): images, crop regions, ROIs, measurement tables, graphs, image
 information, batch results and the project, picked together and written in one go.
-The feature menus (Tool › …) keep only their tab item and their loads. LUT presets,
-marker settings and batch settings are still saved from Tool / 파일.
+The feature menus (Tool › …) keep only their tab item and their loads. Since v0.73 LUT presets and marker settings
+are saved here too (**LUT 프리셋 · 마커 설정**) and read back with **파일 › 불러오기**. Pipeline results are
+written by the [pipeline](24-pipeline.md) into its result folder.
+
+**Background saving (v0.73)**: after **내보내기** a progress bar and **취소** (Cancel) appear at the bottom
+and the files are written in the background. The app does not freeze when an external disk is slow or stops
+answering; cancelling removes only the file being written.
 
 ## Window
 
@@ -30,13 +35,18 @@ in projects).
 | Crop 영역 | An image per crop region (format as for images; **all regions** or **only the selected one**), crop ROIs (`<name>_crops.zip`). A region reshaped with 점 편집 (edit points) is cut as its bounding rectangle with the outside set to 0 |
 | 세포질 ROI | Cell / nucleus / cytosol ROIs (RoiSet .zip or .roi), measurement CSV, PNG with the ROIs drawn |
 | 입자 ROI | Particle ROIs (.zip), measurement CSV, per-image / per-group summaries |
-| 강도 측정 | Measurement CSV, logic region ROIs |
+| 통합 데이터 (Integrated data) | `integrated_*.csv` per category ([Integrated data](23-integrated.md)) |
 | 등거리 띠 | Distance bands CSV, band graph (current image) |
 | Coloc 2 | Results CSV, PDF report per ROI |
 | 라인 프로파일 | Line of the current image: CSV, graph, line ROI + picture |
 | FRAP | Summary CSV + group graphs; per image curve CSV / graph / ROIs |
 | 입자 추적 | Per image track points / summary CSV, track ROIs, the **ParticleTracker result folder** (`<name>_ParticleTracker/`: ParticleTracker's file names, columns and rounding; graph PNGs and movies MP4 optional); CSVs of all images |
-| 스택 투영 | Current projection, 3D rotation series (TIFF or MP4) |
+| 입자 추적 › 신호 변화 트랙 | when card 6 is on: per image `<name>_signal_change/` with a folder per kind (켜짐 / 켜짐→꺼짐 / 꺼짐: track CSV + score + time course), all images `신호 변화 통합/per_image_change.csv` + score histogram |
+| mitoROI | cell · mito fragment · puncta · correlation CSVs with Mito Analyzer's file names, mito fragment ROIs, CSVs of all images |
+| 세포질 강도 추적 | `<name>_cell_track_points.csv`, `<name>_cell_track_cells.csv`, graph `<name>_cell_track.png` |
+| 미토 형태 (MiNA) | `<name>_mina_per_cell.csv`, `<name>_mina_per_mito.csv` |
+| 3D 스택 | 3D projection image (current angle, PNG), 3D rotation series (one turn around Y, TIFF or MP4) |
+| LUT 프리셋 · 마커 설정 | `lut_preset.json`, `markers.json` |
 | 그래프 | The graphs of the graph editor (pick them), format (PNG / TIFF / PDF / SVG), data CSV, settings JSON |
 | 이미지 정보 | Acquisition CSV, raw metadata |
 | 일괄 분석 결과 | Results (`batch/`), settings JSON |

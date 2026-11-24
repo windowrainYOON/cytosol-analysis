@@ -3,21 +3,27 @@
 [← Manual index](README.md) · [한국어](../ko/13-project-menus.md)
 
 The menu bar has five menus: **파일** (File), **Tool**, **View**, **그래프** (Graphs) and
-**Figure**. **Tool** holds one submenu per feature: **LUT**, **마커** (Markers), **세포질 ROI**,
-**입자 ROI**, **강도 측정**, **Coloc 2**, **라인 프로파일**, **FRAP 측정** and **스택**. Each
-feature menu opens that feature's tab and holds its loads (for example **Tool › FRAP 측정 ›
-FRAP ROI 불러오기…**). Everything is saved from one window, **파일 › 내보내기…**
-([Export window](17-export.md)). **그래프** opens the [graph editor](16-graph.md) and
-**Figure** the [Figure window](11-figure.md). Crops have no menu: the canvas Crop icon and
-the crop rows' context menu in the sidebar handle them ([Crop regions](01-getting-started.md#crop-regions)).
+**Figure**. Since v0.73 **Tool** has the same three groups as the [pipeline](24-pipeline.md):
 
-The right panel starts with only the **LUT** tab (with the marker settings
-fixed at its bottom) and the **이미지 정보** (Image info) tab. Ticking a feature in the **View** menu (**세포질 ROI**, **입자 ROI**,
-**강도 측정**, **Coloc 2**, **라인 프로파일**, **FRAP 측정**, **스택**) or **… 탭 열기**
-(Open … tab) in a feature menu adds that tab next to them; unticking it or
-pressing the tab's × hides it. **View › 모든 기능 탭 열기 / 닫기** (open / close
-all feature tabs) does it for every feature tab at once. Settings and results stay while a tab is
-hidden, and the open tabs are saved in the project.
+- **검출** (Detect): **세포질 ROI**, **입자 ROI**, **mitoROI**
+- **추적** (Track): **입자 추적**, **세포질 강도 추적**
+- **측정** (Measurement): **등거리 띠**, **Coloc 2**, **FRAP 측정**, **미토 형태 (MiNA)**
+
+Each feature menu opens that feature's tab and holds its loads (for example **Tool › 측정 › FRAP 측정 ›
+FRAP ROI 불러오기…**). **강도 측정** moved into the pipeline's operation and measurement stages and has
+no tab or menu any more; **스택** (3D projection · sections) and **라인 프로파일** are icons at the
+canvas' top right ([3D and sections](06-stack.md), [Line profile](07-line-profile.md)). LUT presets and
+marker settings are read by **파일 › 불러오기** and written by **파일 › 내보내기…**. Everything is saved
+from one window, **파일 › 내보내기…** ([Export window](17-export.md)). **그래프** opens the
+[graph editor](16-graph.md) and **Figure** the [Figure window](11-figure.md). Crops have no menu: the
+canvas Crop icon and the crop rows' context menu in the sidebar handle them
+([Crop regions](01-getting-started.md#crop-regions)).
+
+The right panel starts with the **LUT**, **마커** and **이미지 정보** (Image info) tabs. Ticking a
+feature in the **View** menu or **… 탭 열기** (Open … tab) in a feature menu adds that tab next to them;
+unticking it or pressing the tab's × hides it. **View › 모든 기능 탭 열기 / 닫기** (open / close all
+feature tabs) does it for every feature tab at once. Settings and results stay while a tab is hidden,
+and the open tabs are saved in the project.
 
 ## File menu
 
@@ -31,8 +37,9 @@ hidden, and the open tabs are saved in the project.
 | **프로젝트 저장** (Save project) | `Ctrl+S` | Saves all the work as a `.cyproj` file (asks where the first time) |
 | **프로젝트 다른 이름으로 저장…** (Save project as) | `Ctrl+Shift+S` | |
 | **내보내기…** (Export) | `Ctrl+E` | Pick and save images, crops, ROIs, tables, graphs, image info, batch results and the project in one window ([Export window](17-export.md)) |
-| **일괄 분석 실행…** / **일괄 분석 결과 보기…** (Batch analysis / results) | `Ctrl+B` / `Ctrl+Shift+B` | Tick groups and analyses, run them at once, review and fix per image ([Batch analysis](15-batch.md)) |
-| **일괄 분석 설정 저장…** / **불러오기…** (Save / load batch settings) | | Analysis and group choice plus the settings of those tabs (JSON) |
+| **파이프라인…** (Pipeline) | `Ctrl+Shift+P` | Stack detect → track → operation → measurement stages and run them on a whole folder, with review stops and a result folder ([Pipeline](24-pipeline.md)) |
+| **파이프라인 보관함…** (Pipeline library) | | Saved pipelines (`.cypipe`) and the built-in presets |
+| **측정 현황 · 일괄 분석…** (Measurement status) | `Ctrl+Shift+B` | Measurement state per image, measure again ([Measurement data](20-data.md)) |
 | **작업 기록 보기…** (Work log) | `Ctrl+Shift+L` | The [work log](#work-log) window (its CSV is saved from the export window, **프로젝트 · 작업 기록**) |
 | **Preferences…** (on macOS in the app menu, `⌘,`) | | Loading options, mouse sensitivity, initial values of markers, tabs and significance marks (see [Preferences](#preferences)) |
 | **종료** (Quit) | `⌘Q` (macOS) | Asks first about unsaved changes |
@@ -43,13 +50,13 @@ All of them are under the **Tool** menu.
 
 | Menu | Items |
 |---|---|
-| **LUT** | **LUT 프리셋 저장…** / **LUT 프리셋 불러오기…** (Save / load LUT preset, JSON; loading applies it to every image) |
-| **마커** | **마커 설정 저장…** / **마커 설정 불러오기…** (Save / load marker settings: scale bar, time stamp, bleach ROI display; JSON) |
-| **세포질 ROI** | **세포질 ROI 탭 열기**, **ROI 불러오기…** |
-| **입자 ROI** | **입자 ROI 탭 열기**, **입자 ROI 불러오기…** |
-| **강도 측정** · **Coloc 2** · **스택** | Open the tab |
-| **라인 프로파일** | **라인 프로파일 탭 열기**, **선 ROI 불러오기…** (load line ROI) |
-| **FRAP 측정** | **FRAP 측정 탭 열기**, **FRAP ROI 불러오기…** ([FRAP 측정 tab](14-frap.md)) |
+| **검출 › 세포질 ROI** | **세포질 ROI 탭 열기**, **ROI 불러오기…** |
+| **검출 › 입자 ROI** | **입자 ROI 탭 열기**, **입자 ROI 불러오기…** |
+| **검출 › mitoROI** | **mitoROI 탭 열기**, **Mito Analyzer 결과 불러오기…** |
+| **추적 › 입자 추적** | **입자 추적 탭 열기**, **트랙 불러오기 (ParticleTracker)…** |
+| **추적 › 세포질 강도 추적** | **세포질 강도 추적 탭 열기** ([Cytosol intensity tracking](25-cell-tracking.md)) |
+| **측정 › 등거리 띠** · **Coloc 2** · **미토 형태 (MiNA)** | Open the tab |
+| **측정 › FRAP 측정** | **FRAP 측정 탭 열기**, **FRAP ROI 불러오기…** ([FRAP 측정 tab](14-frap.md)) |
 
 | Menu | Items |
 |---|---|
@@ -77,6 +84,7 @@ can be chosen at once).
 | Bleach ROIs (`<name>_bleach_rois.zip`) | As bleach regions |
 | LUT preset (`.json`) | Applied to every image |
 | Marker settings (`.json`) | Applied to the marker settings |
+| Pipeline (`.cypipe`) | Opened in the pipeline window ([Pipeline](24-pipeline.md)) |
 | `image_groups.csv` | Restores groups |
 
 **불러오기 (폴더)…** (Load folder) searches the folder and its subfolders and
@@ -101,6 +109,7 @@ editing and analysing.
   expressions, markers, export options, …) and which tabs were open
 - The all-image results of the measurement tables
 - The Figure window's table (image, region and channels per cell, insets, layout)
+- The pipeline window's pipeline (v0.73)
 - The batch analysis choice (analyses, groups) and its results table
 - The work log
 

@@ -28,8 +28,9 @@ tab's latest results; settings you changed are kept while the column names stay 
 ## A new graph, step by step
 
 The **새 그래프** chips on top are one per analysis (cell / particle ROI measurements, 강도
-측정, distance bands, Coloc 2, line profile, FRAP, batch results); the last one, **CSV…**,
-takes a CSV file (first row = column names; comma, semicolon or tab). Chips of features not
+측정, distance bands, Coloc 2, line profile, FRAP, batch results); the last one, **파일 불러오기…**
+(Import file), takes CSV · TSV · TXT and Excel (.xlsx / .xlsm, .xls) tables this app did not write
+(v0.73, see [Importing a table](#importing-a-table-csv--excel)). Chips of features not
 analysed yet are dimmed; their tool tip says what to do first. A chip opens the **새 그래프**
 window, where three steps are set in turn next to a preview:
 
@@ -52,6 +53,22 @@ window, where three steps are set in turn next to a preview:
 
 **그래프 만들기** adds the graph to the sidebar. The three steps can be changed any time in the
 inspector's **데이터** tab.
+
+## Importing a table (CSV · Excel)
+
+After picking a file with the **파일 불러오기…** chip (or **파일 불러오기… (CSV · Excel)** in the data
+list), the 새 그래프 window starts with an **import** step before kind → axes → groups.
+
+- **How to Read**: **Sheet** (Excel), **Item name row** (auto = the first text row above the number rows),
+  **Decimal mark** (point 1.5 / comma 1,5), **Items run** (one item per column (long table) / one item per
+  row (wide table)), **column names are groups (wide table as in Prism)**.
+- **Preview · Column Roles**: pick each column's role in the top row: name = the name of one point (image,
+  sample), group = the sets to compare, category = a text column to split by, value = numbers to plot,
+  leave out = unused.
+- **Groups**: **group column as is**, **from the names automatically** (drops channel marks `- C=1`, the
+  extension `.oir` and a trailing number `_0001`, then groups equal names), **split names at a separator**
+  (separator · pieces from the front), **remove a common prefix**. Rename in **Groups found** by
+  double-clicking; giving two groups the same name joins them.
 
 ## Layout
 

@@ -5,12 +5,16 @@ mito objects. With a protein-of-interest (POI) channel it also measures the sign
 colocalisation (Pearson, Manders) and green+ / green− cells. The code is Mito Analyzer 1.8.0's own, so the
 same cell ROIs give the same numbers as Mito Analyzer.
 
-Open: Tool › **mitoROI** › mitoROI 탭 열기 (or the View menu). Find the cells in the 세포질 ROI tab first.
+Open: Tool › 검출 › **mitoROI** › mitoROI 탭 열기 (or the View menu). Find the cells in the 세포질 ROI tab first.
+
+> **v0.73**: mitoROI belongs to **detection** (finding mitochondria · POI); the skeleton morphology is measured
+> in the separate [미토 형태 (MiNA) tab](#미토-형태-mina-tab-v073). Run with **Measure This Image / Measure All
+> Images** on the measure bar under the inspector.
 
 ## Running
 
-- **분석 실행**: the current image. **모든 이미지에 실행**: every image with cell ROIs. The batch step
-  **mitoROI** does the same.
+- **분석 실행**: the current image. **모든 이미지에 실행**: every image with cell ROIs. The [pipeline](24-pipeline.md)
+  stage **Detect › Mito ROI** does the same.
 
 ## 1 채널 · 세포 (channels and cells)
 
@@ -57,6 +61,18 @@ numbers. The cell picked in the table gets a yellow outline.
 - 파일 › 내보내기 › **mitoROI**: Mito Analyzer's names `<name>_per_cell.csv`, `_per_mito.csv`,
   `_green_puncta.csv`, `_correlations.csv`, `_mito_RoiSet.zip`, and `mito_per_cell.csv` … for all images.
 - Results are saved in projects.
+
+## 미토 형태 (MiNA) tab (v0.73)
+
+**Tool › 측정 › 미토 형태 (MiNA)**. Measures the form of the mitochondria (mito ROIs) found by the mitoROI tab with MiNA.
+
+- **1 대상 object** (target object): **mitoROI 미토 조각** (with the number of images that have mito ROIs). Find
+  the mitochondria in the mitoROI tab first.
+- **2 측정 항목** (measured items): per cell footprint, networks, branch count · length, donuts; per fragment
+  skeleton length (`length_um`), branches (`n_branches`), junctions, end points, axes, solidity. It is Mito
+  Analyzer 1.8's code, so the same mask gives the same numbers as mitoROI's MiNA columns.
+- Data: `미토 형태 (MiNA) · 세포`, `미토 형태 (MiNA) · 미토 조각`. Export › **미토 형태 (MiNA)**:
+  `<name>_mina_per_cell.csv`, `<name>_mina_per_mito.csv`. Pipeline stage **Measurement › Mito morphology (MiNA)**.
 
 ## Main columns
 

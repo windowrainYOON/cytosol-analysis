@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.72.1)
+## Window structure (v0.73.0)
 
 - **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
   v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
@@ -218,6 +218,38 @@ owner writes in Korean, so reply in Korean.
   `bands_tab`; band edges drawn only while the tab is shown. Projects keep it
   as panel `bands` + `intensity_bands`, older projects' band keys under
   `intensity` are read via `bands_panel.LEGACY_KEYS`.
+- **파이프라인** (owner request + approval 2026-11-24, design v3.x in
+  `/mnt/project-files/pipeline/`, v0.73; `pipeline.py` engine, `pipeline_window.py`
+  window + `ReviewBand`, `pipeline_presets.py`, `pipe.py` CLI): 파일 › 파이프라인… (⇧⌘P) /
+  파이프라인 보관함… replace 일괄 분석 실행 / 설정 저장·불러오기 (old batch JSON converts via
+  `PipelineSpec.from_batch`; 측정 현황 · 일괄 분석 stays). `STAGES` (groups start / detect /
+  track / op / measure / human / end, `stage_rank`: a human.review stays after the stage before
+  it); stages make named `PipeObject`s (`objects_of(it)`, `it.pipe_objects`, reset only by
+  detect / track stages); tab stages run through `batch.run` with their stored settings applied
+  by `_Settings` (widget_state / restore_widgets). Result folder `<data parent>/Processed/
+  <data>_<pipeline>_<date>_<time>` (pipeline.json, project.cyproj, README.txt, summary.json,
+  progress.jsonl, review_log.csv, 1_통합데이터 / 2_그래프 / 3_이미지). Review chips in the image
+  list (`image_tree.CHIPS`, `ImageTree.chips`, `pipeline.review_chips`, `nucleus_odd`). A new
+  analysis feature gets a `STAGES` entry (and a `batch.STEPS` entry it runs through).
+  **Running analyses for the owner headless** (Remote Control, unattended): `python3 -m
+  cytosol.pipe inspect <folder>` → `presets` → `new my.cypipe --from <preset>` / `edit --set` →
+  `validate --folder` → `run --dry-run` → `run [--background]` → read `summary.json`.
+- **Tool groups** (v0.73): Tool › 검출 (세포질 ROI, 입자 ROI, mitoROI) / 추적 (입자 추적,
+  세포질 강도 추적) / 측정 (등거리 띠, Coloc 2, FRAP 측정, 미토 형태 (MiNA)). No 강도 측정 tab
+  (`MainWindow.HIDDEN_TABS = ('intensity_tab',)`, `export_dialog.HIDDEN_KINDS`; the panel stays
+  for old projects and the pipeline), no 스택 / 라인 프로파일 tabs: canvas view icons
+  `view_btns` [라인 프로파일 · 단면 · 3D 투영] (`canvas_views.SectionView` / `View3DPane`,
+  `gl3d` OpenGL volume view with CPU fallback, `vol3d.VolumeCache` pre-render of every
+  timepoint; Preferences › 3D 스택 보기 / 단면 보기), the profile plot + `profile_strip` in the
+  live box. LUT presets / marker settings: 파일 › 불러오기 and export kind `settings`.
+- **세포질 강도 추적 tab** (`cyto_track_tab`, `cell_track.py`, `cell_track_panel.py`): cells per
+  frame (ParticleTracker RI cells / 세포질 ROI / 입자 추적's cells), overlap linking after optical
+  flow, division / edge exclusion, ring background, condition filters; export kind `cyto_track`,
+  pipeline stage `track.cytosol`. **미토 형태 (MiNA) tab** (`mina_tab`, `mina_panel.py`): MiNA on
+  mitoROI's fragments (mitoROI = detection). **입자 추적 › 6 신호 변화 트랙** (`track_change.py`:
+  tracking score, 켜짐 / 켜짐→꺼짐 / 꺼짐, pass-by frames; export `track_change`).
+  Exports run in the background with progress and cancel (`ExportDialog`); graph window
+  파일 불러오기… reads CSV / Excel (`table_import.py`, `table_import_page.py`).
 - **측정 바** (owner request 2026-11-15, v0.68; `measure_bar.MeasureBar` =
   `MainWindow.measure_bar`): 이 이미지만 측정 / 전체 이미지 측정 fixed at the
   bottom of the inspector box, shown only for tabs in `MainWindow.measurers`
@@ -384,6 +416,12 @@ per-widget style sheets.
 | `measure_bar.py` | 측정 바 at the bottom of the inspector (`MeasureBar`, `Measurer`), `DataRows`, `grow_to_content` |
 | `integrate.py` | 통합 데이터: per-category tables from every measurement, column notes, `integrated_*.csv` |
 | `i18n.py`, `i18n_en.py` | 화면 언어 (한국어 / English): Qt setter / getter wrapping, translation tables |
+| `pipeline.py`, `pipeline_window.py`, `pipeline_presets.py`, `pipe.py` | 파이프라인: stage schema, objects, operations, measurements, runner + result folder; window, review band, library; presets; headless CLI `python3 -m cytosol.pipe` |
+| `cell_track.py`, `cell_track_panel.py` | 세포질 강도 추적 tab: cells per frame, linking, exclusion, intensities, filters |
+| `track_change.py` | 입자 추적 › 6 신호 변화 트랙: tracking score, on / off kinds, outputs |
+| `mina_panel.py` | 미토 형태 (MiNA) tab on mitoROI fragments |
+| `canvas_views.py`, `gl3d.py`, `vol3d.py` | Canvas view icons: section view, GPU 3D projection (OpenGL, CPU fallback), volume pre-render cache |
+| `table_import.py`, `table_import_page.py` | Graph window 파일 불러오기: CSV / Excel tables, column roles, groups |
 | `app.py` | `MainWindow`, `Canvas`, menus, loading (`import_paths`, `add_files`, `_attach_file`), projects |
 
 ## Project files (`.cyproj`)
@@ -535,4 +573,5 @@ not affected.
 | dev branch | 0.71.0 | Owner request (2026-11-18): output data matched to ParticleTracker: export 입자 추적 › **ParticleTracker 결과 폴더** (`track_ptdir` on, `track_ptfig` on, `track_ptmovie` off; `<stem>_ParticleTracker/`): with the ParticleTracker method every CSV, `particle_labels.tif`, `config_used.yaml`, appearance JSON byte-equal to ParticleTracker's on BafA1 P02 (dataset.json differs only by name / out_dir), its 9 PNGs and 7 MP4s by its own code (`ptcore/plots`, `movies`); this app's method writes the same names and columns (empty where it has no value). Docs 17 / 21 |
 | dev branch | 0.72.0 | Owner request (2026-11-19, after the 261118 pHrodo / Cy5-PRD batch; mockup v2 approved): 입자 추적 **5 신호 기준 (긴 트랙)** card: split long tracks by a channel's signal (ROI max / mean ≥ that channel's LUT Min in ≥ n frames) instead of inside / outside; histogram + Min / Max sliders that are the LUT tab's values (both ways, `lut_changed`), Auto / Min/Max / 전체 이미지에 적용, canvas rings preview, chips / summary / tables follow; export 입자 추적 › 신호 기준 (`track_signal`, `track_signal_all`); `from_pt` keeps `I_B_max` as `I_<measure>_max`; `scripts/batch_folder.py` (+ `run_batch_bg.sh`, `track_green*.py`, `track_integrate.py`) for headless batch runs. Docs 21 |
 | dev branch | 0.72.1 | Crash fix (owner report 2026-11-20: the app quit while making a graph from 그래프 편집 창 › 데이터 › CSV 불러오기…; macOS report: segmentation fault in the backing-store flush under the 새 그래프 window opened from the data list's click): the graph window's tool chips no longer get a `QGraphicsOpacityEffect` (replacing it on every `refresh_chips` segfaulted, also in the self-test on macOS; disabled chips use the style sheet's `:disabled` look), the data list / chips open the file chooser and the 새 그래프 window after the click handler returns (`QTimer.singleShot(0)`; finishing the wizard rebuilds that list and deleted the clicked item under `QTreeView::mouseReleaseEvent`) |
+| dev branch | 0.73.0 | Owner approval (2026-11-24 10:54, "지금까지 수정 사항 전부 반영해서 개발 시작해", pipeline design v3.x + mockups pipe-1…22): **파이프라인** (stages 시작 / 검출 / 추적 / 연산 / 측정 / 사람 / 끝, named objects, operations with conditions, object × channel measurement, review stops with a band + list chips, result folder under `Processed/`, presets, library, `cytosol-pipe` CLI) replacing 일괄 분석 and the 강도 측정 tab; Tool › 검출 / 추적 / 측정; canvas icons 라인 프로파일 · 단면 · 3D 투영 (GPU, pre-rendered time series, 3-axis rotation) replacing the 스택 / 라인 프로파일 tabs; mitoROI detection + 미토 형태 (MiNA) tab; 세포질 강도 추적 tab; 입자 추적 › 6 신호 변화 트랙; background export with cancel; graph CSV / Excel import; docs 24 / 25 |
 | #50 (main) | 0.53.0 (main) | 핵 다시 찾기: nuclei re-detected inside the (edited) cell ROIs, cells untouched, one nucleus per cell, each cell its own threshold (자동 = own LUT stretch + Otsu over the cell and a 2 µm ring, or a manual value per cell, live), noise in nucleus-free cells dropped (`cellroi.cell_nucleus`, `CellRois.redetect_nucleus`, `nuc_thr` saved in projects); PRD 24h ref-cell nucleus IoU 0.969 |

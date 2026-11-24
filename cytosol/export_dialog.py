@@ -191,6 +191,7 @@ KINDS: dict = {
         ]),
     ]),
 }
+HIDDEN_KINDS = ('intensity',)  # 강도 측정 tab → pipeline (v0.73)
 DEFAULT_KINDS = ('integrated', 'image', 'crop', 'roi', 'particle')
 # image options that live on the main window (exp_*, saved in projects)
 RGB_FORMATS = (('tif', 'TIFF 스택'), ('mp4', 'MP4 동영상'), ('both', 'TIFF + MP4'))
@@ -287,6 +288,8 @@ class ExportDialog(QDialog):
         if 'integrated' not in saved.get('known', ['integrated']):
             on_kinds.add('integrated')  # new in v0.68: on until the user turns it off
         for key, (title, cards) in KINDS.items():
+            if key in HIDDEN_KINDS:
+                continue
             it = QTreeWidgetItem([title, ''])
             it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             it.setCheckState(0, Qt.CheckState.Checked if key in on_kinds else Qt.CheckState.Unchecked)
