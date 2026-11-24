@@ -265,12 +265,13 @@ def _wrap_items(cls):
     add, ins, set_text, adds, inss = cls.addItem, cls.insertItem, cls.setItemText, cls.addItems, cls.insertItems
 
     def _src(self, i, src):
-        m = self.model()
-        it = m.index(i, 0)
+        # through the combo itself, not self.model(): a fresh model() wrapper can
+        # come back as a stale object of another type at a reused address
+        # (seen as a QWidgetItem on Linux), like the spacer items of v0.68.1
         if isinstance(src, str) and HAN.search(src):
-            m.setData(it, src, ROLE_SRC)
-        elif m.data(it, ROLE_SRC):
-            m.setData(it, None, ROLE_SRC)
+            self.setItemData(i, src, ROLE_SRC)
+        elif self.itemData(i, ROLE_SRC):
+            self.setItemData(i, None, ROLE_SRC)
 
     def addItem(self, *a, **k):
         a = list(a)
