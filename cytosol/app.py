@@ -3975,6 +3975,11 @@ class MainWindow(QMainWindow):
                 b.blockSignals(True)
                 b.setChecked(m == mode)
                 b.blockSignals(False)
+                a = getattr(self, 'view_mode_actions', {}).get(m)
+                if a is not None:  # the View command follows its icon
+                    a.blockSignals(True)
+                    a.setChecked(m == mode)
+                    a.blockSignals(False)
             return
         old = self.view_mode
         self.view_mode = mode
@@ -3982,6 +3987,11 @@ class MainWindow(QMainWindow):
             b.blockSignals(True)
             b.setChecked(m == mode)
             b.blockSignals(False)
+            a = getattr(self, 'view_mode_actions', {}).get(m)
+            if a is not None:  # the View command follows its icon
+                a.blockSignals(True)
+                a.setChecked(m == mode)
+                a.blockSignals(False)
         self.profile_panel.draw_btn.blockSignals(True)
         self.profile_panel.draw_btn.setChecked(mode == 'line')
         self.profile_panel.draw_btn.blockSignals(False)
