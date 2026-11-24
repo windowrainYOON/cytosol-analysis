@@ -1438,6 +1438,10 @@ def pipeline_step(out: Path):
               'project.cyproj', '1_통합데이터/세기.csv'):
         if not (dest / f).exists():
             raise AssertionError(f'missing {f}')
+    if not any((dest / '3_이미지').rglob('*.zip')):   # no kind picked: the tabs' export defaults (ROI zips)
+        raise AssertionError('no per-image export files')
+    if not P.default_export_opts(['track']).get('track_ptdir'):
+        raise AssertionError('track export defaults')
     summ = json.loads((dest / 'summary.json').read_text(encoding='utf-8'))
     if summ['images'] != 3 or summ['status'] != 'done' or summ['tables']['세기'] < 3:
         raise AssertionError(summ)
