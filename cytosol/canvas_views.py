@@ -299,7 +299,7 @@ class _ModePane(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
-        top = QHBoxLayout()
+        self.top = top = QHBoxLayout()
         self.status = theme.StatusLabel('', 'info')
         self.status.setWordWrap(False)
         self.right = theme.StatusLabel('', 'neutral')
@@ -327,7 +327,8 @@ class SectionPane(_ModePane):
         self.mip_check = QCheckBox('MIP')
         self.mip_check.setToolTip('XY 패널을 Z 최대 투영(MIP)으로 보기 · 오른쪽 · 아래 단면은 그대로')
         self.mip_check.toggled.connect(self._mip_toggled)
-        self.bottom.insertWidget(0, self.mip_check)
+        # in the top row (design system: no controls on the bottom edge)
+        self.top.insertWidget(1, self.mip_check)
 
     def _mip_toggled(self, on):
         self.view.set_mip(on)

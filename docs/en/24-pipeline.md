@@ -14,7 +14,7 @@ Open the window with **File › Pipeline…** (`⇧⌘P`). **File › New Pipeli
 empty pipeline without stages (the window also starts empty the first time). **File › Pipeline
 Library…** shows saved pipelines and the built-in presets as cards; each card lists its stages from top to
 bottom as chips joined by ↓, the group name (Detect · Track · Measure …) beside the first stage of a group,
-review stages as orange chips and switched-off stages greyed. Opening a `.cypipe` file or an old batch-analysis
+review stages as blue chips and switched-off stages greyed. Opening a `.cypipe` file or an old batch-analysis
 settings file (`.json`) with **Import** opens this window too.
 
 ## Window

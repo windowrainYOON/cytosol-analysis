@@ -4980,6 +4980,8 @@ EN.update({
         'Ruler\nDraw a line to measure its length (1 µm ticks, Shift: 0° / 45° / 90°)\nThe line goes when this is off.',
     '단계가 없는 빈 파이프라인을 파이프라인 창에서 만듭니다.': 'Makes an empty pipeline (no stages) in the pipeline window.',
     '단계 없음': 'No stages',
+    '자': 'Ruler',
+    '3D 투영 보기': '3D Projection View',
 })
 TEMPLATES.update({
     'MIP · z 1–{}': 'MIP · z 1–{}',

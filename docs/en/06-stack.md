@@ -37,7 +37,7 @@ section (YZ) on the right, at one scale. Clicking or dragging the point in XY mo
 clicking a section moves Z there (yellow dashed line on the sections). **Preferences › Section View**:
 **Section layout**, **Show cut lines**, **Z spacing as in 3D Stack View**.
 
-- **MIP** check box (bottom row, v0.74): on = the XY panel is the Z maximum projection (MIP); the Y section on
+- **MIP** check box (top row, v0.74): on = the XY panel is the Z maximum projection (MIP); the Y section on
   the right and the X section below stay the cuts at the clicked point (the yellow Z line is hidden). Coming
   from the main view with MIP on opens the section view with it on.
 - **Scale bars** (v0.74): each panel (XY, Y section, X section) gets a white bar with its length (e.g. 2 µm) at

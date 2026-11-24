@@ -126,8 +126,8 @@ def stage_flow_widget(spec):
             theme.secondary(lab)
             grid.addWidget(lab, row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             last = g
-        chip = _status_chip(title + ('' if on else ' · 꺼짐'), 'warning' if g == 'human' else
-                            'neutral' if on else 'neutral')
+        # review = info (as the list chips, AnalysisPipeline §5), other stages neutral
+        chip = _status_chip(title + ('' if on else ' · 꺼짐'), 'info' if g == 'human' else 'neutral')
         chip.setWordWrap(False)
         chip.setEnabled(on)
         grid.addWidget(chip, row, 1, Qt.AlignmentFlag.AlignLeft)
@@ -1606,16 +1606,16 @@ class LibraryDialog(QDialog):
         self.resize(1040, 700)
         lay = QVBoxLayout(self)
         bar = QHBoxLayout()
-        new = QPushButton('새 파이프라인')
+        new = theme.prominent(QPushButton('새 파이프라인'))  # the one main action (AnalysisPipeline §6)
         new.clicked.connect(lambda: self._open(P.PipelineSpec()))  # empty (owner request 2026-11-24)
         load = QPushButton('파일에서 불러오기…')
         load.clicked.connect(self._load)
-        bar.addWidget(new)
-        bar.addWidget(load)
-        bar.addStretch()
         hint = QLabel(str(P.library_dir()))
         theme.secondary(hint)
-        bar.addWidget(hint)
+        bar.addWidget(hint)  # leading: where the library lives; trailing: the actions
+        bar.addStretch()
+        bar.addWidget(load)
+        bar.addWidget(new)
         lay.addLayout(bar)
         area = QScrollArea()
         area.setWidgetResizable(True)

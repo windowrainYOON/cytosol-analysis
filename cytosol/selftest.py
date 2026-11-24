@@ -1284,6 +1284,8 @@ def run(out_dir) -> int:
         app.processEvents()
         if win.view_mode != 'ruler' or not win.canvas.ruler_mode or win.line_btn.isChecked():
             raise AssertionError('ruler icon')
+        if not win.view_mode_actions['ruler'].isChecked() or win.view_mode_actions['line'].isChecked():
+            raise AssertionError('View › 자 not in step with the icon')
         win.canvas.show_ruler((2.0, 3.0, 40.0, 3.0))
         um = win.current.pixel_um
         tk = ruler.ticks(win.canvas.ruler_line(), um)
@@ -1294,6 +1296,12 @@ def run(out_dir) -> int:
         app.processEvents()
         if win.canvas.ruler_line() is not None or win.view_mode:
             raise AssertionError('ruler kept after the icon went off')
+        win.view_mode_actions['sect'].setChecked(True)  # the View command turns the icon on
+        app.processEvents()
+        if win.view_mode != 'sect' or not win.view_btns['sect'].isChecked():
+            raise AssertionError('View › 단면 보기')
+        win.view_mode_actions['sect'].setChecked(False)
+        app.processEvents()
         win.coloc_panel.whole.setChecked(True)
         win.coloc_panel.nrand.setValue(3)
         win.coloc_panel._run([win.current])

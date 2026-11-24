@@ -2125,6 +2125,19 @@ class MainWindow(QMainWindow):
             if name not in grouped and name not in self.HIDDEN_TABS:
                 self._view_tab_action(view, name)
         view.addSeparator()
+        # canvas view icons also as menu commands with shortcuts (design system:
+        # nothing only on a toolbar), checked in step with the icons
+        self.view_mode_actions = {}
+        for mode, text, key in (('line', '라인 프로파일', 'Ctrl+Alt+L'), ('ruler', '자', 'Ctrl+Alt+R'),
+                                ('sect', '단면 보기', 'Ctrl+Alt+S'), ('3d', '3D 투영 보기', 'Ctrl+Alt+3')):
+            a = QAction(text, self, checkable=True)
+            a.setShortcut(QKeySequence(key))
+            a.setChecked(self.view_btns[mode].isChecked())
+            a.toggled.connect(self.view_btns[mode].setChecked)
+            self.view_btns[mode].toggled.connect(a.setChecked)
+            view.addAction(a)
+            self.view_mode_actions[mode] = a
+        view.addSeparator()
         act(view, '모든 기능 탭 열기', lambda: [self.show_tab(n, focus=False) for n in self.tab_pages
                                               if n not in self.HIDDEN_TABS])
         act(view, '모든 기능 탭 닫기', lambda: [self.hide_tab(n) for n in self.tab_pages],
