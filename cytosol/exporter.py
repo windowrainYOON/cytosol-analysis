@@ -401,6 +401,8 @@ def _tracks(win, items, out, opts, where):
         names = {'입자 추적 · 시점': 'tracks_points.csv', '입자 추적 · 트랙': 'tracks_summary.csv',
                  '입자 추적 · 세포 × 시점': 'tracks_cells.csv'}
         for name, _u, rows in tp.data_tables():
+            if name not in names:      # 신호 변화 트랙 / 트래킹 점수: written under 신호 변화 통합
+                continue
             if rows and [i for i in items if i.tracks is not None]:
                 ids = {i.image_id for i in items}
                 rows = [r for r in rows if r.get('image_id') in ids]

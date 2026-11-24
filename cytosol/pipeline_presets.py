@@ -21,6 +21,7 @@ def M(*targets, stats=('Area', 'Mean', 'IntDen'), bg='none', name=''):
         'targets': [{'object': t, 'channels': []} for t in targets], 'stats': list(stats), 'bg': bg, 'name': name}}
 
 
+ON = {'checked': True}
 REVIEW = {'kind': 'human.review', 'settings': {'images': ['chips']}}
 END = [{'kind': 'end.export', 'settings': {}}]
 
@@ -37,8 +38,9 @@ PRESETS = [
         M('세포질', '입자', '세포질 (입자 뺀)'),
         S('measure.count', object='입자', parent='세포'),
         S('measure.bands'), REVIEW, *END]),
-    P('261118 TCF', 'TCF RI + FL: ParticleTracker 방식 입자 추적, 5 신호 기준, 6 신호 변화 트랙', [
-        S('start.auto_group'), S('track.particles'),
+    P('261118 TCF', 'TCF RI + FL: ParticleTracker 방식 입자 추적, 5 신호 기준 (green ≥ 5, 3 프레임), 6 신호 변화 트랙', [
+        S('start.auto_group'),
+        S('track.particles', panel={'sig_on': ON, 'chg_on': ON}, signal_thr=5),
         M('입자 트랙', name='입자 추적 · 점'), *END]),
     P('세포질 세기', '세포 · 핵 → 세포질 Mean / IntDen (배경 = 세포 밖 중앙값)', [
         S('detect.cells'), M('세포', '핵', '세포질', bg='outside'), REVIEW, *END]),
@@ -48,8 +50,9 @@ PRESETS = [
         S('track.particles'), OP('입자 트랙', '신호 트랙', conds=[['class', '=', 'signal']]),
         M('신호 트랙'), *END]),
     P('FRAP', 'FRAP 측정 탭의 설정으로 회복 곡선', [S('start.auto_group'), S('measure.frap'), *END]),
-    P('세포질 강도 추적 + 변화 필터', '세포 추적 → 분열 · 가장자리 제외 → 필터 1 세포', [
-        S('start.auto_group'), S('track.cytosol'),
+    P('세포질 강도 추적 + 변화 필터', '입자 추적 (ParticleTracker 세포) → 세포 추적 (같은 세포 · 형광 격자) → 분열 · '
+      '가장자리 제외 → 필터 1 세포', [
+        S('start.auto_group'), S('track.particles'), S('track.cytosol', cell_track={'algorithm': 'particle'}),
         OP('세포 트랙', '바뀐 세포', conds=[['divided', 'no'], ['edge', 'no']]),
         M('바뀐 세포', name='세포질 강도 추적 · 고른 세포'), *END]),
     P('Mito Analyzer (형태)', '세포 → 미토 ROI → MiNA', [

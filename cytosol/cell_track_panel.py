@@ -537,6 +537,7 @@ class CellTrackPanel(QWidget):
         if s.frame1 == 1 and T > 1 and s.frame0 == 1:
             f1 = T - 1
         frames = list(range(f0, f1 + 1))
+        frames0 = list(frames)
         if len(frames) < 2:
             raise ValueError('프레임이 둘 이상이어야 합니다.')
         z = (s.z_project if it.nz > 1 and s.z_project else it.z)
@@ -566,6 +567,7 @@ class CellTrackPanel(QWidget):
                 nucs.append(np.asarray(p[ni], np.float32) if ni is not None else None)
             say(f'세포질 강도 추적: 프레임 읽기 {k + 1}/{len(frames)}')
         detector = ''
+        native = False
         flows = None
         nuc_labels = [None] * len(frames)
         if s.algorithm == 'pt':
@@ -586,6 +588,19 @@ class CellTrackPanel(QWidget):
             frames = frames[:len(labs)]
             th = th[:len(labs)]
             detector = '입자 추적 (ParticleTracker) 세포'
+            say('세포질 강도 추적: ParticleTracker 형광 격자 읽기')
+            ref_name = it.channels[ri] if ri is not None else (pt['sources']['reference'].rsplit('::', 1)[-1])
+            nat = CT.pt_native(pt, it.channels[mi], ref_name)
+            if nat is not None:   # measured as ParticleTracker's grid (the 2026-11-19 세포 단위 밝기)
+                nl, nm, nr, npx = nat
+                keep = [k for k, t in enumerate(frames) if t < len(nl)]
+                frames, th = [frames[k] for k in keep], [th[k] for k in keep]
+                labs = [nl[t] for t in frames]
+                meas = [nm[t] for t in frames]
+                ref = [nr[t] if nr is not None else None for t in frames]
+                px, native = npx, True
+                S_ht, reg_ht = float(pt['S']), pt['reg']
+                detector = '입자 추적 (ParticleTracker) 세포 · 형광 격자'
         else:
             rp = self.win.roi_panel
             p = self.win.track_panel._cell_params(it)
@@ -601,24 +616,33 @@ class CellTrackPanel(QWidget):
                 flows = CT.image_flows(cells_img, say)
             detector = f'{it.channels[ci]} 세포' + (f' + {it.channels[ni]} 핵' if ni is not None else '')
         say('세포질 강도 추적: 세포 잇기')
-        linked, split = CT.link(labs, s.overlap, s.gap, flows if s.flow else None)
+        if s.algorithm == 'particle':
+            linked, split = labs, set()      # ParticleTracker's cell IDs are linked already
+        else:
+            linked, split = CT.link(labs, s.overlap, s.gap, flows if s.flow else None)
         divided = set()
         if s.div_mode in ('split', 'both'):
             divided |= split
         if s.div_mode in ('ri', 'both') and is_ri(cells_img[0]):
             try:
-                divided |= CT.ri_mitotic(np.stack(cells_img), linked)
+                divided |= CT.ri_mitotic(np.stack([cells_img[frames0.index(t)] for t in frames]),
+                                         [CID[t].astype(np.int32) for t in frames] if native else linked)
             except Exception:  # noqa: BLE001
                 traceback.print_exc()
-        thr = CT.early_threshold(meas, th, s.thr_until_min, s.thr_pct) if s.thr_on else float('nan')
+        thr = CT.early_threshold(meas, th, s.thr_until_min, s.thr_pct, 1 if native else 2) \
+            if s.thr_on else float('nan')
         rows = []
         for k, t in enumerate(frames):
-            for r in CT.measure_frame(linked[k], nuc_labels[k], meas[k], ref[k], px, s, thr, s.edge_px):
+            for r in CT.measure_frame(linked[k], nuc_labels[k] if not native else None, meas[k], ref[k], px, s,
+                                      thr, s.edge_px, *((50, True) if native else ())):
                 r.update(frame=t + 1, time_h=th[k])
+                if native:   # centre on the image (HT) grid for the canvas
+                    r['x'] = float((r['x'] + .5) * S_ht - .5 + reg_ht.dx_ht.values[t])
+                    r['y'] = float((r['y'] + .5) * S_ht - .5 + reg_ht.dy_ht.values[t])
                 rows.append(r)
             say(f'세포질 강도 추적: 측정 {k + 1}/{len(frames)}')
         CT.add_changes(rows, s.base_h)
-        return CT.CellTrackState(settings=s.to_dict(), frames=frames, times_h=th, labels=CT.pack_labels(linked),
+        return CT.CellTrackState(settings=s.to_dict(), frames=frames, times_h=th, labels=CT.pack_labels([CID[t].astype(np.int32) for t in frames] if native else linked),
                                  rows=rows, divided=sorted(divided), threshold=thr, detector=detector)
 
     def run_current(self, item=None):

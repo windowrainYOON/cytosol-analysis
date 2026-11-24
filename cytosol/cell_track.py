@@ -166,6 +166,56 @@ def pt_cell_labels(ht_stack, px_um, flow=True, progress=None):
     return labs, flows
 
 
+def pt_native(pt, measure, ref=''):
+    """The cells of a ParticleTracker-method 입자 추적 run on ParticleTracker's
+    own fluorescence grid, as the 2026-11-19 세포 단위 밝기 analysis measured
+    them (scripts/cell_local_bg.py, cell_green_thr.py): cell IDs = its cell
+    labels (CID, already linked), sampled at each fluorescence pixel's place on
+    the HT grid after that frame's registration; channels as it reads them
+    (MIP, measure channel aligned to the reference). ``measure`` / ``ref`` are
+    channel names ('CH0 ex474/em515' or 'CH0'). Returns (labels per frame,
+    measure stack, reference stack or None, fluorescence pixel µm) or None
+    when the channels are not the run's reference / measure channels."""
+    from . import pt_engine
+    from .ptcore import registration
+    from .ptcore.io_utils import split_source
+    path, ref_ch = split_source(pt['sources']['reference'])
+    mea_ch = split_source(pt['sources']['measure'])[1]
+    want = {pt_engine.tcf_channel(measure), pt_engine.tcf_channel(ref) if ref else mea_ch}
+    if not want <= {ref_ch, mea_ch}:
+        return None
+    arr = pt_engine._unpack(pt['arrays'])
+    CID, reg, S = arr['CID'], pt['reg'], float(pt['S'])
+    A, B, _HT = pt_engine.load(path, ref_ch, mea_ch, pt.get('zmode') or 'mip')
+    if pt.get('frames') is not None:
+        A, B = A[pt['frames']], B[pt['frames']]
+    Bal = registration.align_b(B, reg)
+    del B
+    stacks = {ref_ch: A, mea_ch: Bal}
+    T, NF, NW = A.shape
+    NH, NHW = CID.shape[1:]
+    yy, xx = np.arange(NF), np.arange(NW)
+    labs = []
+    for z in range(min(T, len(CID))):
+        hy = np.clip(np.round((yy + .5) * S - .5 + reg.dy_ht.values[z]).astype(int), 0, NH - 1)
+        hx = np.clip(np.round((xx + .5) * S - .5 + reg.dx_ht.values[z]).astype(int), 0, NHW - 1)
+        labs.append(np.asarray(CID[z][np.ix_(hy, hx)], np.int32))
+    px = fl_pixel_um(path)
+    meas = stacks[pt_engine.tcf_channel(measure)]
+    rs = stacks[pt_engine.tcf_channel(ref)] if ref else None
+    return labs, meas, rs, px
+
+
+def fl_pixel_um(path) -> float:
+    """Fluorescence pixel size of a TCF (3DFL / 2DFLMIP ResolutionX)."""
+    import h5py
+    with h5py.File(str(path), 'r') as f:
+        for g in ('Data/3DFL', 'Data/2DFLMIP'):
+            if g in f and 'ResolutionX' in f[g].attrs:
+                return float(np.asarray(f[g].attrs['ResolutionX']).ravel()[0])
+    return 0.1125
+
+
 def image_flows(stack, progress=None):
     """Optical flow between consecutive frames of a cell image (T-1, 2, H, W)."""
     from .tracking import cell_flow
@@ -277,15 +327,17 @@ def ri_mitotic(ht_stack, labs) -> set:
 # measuring
 # ---------------------------------------------------------------------------
 
-def early_threshold(planes_by_frame, times_h, until_min, pct) -> float:
+def early_threshold(planes_by_frame, times_h, until_min, pct, step=2) -> float:
     """The given percentile of the measure channel's pixels in the frames up
-    to ``until_min`` minutes (at least the first frame)."""
+    to ``until_min`` minutes (at least the first frame); every ``step``-th
+    pixel (1 = all, as the ParticleTracker-grid measurement)."""
     sel = [p for p, t in zip(planes_by_frame, times_h) if t * 60 <= until_min + 1e-9] or planes_by_frame[:1]
-    v = np.concatenate([np.asarray(p, np.float32)[::2, ::2].ravel() for p in sel])
+    v = np.concatenate([np.asarray(p, np.float32)[::step, ::step].ravel() for p in sel])
     return float(np.percentile(v, pct)) if v.size else float('nan')
 
 
-def measure_frame(lab, nuc, meas, ref, px_um, s: CellTrackSettings, thr=float('nan'), edge_px=3):
+def measure_frame(lab, nuc, meas, ref, px_um, s: CellTrackSettings, thr=float('nan'), edge_px=3,
+                  min_ring=20, drop_small_ring=False):
     """Rows of one frame: per linked cell ID the region means, own ring
     background, early-threshold value, ratio, area and edge contact."""
     H, W = lab.shape
@@ -307,6 +359,8 @@ def measure_frame(lab, nuc, meas, ref, px_um, s: CellTrackSettings, thr=float('n
                 reg = cell
         d = ndi.distance_transform_edt(~cell)
         ring = (d > rin) & (d <= rout) & free[y0:y1, x0:x1]
+        if drop_small_ring and ring.sum() < min_ring:
+            continue                     # no background of its own (ParticleTracker-grid cells)
         ys, xs = np.nonzero(cell)
         r = dict(cell_id=int(i), area_um2=float(cell.sum() * px_um * px_um), x=float(xs.mean() + x0),
                  y=float(ys.mean() + y0),
@@ -314,7 +368,7 @@ def measure_frame(lab, nuc, meas, ref, px_um, s: CellTrackSettings, thr=float('n
                            sl[1].stop > W - edge_px), ring_px=int(ring.sum()))
         m = meas[y0:y1, x0:x1].astype(float)
         r['I_raw'] = float(m[reg].mean())
-        r['bg'] = float(m[ring].mean()) if ring.sum() >= 20 else float('nan')
+        r['bg'] = float(m[ring].mean()) if ring.sum() >= min_ring else float('nan')
         r['I'] = r['I_raw'] - r['bg'] if np.isfinite(r['bg']) else float('nan')
         if np.isfinite(thr):
             r['I_thr'] = float(np.where(m[reg] > thr, m[reg], 0.0).mean())
@@ -324,7 +378,7 @@ def measure_frame(lab, nuc, meas, ref, px_um, s: CellTrackSettings, thr=float('n
         if ref is not None:
             a = ref[y0:y1, x0:x1].astype(float)
             r['R_raw'] = float(a[reg].mean())
-            r['R_bg'] = float(a[ring].mean()) if ring.sum() >= 20 else float('nan')
+            r['R_bg'] = float(a[ring].mean()) if ring.sum() >= min_ring else float('nan')
             r['R'] = r['R_raw'] - r['R_bg'] if np.isfinite(r['R_bg']) else float('nan')
             num = r['I_thr'] if s.thr_on and np.isfinite(r['I_thr']) else r['I']
             r['ratio'] = num / r['R'] if np.isfinite(r['R']) and r['R'] > 0 else float('nan')

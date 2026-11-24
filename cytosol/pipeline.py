@@ -946,6 +946,25 @@ class _Settings:
         return False
 
 
+# batch step -> export kind (export_dialog.KINDS) written by end.export when no kind is picked
+STAGE_EXPORT = {'cells': 'roi', 'particles': 'particle', 'mito': 'mito', 'track': 'track', 'cyto_track': 'cyto_track',
+                'bands': 'bands', 'coloc': 'coloc', 'frap': 'frap'}
+EXPORT_META = ('per_image', 'info_csv', 'graph_format', 'integrated_csv', 'project', 'log', 'batch_results')
+
+
+def default_export_opts(kinds) -> dict:
+    """The export window's initial check marks of these kinds."""
+    from .export_dialog import KINDS
+    opts = {}
+    for k in kinds:
+        for sec in KINDS.get(k, ('', []))[1]:
+            rows = sec[1] if isinstance(sec, tuple) and len(sec) > 1 and isinstance(sec[1], list) else [sec]
+            for o in rows:
+                if isinstance(o, tuple) and o and isinstance(o[0], str):
+                    opts[o[0]] = bool(o[-1])
+    return opts
+
+
 def capture_settings(win, kind) -> dict | None:
     """The tab's current settings for a stage (탭 설정 가져오기)."""
     from .project import widget_state
@@ -1109,6 +1128,8 @@ class Runner:
                 errs = batch.run(win, state, items)
             for e in errs:
                 self.state.errors.append(f'{i + 1}단계: {e}')
+            if k == 'track.particles' and s.get('signal_thr') is not None:
+                self._signal_threshold(items, stage)
             if meta['group'] in ('detect', 'track'):
                 for it in items:      # objects made from the old ROIs are gone
                     it.pipe_objects = {}
@@ -1171,6 +1192,33 @@ class Runner:
             return False
         return False
 
+    def _signal_threshold(self, items, stage):
+        """입자 추적 › 5 신호 기준 at a fixed value: the threshold is the signal
+        channel's LUT Min, so that Min is set on every image (e.g. 5 as in the
+        2026-11-19 green split)."""
+        s = stage.get('settings') or {}
+        tp = self.win.track_panel
+        with _Settings(self.win, stage):
+            for it in items:
+                ch = tp._sig_ch(it) if getattr(it, 'tracks', None) is not None else ''
+                if ch in it.channels:
+                    lut = it.luts[it.channels.index(ch)]
+                    lut.vmin = float(s['signal_thr'])
+                    lut.vmax = max(float(lut.vmax), lut.vmin + 1e-6)
+
+    def _tab_stages(self):
+        """Enabled stages that run through a tab with stored settings."""
+        return [st for st in self.spec.stages if st.get('enabled', True) and STAGES[st['kind']]['batch']]
+
+    def export_kinds(self) -> list:
+        """Export kinds of the tabs the pipeline's stages ran."""
+        out = []
+        for st in self._tab_stages():
+            kind = STAGE_EXPORT.get(STAGES[st['kind']]['batch'])
+            if kind and kind not in out:
+                out.append(kind)
+        return out
+
     # ---- outputs ----
     def out_dir(self, s=None) -> Path:
         if not self.state.out:
@@ -1223,9 +1271,15 @@ class Runner:
         out = self.out_dir(s)
         items = self.active_items()
         opts = dict(s.get('opts') or {})
+        if not any(v for k, v in opts.items() if k not in EXPORT_META):
+            opts.update(default_export_opts(self.export_kinds()))   # nothing picked: each tab's export defaults
         opts.setdefault('per_image', True)
         if opts:
-            r = exporter.run(self.win, items, out / '3_이미지', opts)
+            from contextlib import ExitStack
+            with ExitStack() as stack:   # export with the settings the stages ran with
+                for st in self._tab_stages():
+                    stack.enter_context(_Settings(self.win, st))
+                r = exporter.run(self.win, items, out / '3_이미지', opts)
             self.state.errors += r.errors
         if s.get('integrated', True):
             try:
