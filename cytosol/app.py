@@ -1549,9 +1549,18 @@ class MainWindow(QMainWindow):
         self._z_timer.setSingleShot(True)
         self._z_timer.setInterval(10)  # coalesce fast slider moves into one redraw
         self._z_timer.timeout.connect(self._z_changed)
-        # line drawing is switched from the 라인 프로파일 tab (draw_btn mirrors this)
-        self.line_btn = QPushButton('라인 프로파일 (선 그리기)')
-        self.line_btn.setCheckable(True)
+        # canvas view icons (owner request 2026-11-24, v0.73): one of
+        # [라인 프로파일 · 단면 · 3D 투영] at a time; pressing it again = XY
+        self.view_mode = ''
+        self.view_btns = {
+            'line': hig_widgets.IconButton('line.profile', '라인 프로파일\n선을 그리면 캔버스 아래에 채널별 강도',
+                                           checkable=True),
+            'sect': hig_widgets.IconButton('section.xyz', '단면 보기\n클릭한 점의 X 단면(아래) · Y 단면(오른쪽)',
+                                           checkable=True),
+            '3d': hig_widgets.IconButton('cube', '3D 투영 보기\n드래그로 3축 회전 (설정은 Preferences › 3D 스택 보기)',
+                                         checkable=True),
+        }
+        self.line_btn = self.view_btns['line']
         # toolbar icon buttons (28 × 28, 16 px glyph, tool tip; the same
         # commands: Shift+drag, [ ], View menu)
         fit_btn = hig_widgets.IconButton(
@@ -1598,6 +1607,8 @@ class MainWindow(QMainWindow):
         cap.addWidget(self.zoom_btn)
         cap.addWidget(fit_btn)
         bar1.addWidget(capsule)
+        self.view_capsule = hig_widgets.icon_group(*self.view_btns.values())
+        bar1.addWidget(self.view_capsule)
         self.t_row = QWidget()
         tl = QHBoxLayout(self.t_row)
         tl.setContentsMargins(0, 0, 0, 0)
@@ -1625,7 +1636,16 @@ class MainWindow(QMainWindow):
         zl.addWidget(self.z_mip)
         view_row = QHBoxLayout()
         view_row.addWidget(self.z_col)
-        view_row.addWidget(self.canvas, 1)
+        from .canvas_views import SectionPane, View3DPane
+        self.section_pane = SectionPane()
+        self.section_pane.view.zPicked.connect(lambda z: self.z_slider.setValue(z + 1))
+        self.view3d_pane = View3DPane()
+        self.view3d_pane.gl_failed.connect(
+            lambda m: self.statusBar().showMessage(f'3D: GPU 렌더를 쓸 수 없어 CPU로 그립니다 ({m})'))
+        self.view_stack = QStackedWidget()
+        for w in (self.canvas, self.section_pane, self.view3d_pane):
+            self.view_stack.addWidget(w)
+        view_row.addWidget(self.view_stack, 1)
         cl.addLayout(view_row, 1)
         cl.addWidget(self.t_row)
         self.t_row.setVisible(False)  # shown for images with T
@@ -1767,14 +1787,13 @@ class MainWindow(QMainWindow):
             'intensity_tab': (scrolled(self.intensity_panel), '강도 측정'),
             'bands_tab': (scrolled(self.bands_panel), '등거리 띠'),
             'coloc_tab': (scrolled(self.coloc_panel), 'Coloc 2'),
-            'profile_tab': (self.profile_panel, '라인 프로파일'),
             'frap_tab': (scrolled(self.frap_panel), 'FRAP 측정'),
             'track_tab': (scrolled(self.track_panel), '입자 추적'),
             'mito_tab': (scrolled(self.mito_panel), 'mitoROI'),
-            'stack_tab': (scrolled(self.stack_panel), '스택'),
         }
         self.canvas.lineDrawn.connect(self._line_drawn)
-        self.line_btn.toggled.connect(self._line_mode)
+        for mode, btn in self.view_btns.items():
+            btn.toggled.connect(lambda on, m=mode: self.set_view_mode(m if on else ''))
         self.profile_panel.draw_btn.toggled.connect(self.line_btn.setChecked)
         self.crop_btn.toggled.connect(lambda on: on and self.line_btn.setChecked(False))
         self.crop_btn.toggled.connect(lambda on: on and self.zoom_btn.setChecked(False))
@@ -1955,10 +1974,6 @@ class MainWindow(QMainWindow):
         sub = tools.addMenu('Coloc 2')
         tab_action(sub, 'coloc_tab')
 
-        sub = tools.addMenu('라인 프로파일')
-        tab_action(sub, 'profile_tab')
-        load_action(sub, '선 ROI 불러오기…', 'line')
-
         sub = tools.addMenu('FRAP 측정')
         tab_action(sub, 'frap_tab')
         load_action(sub, 'FRAP ROI 불러오기…', 'frap')
@@ -1976,8 +1991,6 @@ class MainWindow(QMainWindow):
                           '불러옵니다.')
         ma_act.triggered.connect(lambda: self.mito_panel.load_dialog())
 
-        sub = tools.addMenu('스택')
-        tab_action(sub, 'stack_tab')
         for sub in tools.findChildren(QMenu):  # no trailing separator after the tab item
             acts = sub.actions()
             if acts and acts[-1].isSeparator():
@@ -2039,8 +2052,8 @@ class MainWindow(QMainWindow):
                       '등거리 띠 탭에서 먼저 측정하세요.'),
             'coloc': ('Coloc 2', 'coloc_tab', lambda: S.coloc(self.coloc_panel),
                       'Coloc 2 탭에서 먼저 계산하세요.'),
-            'profile': ('라인 프로파일', 'profile_tab', lambda: S.profile(self.profile_panel),
-                        '라인 프로파일 탭에서 이미지 위에 선을 먼저 그리세요.'),
+            'profile': ('라인 프로파일', None, lambda: S.profile(self.profile_panel),
+                        '캔버스의 라인 프로파일 아이콘을 켜고 이미지 위에 선을 먼저 그리세요.'),
             'frap': ('FRAP', 'frap_tab', lambda: S.frap(self.frap_panel),
                      'FRAP 측정 탭에서 시간축이 있는 이미지를 먼저 측정하세요.'),
             'track': ('입자 추적', 'track_tab', lambda: S.track(self.track_panel),
@@ -2336,9 +2349,7 @@ class MainWindow(QMainWindow):
         if i >= 0:
             self.right_tabs.removeTab(i)
         self._check_tab_actions(name, False)
-        if name == 'profile_tab':
-            self.line_btn.setChecked(False)
-        elif name == 'roi_tab':
+        if name == 'roi_tab':
             self.roi_panel.tool_btns['select'].setChecked(True)
 
     # ---- work log / changes -------------------------------------------------
@@ -3714,6 +3725,7 @@ class MainWindow(QMainWindow):
         for w in (self.z_slider, self.z_mip):
             w.blockSignals(False)
         self.z_col.setEnabled(nz > 1 and not self._stack_on())
+        self.z_mip.setEnabled(self.view_mode != 'sect')
         self.z_col.setVisible(it is not None)  # empty list: no Z / T controls
         if it is None:
             self.t_row.setVisible(False)
@@ -3765,7 +3777,75 @@ class MainWindow(QMainWindow):
     # ---- stack tab ---------------------------------------------------------
 
     def _stack_on(self) -> bool:
-        return self.tab_current('stack_tab')
+        """3D 투영 view on (the canvas shows the 3D view, not an XY plane)."""
+        return self.view_mode == '3d'
+
+    # ---- canvas view modes (v0.73) ---------------------------------------
+
+    def set_view_mode(self, mode: str):
+        """'' (XY), 'line', 'sect' or '3d'; the icons are exclusive."""
+        mode = mode or ''
+        if mode == self.view_mode:
+            for m, b in self.view_btns.items():
+                b.blockSignals(True)
+                b.setChecked(m == mode)
+                b.blockSignals(False)
+            return
+        old = self.view_mode
+        self.view_mode = mode
+        for m, b in self.view_btns.items():
+            b.blockSignals(True)
+            b.setChecked(m == mode)
+            b.blockSignals(False)
+        self.profile_panel.draw_btn.blockSignals(True)
+        self.profile_panel.draw_btn.setChecked(mode == 'line')
+        self.profile_panel.draw_btn.blockSignals(False)
+        if mode == 'line':
+            self.crop_btn.setChecked(False)
+        self.canvas.set_line_mode(mode == 'line')
+        if old == '3d':
+            self.view3d_pane.stop_all()
+        if mode == 'sect' and self.current is not None and self.current.z == 'mip':
+            self.z_mip.setChecked(False)  # sections cut one Z plane
+            self._z_changed()
+        self.view_stack.setCurrentWidget({'sect': self.section_pane, '3d': self.view3d_pane}
+                                         .get(mode, self.canvas))
+        it = self.current
+        if mode != '3d' and old == '3d' and it is not None:
+            it.image.release()
+        self._sync_z_widgets()
+        self.update_preview(refit=True)
+        self.live_box.schedule()
+
+    def view3d_settings(self):
+        from .vol3d import View3DSettings
+        return View3DSettings.from_dict(view_settings.defaults('view3d'))
+
+    def section_settings(self) -> dict:
+        d = {'layout': 'below_right', 'same_spacing': True, 'lines': True}
+        d.update({k: v for k, v in (view_settings.defaults('sections') or {}).items() if k in d})
+        return d
+
+    def _view3d_preview(self):
+        it = self.current
+        st = self.view3d_settings()
+        sel = self._selected_crop()
+        region = it.crops[sel] if sel is not None else None
+        self._t_preview_label(it.t)
+        self.view3d_pane.show_item(it, st, region, it.pixel_um)
+
+    def _section_preview(self):
+        from .vol3d import z_ratio
+        it = self.current
+        st = self.view3d_settings()
+        ss = self.section_settings()
+        zr = z_ratio(it.image, st, it.pixel_um)
+        self._t_preview_label(it.t)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            self.section_pane.show_item(it, zr, st.auto_spacing, ss['lines'])
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def _stack_view(self, it) -> StackView:
         view = self.stack_views.get(id(it))
@@ -3799,9 +3879,7 @@ class MainWindow(QMainWindow):
 
     def _tab_changed(self, _):
         it = self.current
-        if self._stack_on():
-            self.line_btn.setChecked(False)  # projections have their own geometry
-        if not self._stack_on() and it is not None:
+        if not self._stack_on() and self.view_mode != 'sect' and it is not None:
             it.image.release()
         self._sync_z_widgets()
         if it is not None and self.tab_current('roi_tab'):
@@ -4007,8 +4085,12 @@ class MainWindow(QMainWindow):
         if it is None:
             return
         if self._stack_on():
-            self._stack_preview(refit=refit)
+            self._view3d_preview()
             return
+        if self.view_mode == 'sect':
+            if it.nz > 1:
+                self._section_preview()
+                return
         self._last_shape = None
         self.canvas.set_view3d(False)
         sel = self._selected_crop()
@@ -4049,11 +4131,7 @@ class MainWindow(QMainWindow):
         return 0, 0
 
     def _line_mode(self, on):
-        self.profile_panel.draw_btn.setChecked(on)
-        if on:
-            self.crop_btn.setChecked(False)
-            self.show_tab('profile_tab')  # also leaves the stack tab
-        self.canvas.set_line_mode(on)
+        self.set_view_mode('line' if on else '')
 
     def _line_drawn(self, x0, y0, x1, y1):
         it = self.current

@@ -61,6 +61,13 @@ ICONS = {
     'arrow.triangle.merge': ('<path d="M6 4v3.5a5 5 0 0 0 2 4L12 14.5V20"/><path d="M18 4v3.5a5 5 0 0 1-2 4'
                              'L12 14.5"/><path d="M9.5 17.5 12 20l2.5-2.5"/>'),
     'number': '<path d="M10 4 8 20M16 4l-2 16M4.5 9h15M4 15h15"/>',
+    # canvas view icons (v0.73): line profile / sections / 3D projection
+    'line.profile': ('<path d="M4 19 20 5"/><circle cx="4" cy="19" r="1.8"/>'
+                     '<circle cx="20" cy="5" r="1.8"/>'),
+    'section.xyz': ('<rect x="3.5" y="3.5" width="12" height="12" rx="1.5"/>'
+                    '<path d="M18.5 3.5v12M3.5 18.5h12M9.5 3.5v12M3.5 9.5h12"/>'),
+    'cube': ('<path d="M12 3.2 19.8 7.6v8.8L12 20.8l-7.8-4.4V7.6z"/>'
+             '<path d="M4.2 7.6 12 12l7.8-4.4M12 12v8.8"/>'),
 }
 
 
