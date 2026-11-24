@@ -475,11 +475,11 @@ class RoiPanel(QWidget):
         note = QLabel('세포 ROI를 고친 뒤 누르세요. 세포 ROI는 그대로 두고, 세포마다 따로 정한 '
                       'threshold로 그 안에서 핵 하나를 다시 찾습니다.')
         note.setWordWrap(True)
-        note.setStyleSheet('color: gray;')
+        theme.secondary(note)
         cl.addRow(note)
         row = QHBoxLayout()
-        row.addWidget(self.cn_auto)
         row.addWidget(self.cn_spin, 1)
+        row.addWidget(self.cn_auto)
         cl.addRow('핵 threshold', row)
         cl.addRow('', self.cn_slider)
         row = QHBoxLayout()
