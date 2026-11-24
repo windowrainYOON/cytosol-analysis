@@ -199,7 +199,8 @@ def cells_bytes(cells) -> tuple[bytes, dict]:
     np.savez_compressed(buf, **arrays)
     meta = {'px_um': cells.px_um, 'status': {str(k): v for k, v in cells.status.items()},
             'saturation': cells.saturation, 'nuc_threshold': cells.nuc_threshold,
-            'cell_threshold': cells.cell_threshold}
+            'cell_threshold': cells.cell_threshold,
+            'nuc_thr': {str(k): [t, auto] for k, (t, auto) in cells.nuc_thr.items()}}
     return buf.getvalue(), meta
 
 
@@ -210,7 +211,8 @@ def cells_from(data: bytes, meta: dict):
     nuc = z['nuclei'] if 'nuclei' in z.files else None
     return CellRois(z['labels'].astype(np.int32), None if nuc is None else nuc.astype(np.int32),
                     meta.get('px_um'), {int(k): v for k, v in (meta.get('status') or {}).items()},
-                    meta.get('saturation'), meta.get('nuc_threshold'), meta.get('cell_threshold'))
+                    meta.get('saturation'), meta.get('nuc_threshold'), meta.get('cell_threshold'),
+                    {int(k): (v[0], bool(v[1])) for k, v in (meta.get('nuc_thr') or {}).items()})
 
 
 def _rel(path: Path, base: Path) -> str:
