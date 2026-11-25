@@ -1,4 +1,4 @@
-# Pipeline (v0.73)
+# Pipeline (v0.73, named ROIs v0.76)
 
 [← Manual contents](README.md) · [한국어](../ko/24-pipeline.md)
 
@@ -7,105 +7,162 @@ stops in between**. It runs the stages one by one on every image of a data folde
 images, then the next stage), stops at a review stage so you can fix ROIs, then goes on, and at the
 end writes a result folder under the data folder's parent › `Processed/`. The former **batch
 analysis** became "a pipeline without review" and moved here, and the **intensity measurement tab**
-moved into the pipeline's **Operation** stages (add · subtract · intersect) and **Measurement ›
-Intensity**.
+moved into the pipeline's **ROI operation** stages (subtract · join · overlap) and **Measure · Signal intensity**.
+
+Since v0.76 every stage **picks ROIs by name** and makes new names (see [ROI names](#roi-names)).
+Pipelines of the old format (v0.73–0.75) are converted when opened ([Converting old pipelines](#converting-old-pipelines)).
 
 Open the window with **File › Pipeline…** (`⇧⌘P`). **File › New Pipeline** (v0.74) opens it with an
 empty pipeline without stages (the window also starts empty the first time). **File › Pipeline
 Library…** shows saved pipelines and the built-in presets as cards; each card lists its stages from top to
-bottom as chips joined by ↓, the group name (Detect · Track · Measure …) beside the first stage of a group,
+bottom as chips joined by ↓, the group name (Detect · ROI operation · Measure …) beside the first stage of a group,
 review stages as blue chips and switched-off stages greyed. Opening a `.cypipe` file or an old batch-analysis
 settings file (`.json`) with **Import** opens this window too.
 
 ## Window
 
 - **Toolbar**: **Pipeline** (pick from the library), **Save…** (save / save as / load from file /
-  duplicate / library…), **Data** folder (empty = the images open now), **Choose Folder…**, **Run**
-  (blue button).
-- The row below: a chip like `14 stages · 9 objects · 1 review` (an orange chip and `n problems` when
-  something is wrong) and a preview of the result folder.
-- **Left sidebar**: **＋ Add Stage** (a menu per group) and the numbered stage list. Stages always stay
-  in the group order **Start → Detect → Track → Operation → Measurement → End** under group headings;
-  a review stage stays right after the stage before it.
-  - Drag to reorder. Stages move **only within their group**; when an object a stage needs does not
-    exist yet at the new place, it does not move and the status bar says why. `⌥↑` / `⌥↓` do the same.
-  - Right-click: up · down · duplicate · turn off (skip) · **Delete Stage…**.
-  - A stage that uses an object no earlier stage makes shows `⚠ no object` (reason in the tool tip).
-- **Right**: the setting cards of the selected stage.
+  duplicate / library…), **Data** folder (empty = the images open now), **Choose Folder…**, **Run** (blue).
+- The line below: a `14 stages · 9 ROI names · 1 review` chip (an orange chip and `n problems` when
+  something is wrong) and the result folder preview. A pipeline converted from the old format also shows a
+  `Converted from the old format · n places · not saved` chip, **Changes…** and **Undo conversion**.
+- **Left sidebar**: **＋ Add Stage** (a menu per group: start · detect · ROI operation · ROI filter · ROI tracking ·
+  measure · value calculation · human · end) and the numbered stage list. A new stage goes right after the selected one.
+  - A stage's title is **the feature it uses** (e.g. `Detect · Cytosol ROI`, `ROI filter · Relation`,
+    `Measure · Signal intensity`). The second line shows **input → result names** (e.g. `Cyto, Spot → Cyto_noSpot`).
+  - Drag to reorder **freely**. A move that would leave a stage using a name not made before it is refused,
+    with the reason in the status bar. `⌥↑` / `⌥↓` do the same.
+  - Right-click: up · down · duplicate · switch off (skip) · **Delete Stage…**.
+  - A stage using a name no earlier stage makes shows `⚠ Check` (reason in the tool tip).
+- **Right**: the settings cards of the selected stage. Every stage reads **input → what to do → details →
+  result name**; ROI inputs and channel inputs are separate cards, and the result-name card is always last.
+- Unless you name the pipeline yourself, it is named by the features it uses
+  (e.g. `Cytosol ROI · Particle ROI · ROI filter · ROI operation · Signal intensity`).
 
-## Objects
+## ROI names
 
-Every ROI made by detection, tracking or an operation is a **named object**. Cytosol ROI detection
-makes **cells · nuclei · cytosol** (= cell − nucleus), particle ROI **particles**, mitoROI **mito
-fragments**, particle tracking **particle tracks**, cytosol intensity tracking **cell tracks**, and
-an operation stage a new object with the name you give. Every object keeps its parent cell number,
-so later "same cell number" pairing and the `cell` column of the measurement tables use it as is.
+Every ROI set made by detection, ROI operations, ROI filters and ROI tracking has a **name**, and later stages
+pick it by that name. Default names are in English.
+
+| Made by | Default names | Kind |
+|---|---|---|
+| Detect · Cytosol ROI | `Cell`, `Nuc`, `Cyto` (= Cell − Nuc) | Regions · per timepoint |
+| Detect · Particle ROI | `Spot` | Spot regions · per timepoint |
+| Detect · mitoROI | `Mito` | Regions · per timepoint |
+| ROI tracking · particle tracking | `Spot_track` | Tracks |
+| ROI tracking · cytosol tracking | `Cell_track` | Tracks |
+
+- Each name is used once in a pipeline (making the same name again shows `⚠ Check`).
+- The chip beside a name gives its kind; ROI pickers grey out kinds the stage cannot use.
+- Every ROI keeps its parent cell number, used by "within the same parent (cell number)" pairing and the `cell` column of measurement tables.
 
 ## Stage kinds
 
 | Group | Stage | What it does |
 |---|---|---|
-| Start | Load, Auto group | folder · file name pattern · include subfolders / group images whose names match without the trailing number |
-| Detect | Cells · nuclei (Cytosol ROI), Particles (Particle ROI), Mito ROI (mitoROI) | find them in every image with that tab's detection settings |
-| Track | Particle tracking, Cytosol intensity tracking | detect and link per frame in time series |
-| Operation | Operation | input object · condition · action · result name (below) |
-| Measurement | Intensity (ImageJ Measure), Count · density, Distance bands, Coloc 2, FRAP recovery, Mito morphology (MiNA) | object × channel → table |
-| Person | Review (your corrections) | stop, fix the ROIs of chosen images, continue |
-| End | Graphs, Save · export | redraw graphs, result folder |
+| Start | Load, auto group | folder · file name pattern · subfolders / group equal names without the trailing number |
+| Detect | Cytosol ROI, particle ROI, mitoROI | image → ROI names (with that tab's detection settings) |
+| ROI operation | subtract · overlap · join · grow · shrink · ring · distance bands · join per parent | ROI A (· B) → new name |
+| ROI filter | by relation to another ROI / by measured value | ROI → matching ROIs (+ the rest) |
+| ROI tracking | particle tracking, cytosol tracking | per-timepoint ROIs → tracks |
+| Measure | shape, signal intensity, relation | ROI × channels → parameters |
+| Value calculation | calculate, normalize | parameters → new parameters |
+| Human | review (your corrections) | stop, fix the ROIs of picked images, go on |
+| End | graphs, save · export | redraw graphs, result folder |
+
+FRAP recovery stays a **Measure · FRAP** stage.
 
 ### Stages that use tab settings
 
-Detection, tracking, distance band, Coloc 2 and FRAP stages use that tab's settings.
+Detection, ROI tracking and the measurements distance bands · Coloc 2 · FRAP use that tab's settings.
 
-- **Settings source**: **Settings stored in this stage** (the tab's settings are copied when the stage
-  is added; changing the tab for other images does not change the pipeline's results) or **the tab's
-  current settings** (read from the tab at run time, like the old batch analysis).
-- **Take Tab Settings**: copy the tab's current settings into this stage.
-- **Edit in Tab…**: opens the tab with this stage's settings and shows a band "editing pipeline stage
-  n settings" above the canvas. Tune with every feature of the tab (preview, live detection …), then
-  **Apply to Stage** stores them in the stage and returns the tab to its own settings (**Cancel**
-  leaves the stage as it was).
-- **If results exist**: **Detect again** or **Keep as is** (keep ROIs you fixed in a review).
+- **Input channels** card: the channels detection uses (cytosol ROI: nucleus · background channel, particle ROI:
+  particle channel, mitoROI: mito · protein of interest channel) are set in the stage. **Tab settings as they are**
+  uses the tab's channels.
+- **Settings source**: **settings stored in this stage** (the tab's settings are copied when the stage is
+  added; working on other images in the tab does not change the pipeline's result) or **the tab's current
+  settings** (read at run time, like the old batch analysis).
+- **Take tab settings**: copies the tab's current settings into the stage.
+- **Open in Tab to Edit…**: opens the tab with this stage's settings and shows a band 「pipeline stage n
+  settings being edited」 above the canvas. Tune with every tool of the tab (previews, live detection),
+  then **Apply to Stage** stores them and the tab goes back to its own settings (**Cancel** leaves them).
+- **When results exist**: **find again** or **keep** (keep to protect ROIs fixed in a review).
+- **Result names**: the ROI names detection makes (`Cell` · `Nuc` · `Cyto` …). If you change them, pick the new names in later stages.
 
-### Operation
+### ROI operation
 
-Every operation stage has the same four cards.
+1. **Input ROI**: **A** and (when needed) **B**.
+2. **Operation**:
+   - **Subtract (A − B)**: subtracts the matching B from each A (e.g. `Cyto − Spot`).
+   - **Overlap (A ∩ B)**, **Join (A ∪ B)** (adds B to A, only parts not overlapping another A).
+   - **Join per parent**: joins the pieces inside the same parent (cell) into one.
+   - **Grow / shrink** (µm).
+   - **Ring**: a ring around A (inner – outer µm, for background); parts overlapping the **ROI to avoid** (e.g. `Cell`) are left out.
+   - **Distance bands**: n bands by relative distance B (nucleus) → A edge (without B: edge → centre).
+3. **B pairing**: within the same parent (cell number) / overlapping ones / whole image.
+4. **Result name**: the new ROI name. Result ROIs keep the parent number of A.
 
-1. **Input object**: an object made earlier.
-2. **Condition**: **All** or **Only those meeting conditions**. Each condition row is [item] [≥ · ≤ · > · < ·
-   = · range · yes · no] [value], with **＋ Add Condition** and **Combine** (all / any). Items:
-   - size · shape: `Area` (µm²), `Perimeter`, `Feret` (µm), `Circularity`, `Solidity`, `AR`
-   - intensity: `Mean:<channel>`, `IntDen:<channel>`; a value `bg*1.5` means 1.5 × that channel's
-     background (median outside cells)
-   - with another object: `overlap:<object>` (% overlapping), `inside:<object>` (centre inside)
-   - `edge` (touches the image border)
-   - tracks: `frames`, `divided`, `edge`, `change:thr` (last / first intensity), `class` (particle track
-     class, e.g. `signal`; for cell tracks the cytosol intensity tracking filter name)
-3. **Action**: keep matches · drop matches · subtract (what) · add (to what) · overlap only (with what) ·
-   merge (one per parent) · dilate / erode (µm) · ring (inner – outer µm) · distance bands (n).
-   Subtract, add and overlap pick the **other object** and the **pairing** (same cell number / overlapping
-   ones / whole image). Example: cytosol = cell **subtract** nucleus (same cell number) = the intensity
-   tab's region expression `cyto = cell − nuc`. A ring around cells avoids other cells, so it serves as a
-   background ring. Distance bands: n bands by relative nucleus → membrane distance.
-4. **Result name**: the new object's name. For keep / drop, a **name for the rest** makes the others an
-   object too (e.g. "cells with rising signal" and "rest").
+Example: `Cyto` = `Cell` subtract `Nuc` (same parent) = the intensity tab's region expression `cyto = cell − nuc`.
 
-The **preview** below paints the result of the operations up to this stage on the current image and
-counts them with a chip like `cytosol 2` (on an image where the detection stages already ran).
+### ROI filter
 
-### Measurement
+1. **Input ROI**.
+2. **Criterion**:
+   - **By relation to another ROI**: [overlaps / does not overlap / is inside / contains / does not contain / distance ≤ (µm) /
+     same parent] + other ROI + value (e.g. `Spot` **is inside** `Cyto`, `Cell` **contains** `Spot` ≥ 3).
+   - **By measured value**: [item] [≥ · ≤ · > · < · = · between · yes · no] [value]. Items: size · shape (`Area`,
+     `Perimeter`, `Feret`, `Circularity`, `Solidity`, `AR`), intensity (`Mean:<channel>`, `IntDen:<channel>`; value `bg*1.5` =
+     1.5 × that channel's background), `edge` (touches the edge), tracks (`frames`, `divided`, `edge`, `change:<value>`, `class`),
+     and **columns made by an earlier measure stage** (e.g. `신호 · Cyto › GFP Mean`).
+3. **Combine conditions**: all must match (and) / any (or). Without conditions everything passes.
+4. **Result names**: the **matching ROIs** name and an optional name for **the rest**.
 
-- **Intensity (ImageJ Measure)**: rows of **targets (object × channel)**, each an object and its channel
-  chips (all on = every channel), **＋ Add Target**. **Measured items** chips: Area, Mean, StdDev, Min,
-  Max, Median, IntDen, RawIntDen, Perimeter, Circularity. **Subtract background**: none / median outside
-  cells / median of a ring object (the same cell's ring). Column names carry the channel, e.g.
-  `Mean (GFP)`; with background subtraction a `bg (GFP)` column is added. One row = one object (one
-  timepoint for tracks).
-- **Count · density**: per parent (cell) the number of objects, the parent area and the count per area.
-- **Distance bands / Coloc 2 / FRAP recovery**: the tab's own computation (also in the integrated data).
-- **Mito morphology (MiNA)**: skeleton length · branches · junctions of mito fragments ([mitoROI](22-mito.md)).
+The **preview** below paints the result up to this stage on the current image, with a chip such as
+`Cyto_noSpot 12` (on an image whose detection stages have run once).
 
-An empty table name becomes `측정 · <object>`. Result tables go to the graph stage and to `1_통합데이터/`.
+### ROI tracking
+
+**Input ROI** (empty = the algorithm finds per timepoint itself), **tracking algorithm** (particle tracking: LAP, the
+ParticleTracker way / cytosol tracking: optical flow + overlap, dividing · edge cells excluded), algorithm settings (tab
+settings), **result name** (`Spot_track` / `Cell_track`). Particle tracking can set the **5 Signal threshold value**
+(the channel's LUT Min) in the stage.
+
+### Measure
+
+Cards: **input ROI** (A, and B for relations) → **input channels** (each picked channel measured on its own) →
+**measurement kind** → **parameters** → **settings** → **result name**.
+
+- **Shape** (no channel): size (Area, Perimeter, Feret, MinFeret, major, minor, equivalent diameter), shape (Circularity, AR,
+  Roundness, Solidity, Eccentricity), position (centre X · Y, distance to the parent centre · edge), skeleton (MiNA: skeleton
+  length · branches · junctions, mito ROIs only), tracks only (length (frames), total distance, net displacement, mean speed, straightness).
+- **Signal intensity**: basic (ImageJ Measure: Area, Mean, Median, Min, Max, StdDev, IntDen, RawIntDen), distribution (mean of
+  the top n %, CV, positive pixel fraction), time (tracks: values per timepoint, start, end, max, min, max ÷ start, frames on,
+  change kind, first on timepoint). **Background**: none / ring around the ROI (µm) / median outside cells / another ROI's
+  value (median of the same parent) / image bottom n %. With a background a `› <channel> bg` column is added.
+- **Relation** (per A, B summarized, or per B): count (B in A), density (count ÷ A area), B area ÷ A area, overlap area ·
+  fractions · IoU, shortest distance B → A edge, B → nearest B (NND), relative position of B (0 inside · 1 edge), partition
+  coefficient · enrichment ratio (one channel), colocalization (Coloc 2, two channels), distance bands (distance bands tab
+  settings), fraction of frames a B track was inside A · crossings of the A edge.
+  No channel = count · overlap · distance, one = partition · enrichment, two = Coloc 2.
+- **Measure · FRAP**: the FRAP tab's calculation as is.
+
+An empty **measurement name** becomes `측정 · <ROI>`. Parameter columns are named **`measurement name › channel parameter`**
+(e.g. `신호 · Cyto › GFP Mean`; shape has no channel: `형태 · Spot › Area`), and stages with the same measurement name
+join one table. One row = one ROI (a track: one timepoint). Result tables go to the graph stage and `1_통합데이터/`.
+
+### Value calculation
+
+**Input values** (an earlier measurement table and its columns) → **calculate** (A ÷ B · A − B · A + B · A × B · log₂ (A) ·
+write an expression with `A`, `B`, `log2`, `log10`, `sqrt`, `abs`, `exp`; B is a column or a number) or **normalize**
+(first timepoint = 1 · mean of the first n timepoints = 1 · control group mean = 1 · min–max (0–1) · z-score; scope: per
+track · ROI · image · group · all) → **result name** (e.g. `계산 › GFP ÷ RFP`). The result is a new column of the same table,
+usable in ROI filters (measured value) and graphs.
+
+### In the graph window
+
+After a run the [graph window](16-graph.md) data list starts with **Pipeline results**: every measured and
+calculated parameter is a column, in column sets (`Measure · signal intensity` · `Measure · shape` ·
+`Measure · relation` · `Value calculation`).
 
 ### Review (your corrections)
 
@@ -173,20 +230,32 @@ Saving a project saves the current pipeline with it.
 
 | Preset | Stages |
 |---|---|
-| 세포질 ROI · 입자 ROI · 연산 · 세기 · 개수 · 등거리 띠 | auto group → cells · nuclei → particles → inner cells = cells not at the edge → cytosol (minus particles) → intensity · count · distance bands → review → save |
-| 입자 추적 · 세기 | particle tracking (tab settings: ParticleTracker method, 5 signal threshold, 6 signal change tracks) → track point intensity |
-| 세포질 ROI · 세기 | cells · nuclei → cell / nucleus / cytosol intensity (background = outside cells) → review (replaces the intensity tab) |
-| 입자 추적 / 입자 추적 · 연산 · 세기 | particle tracking (→ only `class = signal` tracks) |
+| 세포질 ROI · 입자 ROI · ROI 필터 · ROI 연산 · 신호 강도 · 관계 · 등거리 띠 | auto group → Cell · Nuc · Cyto → Spot → Cell_inner (Cells not at the edge) → Cyto_noSpot = Cyto − Spot → signal intensity (Cyto, Spot, Cyto_noSpot) · count · density · distance bands → review → save |
+| 입자 추적 · 신호 강도 | particle tracking (ParticleTracker method, 5 Signal threshold 5, 6 Signal-change tracks) → Spot_track values per timepoint |
+| 세포질 ROI · 신호 강도 | Cell · Nuc · Cyto → signal intensity (background = median outside cells) → review (replaces the intensity tab) |
+| 입자 추적 / 입자 추적 · ROI 필터 · 신호 강도 | Spot_track (→ only `class = signal` tracks, Spot_signal) |
 | FRAP | FRAP recovery |
-| 입자 추적 · 세포질 강도 추적 · 연산 · 세기 | cytosol intensity tracking → cell tracks not dividing and not at the edge → intensity per timepoint |
-| 세포질 ROI · mitoROI · 미토 형태 (MiNA) / 세포질 ROI · mitoROI · 세기 | cells → mito ROI → MiNA / mito fragment × channel intensity |
-| 세포질 ROI · Coloc 2 | cells → Coloc 2 |
-| 입자 ROI · 세기 | particles → size · shape · intensity |
+| 입자 추적 · 세포질 강도 추적 · ROI 필터 · 신호 강도 | Spot_track → Cell_track (same cells) → Cell_kept (not dividing, not at the edge) → values per timepoint |
+| 세포질 ROI · mitoROI · 미토 형태 (MiNA) / 세포질 ROI · mitoROI · 신호 강도 | Cell → Mito → skeleton (MiNA) / Mito × channel signal intensity |
+| 세포질 ROI · Coloc 2 | Cell → relation · colocalization (Coloc 2) |
+| 입자 ROI · 형태 · 신호 강도 | Spot → size · shape · signal intensity |
 
-A preset's name is the features it uses, in stage order (start, review and save stages left out). The old names (e.g. `세포질 세기`) still work with `cytosol.pipe --from`.
+Preset names join the features the stages use in order (start, review and save stages left out). Earlier names (e.g.
+`세포질 세기`, `세포질 ROI · 세기`) are still found by `cytosol.pipe --from`. On the same images they give the same results as the v0.75 presets.
 
-The presets' tab stages use **the tab's current settings**. To keep your own settings, **Take Tab
-Settings** and then **Save…** to the library (`~/.cytosol/pipelines/`). Preset names are not translated.
+The tab stages of the built-in presets use **the tab's current settings**. To keep your own, use **Take tab
+settings** and then **Save…** into the library (`~/.cytosol/pipelines/`).
+
+## Converting old pipelines
+
+Pipelines of v0.73–0.75 (`.cypipe` format version 2, old batch-analysis settings, pipelines saved in projects) are
+converted to the new format (version 3) when opened: detection → `Detect · …` (default names Cell · Nuc · Cyto …), tracking →
+`ROI tracking`, keep / drop operations → `ROI filter`, subtract · overlap · ring … → `ROI operation`, intensity →
+`Measure · Signal intensity`, count · distance bands · Coloc 2 → `Measure · Relation`, mito morphology → `Measure · Shape`.
+Object names (세포 · 핵 · 입자 …) become the English names.
+
+**Changes…** on the line under the toolbar lists every change, and **Undo conversion** goes back to the pipeline before
+conversion. The original file is unchanged until you **Save…**. A converted pipeline gives the same results as before.
 
 ## Command line (cytosol-pipe)
 

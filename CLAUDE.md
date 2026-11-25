@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.75.3)
+## Window structure (v0.76.0)
 
 - **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
   v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
@@ -253,6 +253,18 @@ owner writes in Korean, so reply in Korean.
   progress.jsonl, review_log.csv, 1_통합데이터 / 2_그래프 / 3_이미지). Review chips in the image
   list (`image_tree.CHIPS`, `ImageTree.chips`, `pipeline.review_chips`, `nucleus_odd`). A new
   analysis feature gets a `STAGES` entry (and a `batch.STEPS` entry it runs through).
+  **v4 named ROIs** (owner approval 2026-11-25 15:06, design `/mnt/project-files/pipeline/파이프라인_v4_ROI이름.md`,
+  v0.76; `pipeline_roi.py` logic, `pipeline_editors.RoiEditors` cards): groups 시작 → 검출 (`detect.roi`, method
+  cells / particles / mito) → ROI 연산 (`roi.op`) → ROI 필터 (`roi.filter`, relation or value, also measured
+  columns) → ROI 추적 (`roi.track`) → 측정 (`measure.roi`: shape / signal / relation) → 측정값 연산
+  (`calc.values`) → 사람 → 끝, free order validated by names (`validate_v4`); detected / tracked names are aliases
+  in `it.pipe_alias` (read lazily, review edits seen), op / filter results in `it.pipe_objects`; English default
+  names (Cell, Nuc, Cyto, Spot, Mito, Spot_track, Cell_track), unique; titles = the feature (`stage_title`),
+  result names only in the list's second line (`stage_io`); parameter columns `측정 이름 › 채널 파라미터`
+  (`pipeline_roi.col`); `Runner.graph_tables()` → graph source / data entry `pipeline` (column sets). `.cypipe`
+  VERSION 3; v2 stages (kept in `STAGES` with `legacy=True`) are converted on open (`convert_stages`,
+  `PipelineSpec.converted` / `original`, window 바뀐 내용… / 변환 되돌리기 until saved); converted pipelines give
+  the same tables (self-test `pipeline` checks it). `stage_meta(st)` gives a stage's panel / batch step.
   **Running analyses for the owner headless** (Remote Control, unattended): `python3 -m
   cytosol.pipe inspect <folder>` → `presets` → `new my.cypipe --from <preset>` / `edit --set` →
   `validate --folder` → `run --dry-run` → `run [--background]` → read `summary.json`.
@@ -463,6 +475,7 @@ keep each button's signals: `scripts/signal_map.py snap` before / after +
 | `measure_bar.py` | 측정 바 at the bottom of the inspector (`MeasureBar`, `Measurer`), `DataRows`, `grow_to_content` |
 | `integrate.py` | 통합 데이터: per-category tables from every measurement, column notes, `integrated_*.csv` |
 | `i18n.py`, `i18n_en.py` | 화면 언어 (한국어 / English): Qt setter / getter wrapping, translation tables |
+| `pipeline_roi.py`, `pipeline_editors.py` | 파이프라인 v4: named-ROI stages (detect / ROI 연산 / 필터 / 추적 / 측정 / 측정값 연산), parameter columns, v2 conversion; the stage editor cards |
 | `pipeline.py`, `pipeline_window.py`, `pipeline_presets.py`, `pipe.py` | 파이프라인: stage schema, objects, operations, measurements, runner + result folder; window, review band, library; presets; headless CLI `python3 -m cytosol.pipe` |
 | `cell_track.py`, `cell_track_panel.py` | 세포질 강도 추적 tab: cells per frame, linking, exclusion, intensities, filters |
 | `track_change.py` | 입자 추적 › 6 신호 변화 트랙: tracking score, on / off kinds, outputs |
@@ -629,5 +642,6 @@ not affected.
 | dev branch | 0.75.1 | Owner request (2026-11-25 10:19, "인스펙터가 짤리는 현상 … 인스펙터 너비는 예전처럼 … 하위에 있는 컴포넌트는 모두 반응형 … 디자인 시스템에도 추가"; 10:23 pipeline 설정 출처 card): inspector back to 430 / min 320 / no max, `ui.fit` (`FitScroll`, `fit_width`, `overflow`) for every inspector page and the graph / Figure inspectors, 2-button / 2-check rows wrap, data rows wrap, pipeline 설정 출처 card = one row group (no hairline above the buttons), stage list without outline (card surface); design system `FitBox` + RegionLayout / SettingsPane / anti-patterns rules; signal map: 0 lost |
 | dev branch | 0.75.2 | Fix after the v0.75.1 Mac build: settings-card hairlines (`theme.RowLines`) skip stale spacer wrappers that `QFormLayout.itemAt().widget()` returns on macOS (paintEvent AttributeError, 7 tracebacks in the Mac self-test), the painter always ends; the self-test fails a step when a Qt event handler raises (`sys.excepthook`) |
 | dev branch | 0.75.3 | Owner request (2026-11-25, "파이프라인 제목도 임의로 지어놓지 말고, 그냥 사용하는 기능을 넣어줘", no mockup): built-in presets are named by the features their stages use (`pipeline.FEATURE_NAMES`, `feature_name`: e.g. 입자 추적 · 세포질 강도 추적 · 연산 · 세기; start / review / end left out), old names still found by `find_preset` (`pipeline_presets.OLD_NAMES`); docs 21 / 24 |
+| dev branch | 0.76.0 | Owner approval (2026-11-25 15:06, "제대로 했어. 이제 개발하고, 파이프라인도 바뀐 방식에 맞춰 새로 만들어줘 … 기존 파이프라인으로 분석한거랑 같게 나오는지"; design v4 + mockups in `/mnt/project-files/pipeline/v4/`): pipeline around named ROIs (검출 → ROI 연산 → ROI 필터 → ROI 추적 → 측정 (형태 / 신호 강도 / 관계) → 측정값 연산), free order checked by names, English default names with kind chips, editors input → 할 일 → 세부 → 결과 이름, titles = features, columns `측정 이름 › 채널 파라미터`, graph window 파이프라인 결과 with column sets, `.cypipe` VERSION 3, old pipelines converted on open (shown, undoable), 11 presets rebuilt (same tables as v2 on synthetic images); docs 24 |
 | dev branch | 0.73.1 | Pipeline fix: the result folder's `summary.json` / `README.txt` are written again after the last stage, so `status` reads `done` (it stayed `running` because the export stage wrote them first) |
 | #50 (main) | 0.53.0 (main) | 핵 다시 찾기: nuclei re-detected inside the (edited) cell ROIs, cells untouched, one nucleus per cell, each cell its own threshold (자동 = own LUT stretch + Otsu over the cell and a 2 µm ring, or a manual value per cell, live), noise in nucleus-free cells dropped (`cellroi.cell_nucleus`, `CellRois.redetect_nucleus`, `nuc_thr` saved in projects); PRD 24h ref-cell nucleus IoU 0.969 |
