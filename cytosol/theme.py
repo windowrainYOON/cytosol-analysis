@@ -634,7 +634,7 @@ def _item_group(item):
     if item is None:
         return None
     w = item.widget()
-    if w is not None:
+    if w is not None and isinstance(w, QWidget):  # not a stale spacer wrapper
         g = w.property('hig_group')
         if g:
             return g
@@ -715,6 +715,8 @@ class RowLines(QWidget):
                     if it is None or it.isEmpty():
                         continue
                     w = it.widget()
+                    if w is not None and not isinstance(w, QWidget):
+                        w = None  # a stale spacer wrapper (macOS): no widget
                     if w is not None and not w.isVisible():
                         continue
                     if w is not None and any(f.property('hig_settings') for f in w.findChildren(QFormLayout)):
@@ -751,11 +753,14 @@ class RowLines(QWidget):
     def paintEvent(self, _ev):
         from PySide6.QtGui import QPen  # noqa: PLC0415
 
+        lines = self.lines()  # measured before painting: a failure leaves no active painter
         p = QPainter(self)
-        p.setPen(QPen(color('separator'), 0))  # hairline: one device pixel
-        for y, a, b in self.lines():
-            p.drawLine(a, y, b, y)
-        p.end()
+        try:
+            p.setPen(QPen(color('separator'), 0))  # hairline: one device pixel
+            for y, a, b in lines:
+                p.drawLine(a, y, b, y)
+        finally:
+            p.end()
 
 
 def separator() -> QFrame:

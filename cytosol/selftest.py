@@ -136,12 +136,26 @@ def run(out_dir) -> int:
     except Exception:
         traceback.print_exc()
 
+    # an exception inside a Qt event handler (paintEvent, …) only prints a
+    # traceback: count it as a failure of the step it happened in
+    uncaught = []
+    prev_hook = sys.excepthook
+
+    def hook(kind, value, tb):
+        uncaught.append(''.join(traceback.format_exception(kind, value, tb)))
+        prev_hook(kind, value, tb)
+
+    sys.excepthook = hook
+
     def step(name, fn):
         nonlocal ok
         if only and name not in only.split(','):
             return
+        del uncaught[:]
         try:
             res = fn()
+            if uncaught:
+                raise AssertionError(f'{len(uncaught)} exception(s) in Qt event handlers:\n{uncaught[0]}')
             log.append(f'ok    {name}' + (f': {res}' if res is not None else ''))
         except Exception:
             ok = False
