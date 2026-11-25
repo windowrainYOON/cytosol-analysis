@@ -161,12 +161,15 @@ class DataRows(QWidget):
             h.setContentsMargins(0, 0, 0, 0)
             h.setSpacing(8)
             lab = QLabel(f'<b>{name}</b>')
-            lab.setWordWrap(True)  # a long data name wraps in a 360 inspector
+            lab.setWordWrap(True)  # a long data name wraps in a fixed-width inspector
+            lab.setMinimumWidth(48)
             lab.setToolTip(f'점 하나 = {unit}')
             h.addWidget(lab, 1)
             n_img = len({r.get('image_id', r.get('image')) for r in rows})
             size = QLabel(f'{len(rows)}행 · 이미지 {n_img}' if rows else '없음')
             theme.secondary(size)
+            size.setWordWrap(True)
+            size.setMinimumWidth(40)
             h.addWidget(size)
             h.addStretch()
             g = QPushButton('그래프 ›')

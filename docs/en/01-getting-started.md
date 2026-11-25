@@ -53,10 +53,12 @@ closes it.
 - The image list and the tools pane keep their width; making the window
   larger or smaller only changes the preview.
 - Drag the border between two panes to change a pane's width. The widths are
-  remembered for the next start.
-- The contents of a pane follow its width: rows of buttons and check boxes
-  continue on the next line, and a field moves under its label when the
-  row does not fit.
+  remembered for the next start. The tools pane on the right starts at 430 px and can be made as narrow as 320 px (v0.75.1).
+- The contents of a pane follow its width and are never cut off at the right or scrolled sideways:
+  rows of buttons and check boxes (two or more) continue on the next line, and a field moves under
+  its label when the row does not fit. Narrower still, the fields shrink together, pop-ups show
+  their value shortened, and long texts and card titles wrap or end in … (the full text in the
+  tool tip). Wider again, everything is back at its own width.
 - In a settings card each row has its name on the left and its value or
   control at the right end, with a thin line between rows; numbers in a field
   start at the left.

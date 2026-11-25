@@ -423,7 +423,7 @@ def unify(page: QWidget):
         root.setSpacing(PAGE_SPACING)
     for w in page.findChildren(QWidget):
         if isinstance(w, QComboBox) and not w.isEditable() and w.sizeHint().width() > SELECT_FIT_W:
-            # Select: a long item list never holds the pane wide (inspector 240–360);
+            # Select: a long item list never holds the pane wide (fixed-width inspector, ui.fit);
             # the pop-up still lists the full texts
             w.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             w.setMinimumContentsLength(SELECT_FIT_CHARS)

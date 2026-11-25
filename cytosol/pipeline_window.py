@@ -577,7 +577,11 @@ class PipelineWindow(QDialog):
         row.addWidget(edit)
         holder = QWidget()
         holder.setLayout(row)
+        row.setContentsMargins(0, 0, 0, 6)
         form.addRow(holder)
+        # pop-up, its note and its actions are one settings row: no hairline
+        # inside (design system: hint under its row, actions at the row end)
+        theme.group_rows(form.labelForField(src), src, note, holder)
         lay.addWidget(box)
         if k.startswith(('detect', 'track')):
             box2, f2 = _card('대상')

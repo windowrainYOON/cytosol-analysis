@@ -1514,6 +1514,57 @@ def _lint_ui():
         raise AssertionError('screen files call Qt dialogs / style sheets directly:\n' + '\n'.join(bad))
 
 
+def inspector_fit_step(out: Path):
+    """v0.75.1 (owner rule 2026-11-25): the inspector is a fixed-width box at
+    its old width (430, at least 320); at its narrowest every tab page fits
+    (no sideways scroll, nothing cut: controls give way, ui.fit), and wider
+    again every control is back at its own width."""
+    from PySide6.QtCore import Qt
+
+    from . import app as appmod
+    from .ui.fit import FitScroll, overflow
+
+    app, win = _window()
+    win.show()
+    d = out / 'fit'
+    d.mkdir(parents=True, exist_ok=True)
+    win.add_files([_cell_tiff(d / 'a.tif', 1)], explicit=True)
+    win.file_list.setCurrentRow(0)
+    for name in list(win.tab_pages):
+        if name not in appmod.MainWindow.HIDDEN_TABS:
+            win.show_tab(name)
+    app.processEvents()
+    if (appmod.RIGHT_W, appmod.RIGHT_MIN_W) != (430, 320):
+        raise AssertionError(f'inspector width {appmod.RIGHT_W} / {appmod.RIGHT_MIN_W}')
+    if win.inspector.maximumWidth() < 2000:
+        raise AssertionError('inspector width capped')
+    tabs = win.right_tabs
+    for width in (appmod.RIGHT_MIN_W, appmod.RIGHT_W):
+        sz = win.main_split.sizes()
+        win.main_split.setSizes([sz[0], sz[1] + sz[2] - width, width])
+        for i in range(tabs.count()):
+            tabs.setCurrentIndex(i)
+            for _ in range(8):
+                app.processEvents()
+            sa = tabs.widget(i)
+            if not isinstance(sa, FitScroll):
+                raise AssertionError(f'{tabs.tabText(i)}: page not in a FitScroll')
+            if sa.horizontalScrollBarPolicy() != Qt.ScrollBarPolicy.ScrollBarAlwaysOff:
+                raise AssertionError(f'{tabs.tabText(i)}: sideways scroll')
+            page, vw = sa.widget(), sa.viewport().width()
+            bad = overflow(page, vw)
+            if bad or page.width() > vw:
+                from .ui.fit import fit_width
+                ok = fit_width(page, vw)
+                raise AssertionError(f'{tabs.tabText(i)} at {width}: {page.width()} > {vw} {bad[:3]} '
+                                     f'fit {ok} need {page.minimumSizeHint().width()}')
+            if width == appmod.RIGHT_W and page.property('fit_changed'):
+                raise AssertionError(f'{tabs.tabText(i)} at {width}: controls still narrowed')
+    for name in list(win.tab_pages):
+        win.hide_tab(name)
+    _close(win)
+
+
 def components_step(out: Path):
     """v0.75: the crop view (sidebar crop row fills the canvas, image row =
     whole image, 3D / sections of the crop, scale bar fitted), 「Crop 영역도
@@ -1676,6 +1727,26 @@ def components_step(out: Path):
     win._play_step()  # a single-frame image: play stops
     if win.t_row.playing():
         raise AssertionError('play kept running on one frame')
+    # ▶ on a time series: the T slider follows the frame (owner report 2026-11-25)
+    import tifffile
+    movie = d / 'movie.tif'
+    yy, xx = np.mgrid[:40, :60]
+    frames = [np.where((xx - 10 - 8 * t) ** 2 + (yy - 20) ** 2 < 36, 900, 60).astype(np.uint16)
+              for t in range(4)]
+    tifffile.imwrite(movie, np.stack(frames), imagej=True,
+                     resolution=(5.0, 5.0), metadata={'unit': 'um', 'axes': 'TYX'})
+    win.add_files([movie], explicit=True)
+    win.file_list.setCurrentRow(len(win.items) - 1)
+    app.processEvents()
+    mov = win.current
+    if mov is None or mov.nt < 2:
+        raise AssertionError(f'time series not loaded (nt {mov.nt if mov else None})')
+    for _ in range(3):
+        win._play_step()
+        app.processEvents()
+        if win.t_slider.value() != win.current.t:
+            raise AssertionError(f'play: slider {win.t_slider.value()} ≠ frame {win.current.t}')
+    win.t_row.stop()
     _close(win)
 
 
@@ -1694,4 +1765,5 @@ STEPS = [
     ('mitoROI', mito_step),
     ('language', language_step),
     ('components + crop view', components_step),
+    ('inspector fit', inspector_fit_step),
 ]

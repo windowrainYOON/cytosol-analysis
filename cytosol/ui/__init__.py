@@ -20,6 +20,8 @@ file (reuse rules, design system ``reuse.md``). The modules:
 ``tables``          Table variant ``check`` (check column with select-all)
 ``legend``          Legend (beside a live plot)
 ``prism``           PrismStyle: the fixed look of every measurement graph
+``fit``             FitBox: ``FitScroll`` page of a fixed-width box, its
+                    controls give way in a fixed order (``fit_width``)
 ==================  ========================================================
 
 The existing shared modules keep their place and are part of the library:

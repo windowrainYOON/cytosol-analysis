@@ -842,12 +842,10 @@ class GraphWindow(QMainWindow):
 
     @staticmethod
     def _scroll(w) -> QScrollArea:
-        s = QScrollArea()
-        s.setWidgetResizable(True)
-        s.setFrameShape(QScrollArea.Shape.NoFrame)
-        s.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        s.setWidget(w)
+        from .ui.fit import FitScroll  # noqa: PLC0415  fixed-width box: contents follow its width
+
         theme.unify(w)
+        s = FitScroll(w)
         return s
 
     def _act(self, menu, text, fn, key=None, tip=None):

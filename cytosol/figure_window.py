@@ -189,11 +189,9 @@ class FigureWindow(QMainWindow):
                     w.setMinimumContentsLength(8)
         for lab in right.findChildren(QLabel):
             lab.setWordWrap(True)
-        rscroll = QScrollArea()
-        rscroll.setWidgetResizable(True)
-        rscroll.setFrameShape(QFrame.Shape.NoFrame)
-        rscroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        rscroll.setWidget(right)
+        from .ui.fit import FitScroll  # noqa: PLC0415  fixed-width box: contents follow its width
+
+        rscroll = FitScroll(right)
         insp = QWidget()
         insp.setObjectName('hig_inspector')
         insp.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)

@@ -10,6 +10,7 @@ import shiboken6
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QPushButton,
     QRadioButton,
     QBoxLayout,
     QCheckBox,
@@ -23,9 +24,10 @@ from PySide6.QtWidgets import (
 
 
 class FlowLayout(QLayout):
-    def __init__(self, parent=None, spacing=6):
+    def __init__(self, parent=None, spacing=6, trailing=False):
         super().__init__(parent)
         self._items = []
+        self.trailing = trailing  # lines end at the trailing edge (a row that had a leading stretch)
         self.setSpacing(spacing)
         self.setContentsMargins(0, 0, 0, 0)
 
@@ -73,14 +75,24 @@ class FlowLayout(QLayout):
         r = rect.adjusted(m.left(), m.top(), -m.right(), -m.bottom())
         x, y, line_h = r.x(), r.y(), 0
         gap = self.spacing()
+        line = []
+
+        def end_line():
+            if move and line:
+                shift = r.right() + 1 - (x - gap) if self.trailing else 0
+                for it, pos, hint in line:
+                    it.setGeometry(QRect(QPoint(pos + max(0, shift), y), hint))
+            line.clear()
+
         for it in self._visible():
             hint = it.sizeHint()
             if x > r.x() and x + hint.width() > r.right() + 1:
+                end_line()
                 x, y, line_h = r.x(), y + line_h + gap, 0
-            if move:
-                it.setGeometry(QRect(QPoint(x, y), hint))
+            line.append((it, x, hint))
             x += hint.width() + gap
             line_h = max(line_h, hint.height())
+        end_line()
         return y + line_h - rect.y() + m.bottom()
 
 
@@ -110,6 +122,10 @@ def _to_flow(lay, min_n=3) -> FlowLayout | None:
         min_n = 2  # one-of-several radios wrap as soon as the pane is narrow
     if widgets and len(widgets) >= 2 and any(w.objectName() == 'hig_capsule' for w in widgets):
         min_n = 2  # a toolbar row of capsules
+    if widgets and len(widgets) >= 2 and all(type(w) in (QPushButton, QCheckBox) for w in widgets):
+        # two text buttons / check boxes side by side wrap too: in a fixed-width box they
+        # must never hold the page wider (owner rule 2026-11-25, ui.fit)
+        min_n = 2
     if not widgets or len(widgets) < min_n:
         return None
     if isinstance(lay, QGridLayout):  # keep the grid's reading order
@@ -118,7 +134,10 @@ def _to_flow(lay, min_n=3) -> FlowLayout | None:
             r, c, _rs, _cs = lay.getItemPosition(lay.indexOf(w))
             pos[w] = (r, c)
         widgets.sort(key=pos.get)
-    flow = FlowLayout(spacing=max(lay.spacing(), 4))
+    first = lay.itemAt(0) if isinstance(lay, QHBoxLayout) and lay.count() else None
+    trailing = first is not None and first.widget() is None and first.layout() is None \
+        and bool(first.expandingDirections() & Qt.Orientation.Horizontal)
+    flow = FlowLayout(spacing=max(lay.spacing(), 4), trailing=trailing)
     if len(widgets) >= 3 and all(isinstance(w, QCheckBox) for w in widgets):
         # a row of three or more options picked together: multi-select chips
         from . import theme  # noqa: PLC0415

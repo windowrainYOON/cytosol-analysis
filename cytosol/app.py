@@ -58,6 +58,7 @@ from . import glass, hig_widgets, theme
 from . import ui
 from .ui.color_well import ColorWell
 from .ui.scrubber import Scrubber
+from .ui.fit import FitScroll
 from .ui import overlay
 from .lut import (
     ImageItem,
@@ -101,7 +102,7 @@ ZOOM_KEY_STEP = 1.25  # '[' / ']'
 # default widths of the side panes (the preview takes the rest) and the
 # narrowest tools pane; the image list stops at its buttons' width
 LEFT_W = 250
-RIGHT_W, RIGHT_MIN_W, RIGHT_MAX_W = 360, 240, 360  # design system inspector 240–360
+RIGHT_W, RIGHT_MIN_W = 430, 320  # inspector width as before v0.75 (owner request 2026-11-25)
 MARKER_FORMAT = 'cytosol-viewer-markers'
 # what each feature menu's 불러오기 offers: (name, file dialog filter)
 IMPORT_KINDS = {
@@ -1462,10 +1463,9 @@ class MainWindow(QMainWindow):
         el.addLayout(row)
 
         def scrolled(w):
-            s = QScrollArea()
-            s.setWidgetResizable(True)
-            s.setWidget(w)
-            return s
+            # the inspector box has a fixed width: no sideways scroll, its
+            # controls give way instead (owner rule 2026-11-25, ui.fit)
+            return FitScroll(w)
 
         # LUT tab: one scrolling page (no inner scroll): the batch action on
         # top, channel visibility, then every channel's LUT
@@ -1621,7 +1621,6 @@ class MainWindow(QMainWindow):
                                        self.cell_track_panel.bar_status),
         }
         inspector.setMinimumWidth(RIGHT_MIN_W)
-        inspector.setMaximumWidth(RIGHT_MAX_W)
 
         # the file list and the tools keep their widths; only the preview
         # grows or shrinks with the window.  Dragged widths are remembered.
@@ -2232,7 +2231,14 @@ class MainWindow(QMainWindow):
         """Side panes at their remembered (or default) widths, the preview
         taking the rest."""
         lw, rw = view_settings.pane_widths(LEFT_W, RIGHT_W)
-        rw = min(max(rw, RIGHT_MIN_W), RIGHT_MAX_W)
+        store = view_settings._store()
+        if not store.value('layout/inspector_v0751', False):
+            # v0.75.0 held the inspector at ≤ 360 and remembered that: back to
+            # the earlier width once (owner request 2026-11-25)
+            store.setValue('layout/inspector_v0751', True)
+            if rw <= 360:
+                rw = RIGHT_W
+        rw = max(rw, RIGHT_MIN_W)
         total = max(sum(self.main_split.sizes()), lw + rw + 400)
         self.main_split.setSizes([lw, total - lw - rw, rw])
 
@@ -3571,7 +3577,12 @@ class MainWindow(QMainWindow):
         if it is None or it.nt < 2:
             self.t_row.stop()
             return
-        self._t_changed((it.t + 1) % it.nt)
+        t = (it.t + 1) % it.nt
+        # the T slider follows the playing frame (owner report 2026-11-25)
+        self.t_slider.blockSignals(True)
+        self.t_slider.setValue(t)
+        self.t_slider.blockSignals(False)
+        self._t_changed(t)
 
     def _t_changed(self, t):
         it = self.current

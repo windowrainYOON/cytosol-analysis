@@ -470,6 +470,10 @@ QHeaderView::section {{
     font-weight: 600; border: none; border-bottom: 1px solid {c('separator')};
 }}
 QHeaderView::section:vertical {{ border-bottom: none; border-right: 1px solid {c('separator')}; }}
+/* a window's stage / item list beside settings cards: the card surface, no
+   outline (owner check 2026-11-25: the outline read as a stray line) */
+QListWidget#hig_sidebar_list {{
+    background: {tint('label', 0.05)}; border: none; border-radius: {R_INSET_GROUP}px; padding: 4px; }}
 /* sidebar list: rows on the panel itself, selection = accent pill + white text */
 QWidget#hig_sidebar QAbstractItemView {{ background: transparent; border: none; padding: 0; }}
 QWidget#hig_sidebar QTreeView::item, QWidget#hig_sidebar QTreeView::item:hover,

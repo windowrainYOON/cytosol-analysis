@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.75.0)
+## Window structure (v0.75.1)
 
 - **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
   v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
@@ -38,6 +38,17 @@ owner writes in Korean, so reply in Korean.
 - **Panes** (`MainWindow.main_split`): left and right keep their width
   (stretch 0, defaults `LEFT_W` / `RIGHT_W`, widths remembered in
   `QSettings` `layout/*_width`), only the centre grows with the window.
+  Inspector `RIGHT_W` 430, at least `RIGHT_MIN_W` 320, no maximum (owner
+  request 2026-11-25, v0.75.1; v0.75.0's ≤ 360 cap is gone and a remembered
+  width ≤ 360 goes back to 430 once, `layout/inspector_v0751`).
+  **Fixed-width boxes are responsive inside** (owner rule 2026-11-25, design
+  system `FitBox`): every inspector tab page (and the graph / Figure window
+  inspectors) is a `ui.fit.FitScroll` (no sideways scroll, page = box width);
+  `fit_width` lets controls give way in order: settings fields together
+  140 → 80, Selects elided, other fields 56 / 64, fields 64, long check boxes
+  / labels wrap (texts before row titles), card titles elided; wider again =
+  all back (`fit_saved`). Rows of 2+ push buttons / check boxes are flows
+  (`flow._to_flow`, trailing kept). Self-test step `inspector fit`.
   Pane contents follow the pane width: `flow.reflow` turns rows of 3+
   buttons / check boxes of every right tab into `FlowLayout`s and lets form
   rows wrap; use `FlowLayout` (or word-wrapping labels, `wrapped_check` for a
@@ -615,5 +626,6 @@ not affected.
 | dev branch | 0.74.1 | Owner request (2026-11-24, "같은 파일로 입자추적, 세포 추적 파이프라인 돌려보고 결과 비교 … 기존이랑 같은 결과"; 261118 T001P vs the 2026-11-19 batch): pipeline `end.export` with no kind picked writes the export defaults of the tab stages it ran (`pipeline.default_export_opts`, `STAGE_EXPORT`) with those stages' settings applied (`_Settings` per stage); `track.particles` setting `signal_thr` sets the 5 신호 기준 channel's LUT Min (preset 261118 TCF: 5 + 6 on, Min 5); 세포질 강도 추적 '입자 추적 결과의 세포' keeps ParticleTracker's cell IDs and measures on its fluorescence grid (`cell_track.pt_native`, ring < 50 px dropped, threshold from all pixels) like `scripts/cell_local_bg.py` / `cell_green_thr.py`; preset 세포질 강도 추적 + 변화 필터 runs PT tracking first; exporter `track_all` skips the 신호 변화 tables (KeyError). P01: tracks / points / PT folder / green split equal, cells 6 = 6 with values equal to 5 decimals |
 | dev branch | 0.74.2 | Design-system check before the build (owner rule 2026-11-24): canvas view icons also as View commands with shortcuts (`view_mode_actions`: 라인 프로파일 ⌃⌥L, 자 ⌃⌥R, 단면 보기 ⌃⌥S, 3D 투영 보기 ⌃⌥3), 단면 MIP check box moved to the top row (no controls on the bottom edge), library: review chips info (not warning), 새 파이프라인 prominent at the trailing end after 파일에서 불러오기… |
 | dev branch | 0.75.0 | Owner request (2026-11-25 08:58, "개발 시작해 … 각 버튼이나 컴포넌트의 신호 전달이 이전과 동일하면 돼"; component sheet + crop-view mockups): design system foundations applied (accent #0066cc / #2997ff, label / secondary / tertiary, grouped background #f5f5f7, separators, row padding 16, inspector ≤ 360), 9 new components, the `cytosol/ui` library (all dialogs, colour wells, histograms with ▲ handles, Z / T scrubber with ▶, steps, overlay pens, empty state, Prism graph defaults); every QMessageBox / QInputDialog / QProgressDialog replaced; signal map before / after: no lost connection except the removed 선택한 Crop만 controls; crop view (crop row fills the canvas, 3D / sections of the crop, fitted scale bar) and Crop 영역도 따로 분석; LUT 일괄 적용 box fixed at the inspector bottom; self-test step `components + crop view` + reuse lint |
+| dev branch | 0.75.1 | Owner request (2026-11-25 10:19, "인스펙터가 짤리는 현상 … 인스펙터 너비는 예전처럼 … 하위에 있는 컴포넌트는 모두 반응형 … 디자인 시스템에도 추가"; 10:23 pipeline 설정 출처 card): inspector back to 430 / min 320 / no max, `ui.fit` (`FitScroll`, `fit_width`, `overflow`) for every inspector page and the graph / Figure inspectors, 2-button / 2-check rows wrap, data rows wrap, pipeline 설정 출처 card = one row group (no hairline above the buttons), stage list without outline (card surface); design system `FitBox` + RegionLayout / SettingsPane / anti-patterns rules; signal map: 0 lost |
 | dev branch | 0.73.1 | Pipeline fix: the result folder's `summary.json` / `README.txt` are written again after the last stage, so `status` reads `done` (it stayed `running` because the export stage wrote them first) |
 | #50 (main) | 0.53.0 (main) | 핵 다시 찾기: nuclei re-detected inside the (edited) cell ROIs, cells untouched, one nucleus per cell, each cell its own threshold (자동 = own LUT stretch + Otsu over the cell and a 2 µm ring, or a manual value per cell, live), noise in nucleus-free cells dropped (`cellroi.cell_nucleus`, `CellRois.redetect_nucleus`, `nuc_thr` saved in projects); PRD 24h ref-cell nucleus IoU 0.969 |
