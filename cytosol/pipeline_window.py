@@ -897,6 +897,11 @@ class PipelineWindow(RoiEditors, QDialog):
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumHeight(220)
         v5.addWidget(self.preview)
+        from .ui.empty import EmptyState
+        self.preview_empty = EmptyState('미리 볼 ROI가 없습니다', '이미지를 열고 검출 단계를 한 번 돌리면 미리 볼 수 있습니다.')
+        self.preview_empty.setMinimumHeight(220)
+        self.preview.hide()
+        v5.addWidget(self.preview_empty)
         self.preview_chips = QHBoxLayout()
         v5.addLayout(self.preview_chips)
         lay.addWidget(b5)
@@ -1015,14 +1020,26 @@ class PipelineWindow(RoiEditors, QDialog):
             if w is not None:
                 w.deleteLater()
         it = self.win.current
+        empty = getattr(self, 'preview_empty', None)
+
+        def show_empty(title, text):
+            lab.hide()
+            if empty is not None:
+                empty.title.setText(title)
+                empty.text.setText(text)
+                empty.text.setVisible(bool(text))
+                empty.show()
         try:
             objs, made = self.preview_objects(self._preview_i, it)
         except Exception as exc:  # noqa: BLE001
-            lab.setText(f'미리 보기를 만들 수 없습니다: {exc}')
+            show_empty('미리 볼 ROI가 없습니다', f'{exc} 검출 단계를 한 번 돌리면 미리 볼 수 있습니다.')
             return
         if it is None or not made:
-            lab.setText('이미지를 열고 검출 단계를 한 번 돌리면 미리 볼 수 있습니다.')
+            show_empty('미리 볼 ROI가 없습니다', '이미지를 열고 검출 단계를 한 번 돌리면 미리 볼 수 있습니다.')
             return
+        lab.show()
+        if empty is not None:
+            empty.hide()
         name = self.spec.stages[self._preview_i]['settings'].get('out')
         obj = made.get(name) or next(iter(made.values()))
         if obj.labels is not None and obj.labels.ndim != 2:

@@ -5144,3 +5144,7 @@ EN.update({
 EN.update({'ROI (이름) × 채널 → 형태 · 신호 강도 · 관계 파라미터.': 'ROI (name) × channels → shape · signal intensity · relation parameters.',
            ' → 측정 · 신호 강도 (표 「': ' → measure · signal intensity (table 「', '」 → ROI 연산 · ': '」 → ROI operation · ',
            '"이(가) ': '" '})
+EN.update({'미리 볼 ROI가 없습니다': 'No ROIs to preview', '미리 보기를 만들 수 없습니다': 'The preview cannot be made',
+           '이미지를 열고 검출 단계를 한 번 돌리면 미리 볼 수 있습니다.': 'Open an image and run the detection stages once to see a preview.',
+           '조건 빼기': 'Remove condition'})
+EN.update({'검출 단계를 한 번 돌리면 미리 볼 수 있습니다.': 'Run the detection stages once to see a preview.'})

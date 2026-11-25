@@ -407,7 +407,7 @@ class RoiEditors:
                 f.addItem(str(c[0]), c[0])
                 f.setCurrentIndex(f.count() - 1)
             op = combo(R.CMP, c[1])
-            h.addWidget(f, 2)
+            h.addWidget(f)
             h.addWidget(op)
 
             def upd():
@@ -424,8 +424,8 @@ class RoiEditors:
                        'overlaps')
             r = combo([(k, t) for k, t, _f, _o in R.RELATIONS], rel)
             o = self._roi_combo(i, other)
-            h.addWidget(r, 1)
-            h.addWidget(o, 1)
+            h.addWidget(r)
+            h.addWidget(o)
 
             def upd():
                 key = r.currentData()
@@ -442,6 +442,7 @@ class RoiEditors:
         h.addWidget(val)
         val.editingFinished.connect(lambda: (self._set_value(c, val.text()), self._preview_later()))
         val.setVisible(c[1] not in ('yes', 'no') and (s.get('by') == 'value' or str(c[0]).startswith('dist:')))
+        h.addStretch(1)   # item · op · value leading, the remove button at the row end
         rm = QToolButton()
         rm.setText('−')
         rm.setToolTip('조건 빼기')
@@ -766,6 +767,11 @@ class RoiEditors:
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumHeight(220)
         v5.addWidget(self.preview)
+        from .ui.empty import EmptyState
+        self.preview_empty = EmptyState('미리 볼 ROI가 없습니다', '이미지를 열고 검출 단계를 한 번 돌리면 미리 볼 수 있습니다.')
+        self.preview_empty.setMinimumHeight(220)
+        self.preview.hide()
+        v5.addWidget(self.preview_empty)
         self.preview_chips = QHBoxLayout()
         v5.addLayout(self.preview_chips)
         lay.addWidget(b5)

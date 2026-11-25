@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.76.1)
+## Window structure (v0.76.2)
 
 - **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
   v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
@@ -644,5 +644,6 @@ not affected.
 | dev branch | 0.75.3 | Owner request (2026-11-25, "파이프라인 제목도 임의로 지어놓지 말고, 그냥 사용하는 기능을 넣어줘", no mockup): built-in presets are named by the features their stages use (`pipeline.FEATURE_NAMES`, `feature_name`: e.g. 입자 추적 · 세포질 강도 추적 · 연산 · 세기; start / review / end left out), old names still found by `find_preset` (`pipeline_presets.OLD_NAMES`); docs 21 / 24 |
 | dev branch | 0.76.0 | Owner approval (2026-11-25 15:06, "제대로 했어. 이제 개발하고, 파이프라인도 바뀐 방식에 맞춰 새로 만들어줘 … 기존 파이프라인으로 분석한거랑 같게 나오는지"; design v4 + mockups in `/mnt/project-files/pipeline/v4/`): pipeline around named ROIs (검출 → ROI 연산 → ROI 필터 → ROI 추적 → 측정 (형태 / 신호 강도 / 관계) → 측정값 연산), free order checked by names, English default names with kind chips, editors input → 할 일 → 세부 → 결과 이름, titles = features, columns `측정 이름 › 채널 파라미터`, graph window 파이프라인 결과 with column sets, `.cypipe` VERSION 3, old pipelines converted on open (shown, undoable), 11 presets rebuilt (same tables as v2 on synthetic images); docs 24 |
 | dev branch | 0.76.1 | Fixes after the Mac mini real-image comparison of v0.76.0 vs v0.75.3 (PRD 24h CZI × 4 presets, 261118 T001P01 × 2: every measured value equal, Coloc 2 differs only in the random Costes shuffle): 측정 · 관계 Coloc 2 table filled from `ColocRecord.row()` (AttributeError, 0 rows) and 등거리 띠 table from the bands tab's rows (0 rows), tab values as `측정 이름 › 열` (`pipeline_roi._tab_row`); track tables name the ROI in `roi` like every other table (was `object`); self-test checks both tables |
+| dev branch | 0.76.2 | Design-system check before the build: pipeline preview box shows the `ui.empty.EmptyState` (no ROIs yet / missing ROI) instead of an empty grey area; ROI 필터 condition rows read item · op · value leading with the remove button at the row end |
 | dev branch | 0.73.1 | Pipeline fix: the result folder's `summary.json` / `README.txt` are written again after the last stage, so `status` reads `done` (it stayed `running` because the export stage wrote them first) |
 | #50 (main) | 0.53.0 (main) | 핵 다시 찾기: nuclei re-detected inside the (edited) cell ROIs, cells untouched, one nucleus per cell, each cell its own threshold (자동 = own LUT stretch + Otsu over the cell and a 2 µm ring, or a manual value per cell, live), noise in nucleus-free cells dropped (`cellroi.cell_nucleus`, `CellRois.redetect_nucleus`, `nuc_thr` saved in projects); PRD 24h ref-cell nucleus IoU 0.969 |
