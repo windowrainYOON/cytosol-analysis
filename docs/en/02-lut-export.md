@@ -39,6 +39,8 @@ between files of the same type with the same channel count.
 
 ## Batch apply — 일괄 적용
 
+The **일괄 적용** box is fixed at the bottom of the right pane while the LUT tab is shown (v0.75, the same place as the measure bar of the measuring tabs), so it stays visible while the channel list scrolls.
+
 - **모든 채널 LUT를 전체 이미지에 적용** (Apply all channel LUTs to all images).
 - **색상도 함께 적용** (Apply colors too): when off, only min/max/gamma are
   copied and each image keeps its colors.

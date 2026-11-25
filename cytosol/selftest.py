@@ -1400,10 +1400,10 @@ def run(out_dir) -> int:
                 or lut_page.isAncestorOf(win.markers) \
                 or lut_page.widget().findChildren(QScrollArea):
             raise AssertionError('마커 tab / LUT tab scroll')
-        lay = lut_page.widget().layout()
-        if lay.itemAt(0).widget() is None or not lay.itemAt(0).widget().isAncestorOf(
+        # v0.75: 일괄 적용 is fixed at the bottom of the inspector (outside the page)
+        if lut_page.widget().isAncestorOf(win.all_luts_btn) or not win.lut_footer.isAncestorOf(
                 win.all_luts_btn):
-            raise AssertionError('batch LUT action is not at the top of the LUT tab')
+            raise AssertionError('batch LUT action is not fixed at the inspector bottom')
         # a chip's × closes its feature tab (same as the View item)
         win.show_tab('roi_tab', focus=False)
         chip = next(c for c in win.right_tabs._chips() if c.text() == '세포질 ROI')

@@ -1471,11 +1471,14 @@ class MainWindow(QMainWindow):
         # top, channel visibility, then every channel's LUT
         lut_page = QWidget()
         rl = QVBoxLayout(lut_page)
-        rl.addWidget(batch)
+        # 일괄 적용 is fixed at the bottom of the inspector like the 측정 바
+        # (owner request 2026-11-25, v0.75); added there with the measure bar
+        self.lut_batch = batch
         self.visibility = VisibilityRow()
         rl.addWidget(self.visibility)
         rl.addLayout(self.channel_box)
         lut_tab = scrolled(lut_page)
+        self.lut_tab_page = lut_tab
         # 마커 tab (fixed, next to LUT): scale bar, time stamp, bleach ROI
         marker_tab = scrolled(self.markers)
         self.marker_tab = marker_tab
@@ -1591,6 +1594,14 @@ class MainWindow(QMainWindow):
         from .measure_bar import MeasureBar, Measurer, box_measurer
         self.measure_bar = MeasureBar(self)
         inspector.layout().addWidget(self.measure_bar)
+        foot = QWidget()
+        foot.setObjectName('hig_lut_footer')
+        fl = QVBoxLayout(foot)
+        fl.setContentsMargins(0, 0, 0, 0)
+        fl.addWidget(self.lut_batch)
+        theme.unify(foot)
+        self.lut_footer = foot
+        inspector.layout().addWidget(foot)
         fp = self.frap_panel
         self.measurers = {
             'roi_tab': box_measurer(self.roi_panel.measure),
@@ -3802,6 +3813,13 @@ class MainWindow(QMainWindow):
         page = self.right_tabs.currentWidget()
         name = self._tab_name(page) if page is not None else None
         bar.bind(self.measurers.get(name), page)
+        foot = getattr(self, 'lut_footer', None)
+        if foot is not None:
+            on = page is not None and page is getattr(self, 'lut_tab_page', None)
+            foot.setVisible(on)
+            if on:
+                bar.align(page)
+                foot.layout().setContentsMargins(*bar.layout().getContentsMargins())
 
     def _frap_measure_current(self):
         fp = self.frap_panel

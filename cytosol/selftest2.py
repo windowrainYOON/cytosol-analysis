@@ -1658,6 +1658,15 @@ def components_step(out: Path):
     cw._accept(__import__('PySide6.QtGui', fromlist=['QColor']).QColor('#00ff00'))
     if cols != ['#00ff00'] or cw.color().lower() != '#00ff00' or '#00ff00' not in cw.toolTip().lower():
         raise AssertionError(f'color well {cols} {cw.toolTip()}')
+    # 일괄 적용 fixed at the inspector bottom on the LUT tab only (v0.75)
+    win.right_tabs.setCurrentWidget(win.lut_tab_page)
+    app.processEvents()
+    if not win.lut_footer.isVisible() or not win.lut_footer.isAncestorOf(win.all_luts_btn):
+        raise AssertionError('LUT 일괄 적용 not fixed at the bottom')
+    win.show_tab('roi_tab')
+    app.processEvents()
+    if win.lut_footer.isVisible():
+        raise AssertionError('LUT 일괄 적용 shown on another tab')
     # Scrubber ▶: steps through T, stops on a single frame image
     if win.t_row.play_btn is None or win.z_col.play_btn is not None:
         raise AssertionError('scrubber play buttons')
