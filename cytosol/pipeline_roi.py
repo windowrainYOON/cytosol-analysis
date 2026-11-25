@@ -549,7 +549,11 @@ def track_signal(it, obj, s, name, params) -> list:
     for tid in sorted(by):
         for p in sorted(by[tid], key=lambda r: r['frame']):
             r = {k: v for k, v in p.items() if not k.startswith('_')}
-            rows.append({**_head(it), 'object': obj.name, 'label': tid, **r})
+            row = {**_head(it), 'roi': obj.name, 'label': tid, **r}   # 'roi' as in every other table
+            if 'roi' in r:
+                row['tab_roi'] = r['roi']
+            row['roi'] = obj.name
+            rows.append(row)
     time_params = [p for p in params if p in PARAM_TEXT and p in dict(PARAMS['signal'][2][1])]
     if not time_params or time_params == ['PerFrame']:
         return rows
@@ -593,6 +597,22 @@ def _cells_of(a_obj, b_obj):
     return out
 
 
+# id columns of the tabs' own rows (등거리 띠, Coloc 2), kept as they are; values become 「측정 이름 › 열」
+TAB_IDS = {'image', 'image_id', 'source', 'group', 'timepoint', 't', 'plane', 'roi', 'region', 'cell', 'label',
+           'band', 'band_index', 'channel_1', 'channel_2', 'n_pixels', 'warnings', 'distance_mode'}
+
+
+def _tab_row(it, roi, r, name) -> dict:
+    row = {**_head(it), 'roi': roi}
+    for k, v in r.items():
+        if k.startswith('_') or k in ('image', 'image_id', 'group', 'roi'):
+            continue
+        row[k if k in TAB_IDS else col(name, '', k)] = v
+    if 'roi' in r and r['roi'] != roi:
+        row['tab_roi'] = r['roi']
+    return row
+
+
 def measure_relation(it, s, objs, win=None) -> list:
     """ROI A (outside / parent) and B (inside / object); count, overlap,
     distance, partition per A (or per B); bands / Coloc 2 through their tabs."""
@@ -607,7 +627,13 @@ def measure_relation(it, s, objs, win=None) -> list:
     rest = [p for p in params if p not in tab]
     if 'Coloc' in params:
         for r in getattr(it, 'coloc', None) or []:
-            rows.append({**_head(it), 'roi': a.name, **{k: v for k, v in r.items() if not k.startswith('_')}})
+            d = r.row() if hasattr(r, 'row') else dict(r)
+            rows.append(_tab_row(it, a.name, d, name))
+    if 'Bands' in params and win is not None:
+        box = win.bands_panel.bands_measure
+        for r in getattr(box, 'batch_rows', None) or []:
+            if r.get('image_id') == it.image_id and r.get('image', it.label) == it.label:
+                rows.append(_tab_row(it, a.name, r, name))
     if not rest:
         return rows
     if b is None:

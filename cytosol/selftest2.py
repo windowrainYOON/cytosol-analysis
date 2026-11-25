@@ -1419,6 +1419,9 @@ def pipeline_step(out: Path):
                                              'name': '모양'}},
         {'kind': 'measure.roi', 'settings': {'type': 'relation', 'a': 'Cell', 'b': 'Spot', 'channels': ['GFP'],
                                              'params': ['Count', 'Density', 'OverlapA', 'Partition'], 'name': '관계'}},
+        {'kind': 'measure.roi', 'settings': {'type': 'relation', 'a': 'Cell', 'b': 'Nuc', 'params': ['Bands'],
+                                             'name': '등거리 띠'}},
+        {'kind': 'measure.roi', 'settings': {'type': 'relation', 'a': 'Cell', 'params': ['Coloc'], 'name': 'Coloc 2'}},
         {'kind': 'roi.filter', 'settings': {'input': 'Cyto_noSpot', 'by': 'value',
                                             'conds': [['세기 › GFP Mean', '>', -1e9]], 'out': 'Cyto_kept'}},
         {'kind': 'calc.values', 'settings': {'table': '세기', 'a': '세기 › GFP IntDen', 'op': '/',
@@ -1437,6 +1440,9 @@ def pipeline_step(out: Path):
     for i in range(len(spec.stages)):
         pw.show_stage(i)   # every editor, the ROI 연산 one with the preview
         app.processEvents()
+    cp = win.coloc_panel
+    if cp.ch1.currentData() == cp.ch2.currentData():
+        cp.ch2.setCurrentIndex(1 if cp.ch1.currentIndex() == 0 else 0)
     dest = out / 'pipe_out' / 'run'
     res = pw.start(spec.copy(), list(win.items), out=dest)
     if res != 'review':
@@ -1479,6 +1485,11 @@ def pipeline_step(out: Path):
     v = [x['계산 › 밀도'] for x in rows if x['image_id'] == 'PIPE-0']
     if not (abs(min(v)) < 1e-9 and abs(max(v) - 1) < 1e-9):
         raise AssertionError(f'min–max normalization {min(v)} {max(v)}')
+    for t in ('등거리 띠', 'Coloc 2'):   # the tabs' own rows (Mac mini v0.76.0 check: these were empty)
+        if not r.state.tables.get(t):
+            raise AssertionError(f'{t} table empty: {r.state.errors}')
+    if not any(k.startswith('Coloc 2 › ') for k in r.state.tables['Coloc 2'][0]):
+        raise AssertionError(r.state.tables['Coloc 2'][0])
     rel = r.state.tables['관계'][0]
     if '관계 › Count' not in rel or '관계 › GFP Partition' not in rel:
         raise AssertionError(rel)
