@@ -638,7 +638,7 @@ class GraphWindow(QMainWindow):
             if p is None:
                 p = QTreeWidgetItem([e['feature']])
                 p.setFlags(Qt.ItemFlag.ItemIsEnabled)
-                if e['key'] == 'integrated':
+                if e['key'] in ('integrated', 'pipeline'):   # 파이프라인 results at the top too (v4)
                     self.data_list.addTopLevelItem(p)
                 else:
                     # each feature's own tables: kept, folded under one heading (v0.68)
@@ -657,6 +657,9 @@ class GraphWindow(QMainWindow):
                             if e['state'] == 'stale' else ''))
             if e['key'] == 'integrated':
                 c.setToolTip(0, c.toolTip(0) + f"\n열 {e.get('columns', 0)}개 · 기능: {', '.join(e.get('features', []))}")
+            elif e['key'] == 'pipeline':
+                c.setText(0, f"{e['name']}  {e['rows']}행")
+                c.setToolTip(0, c.toolTip(0) + f"\n열 묶음: {', '.join(e.get('features', []))}")
             c.setIcon(0, theme.status_icon('warning' if e['state'] == 'stale' else 'success'))
             p.addChild(c)
             p.setExpanded(True)

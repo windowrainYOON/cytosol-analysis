@@ -29,10 +29,11 @@ import numpy as np
 from scipy import ndimage as ndi
 
 FORMAT = 'cytosol-viewer-pipeline'
-VERSION = 2
+VERSION = 3          # v4 design: named ROIs (pipeline_roi); VERSION 2 files are converted on load
 EXT = '.cypipe'
-GROUPS = (('start', '시작'), ('detect', '검출'), ('track', '추적'), ('op', '연산'), ('measure', '측정'),
-          ('human', '사람'), ('end', '끝'))
+GROUPS = (('start', '시작'), ('detect', '검출'), ('roi_op', 'ROI 연산'), ('roi_filter', 'ROI 필터'),
+          ('roi_track', 'ROI 추적'), ('measure', '측정'), ('calc', '측정값 연산'), ('human', '사람'), ('end', '끝'),
+          ('track', '추적'), ('op', '연산'))   # the last two: v2 kinds kept for old code paths
 GROUP_ORDER = {g: i for i, (g, _t) in enumerate(GROUPS)}
 
 
@@ -40,9 +41,9 @@ GROUP_ORDER = {g: i for i, (g, _t) in enumerate(GROUPS)}
 # stage kinds (the schema `cytosol-pipe stages` prints)
 # ---------------------------------------------------------------------------
 
-def _stage(group, title, desc, settings=None, out=(), needs=(), panel=None, batch=None):
+def _stage(group, title, desc, settings=None, out=(), needs=(), panel=None, batch=None, legacy=False):
     return dict(group=group, title=title, desc=desc, settings=settings or {}, out=list(out), needs=list(needs),
-                panel=panel, batch=batch)
+                panel=panel, batch=batch, legacy=legacy)
 
 
 STAGES = {
@@ -51,33 +52,55 @@ STAGES = {
     'start.auto_group': _stage('start', '자동 그룹', '이름 끝 번호를 뺀 같은 이름끼리 그룹으로 묶습니다.', {}),
     'detect.cells': _stage('detect', '세포 · 핵 (세포질 ROI)', '세포질 ROI 탭의 검출 설정으로 세포와 핵을 찾습니다. '
                            '세포질 = 세포 − 핵.', {'panel': None, 'redo': True}, ('세포', '핵', '세포질'),
-                           panel='roi', batch='cells'),
+                           panel='roi', batch='cells', legacy=True),
     'detect.particles': _stage('detect', '입자 (입자 ROI)', '입자 ROI 탭의 설정으로 입자를 찾습니다.',
-                               {'panel': None, 'redo': True}, ('입자',), panel='particle', batch='particles'),
+                               {'panel': None, 'redo': True}, ('입자',), panel='particle', batch='particles',
+                               legacy=True),
     'detect.mito': _stage('detect', '미토 ROI (mitoROI)', 'mitoROI 탭의 미토 분할로 미토콘드리아를 찾습니다 (검출만).',
-                          {'panel': None, 'redo': True}, ('미토 조각',), ('세포',), panel='mito', batch='mito'),
+                          {'panel': None, 'redo': True}, ('미토 조각',), ('세포',), panel='mito', batch='mito',
+                          legacy=True),
     'track.particles': _stage('track', '입자 추적', '입자 추적 탭의 설정으로 프레임마다 입자를 찾고 잇습니다.',
-                              {'panel': None, 'redo': True}, ('입자 트랙',), panel='track', batch='track'),
+                              {'panel': None, 'redo': True}, ('입자 트랙',), panel='track', batch='track',
+                              legacy=True),
     'track.cytosol': _stage('track', '세포질 강도 추적', '세포를 프레임마다 찾고 이어 시점별 세기를 잽니다.',
                             {'cell_track': None, 'redo': True}, ('세포 트랙',), panel='cyto_track',
-                            batch='cyto_track'),
+                            batch='cyto_track', legacy=True),
     'op': _stage('op', '연산', '입력 object · 기준 · 동작 · 결과 이름.', {
         'input': '세포', 'where': {'mode': 'all', 'conds': []},
         'action': {'do': 'keep', 'with': '', 'pair': 'cell', 'um': 1.0, 'inner': 2.0, 'outer': 6.0, 'n': 4},
-        'out': '새 object', 'rest': ''}),
+        'out': '새 object', 'rest': ''}, legacy=True),
     'measure.intensity': _stage('measure', '세기 (ImageJ Measure)', 'object × 채널: Area, Mean, IntDen …',
                                 {'targets': [{'object': '세포질', 'channels': []}],
-                                 'stats': ['Area', 'Mean', 'IntDen'], 'bg': 'none', 'name': ''}),
+                                 'stats': ['Area', 'Mean', 'IntDen'], 'bg': 'none', 'name': ''}, legacy=True),
     'measure.count': _stage('measure', '개수 · 밀도', '부모(세포)마다 object 개수와 면적당 개수.',
-                            {'object': '입자', 'parent': '세포', 'name': ''}),
+                            {'object': '입자', 'parent': '세포', 'name': ''}, legacy=True),
     'measure.bands': _stage('measure', '등거리 띠', '등거리 띠 탭의 설정으로 띠마다 잽니다.', {'panel': None},
-                            needs=('세포',), panel='bands', batch='bands'),
+                            needs=('세포',), panel='bands', batch='bands', legacy=True),
     'measure.coloc': _stage('measure', 'Coloc 2', 'Coloc 2 탭의 두 채널로 세포마다 계산합니다.', {'panel': None},
-                            needs=('세포',), panel='coloc', batch='coloc'),
+                            needs=('세포',), panel='coloc', batch='coloc', legacy=True),
     'measure.frap': _stage('measure', 'FRAP 회복', 'FRAP 측정 탭의 설정으로 회복 곡선을 맞춥니다.', {'panel': None},
                            panel='frap', batch='frap'),
     'measure.mina': _stage('measure', '미토 형태 (MiNA)', '미토 조각의 골격 길이 · 가지 · 분기점 (Mito Analyzer).',
-                           {}, needs=('미토 조각',)),
+                           {}, needs=('미토 조각',), legacy=True),
+    # ---- v4 (named ROIs, owner approval 2026-11-25) ----
+    'detect.roi': _stage('detect', '검출', '알고리즘으로 ROI를 찾고, 만든 ROI 집합마다 이름을 붙입니다.',
+                         {'method': 'cells', 'panel': None, 'redo': True, 'channels': {},
+                          'names': {'cell': 'Cell', 'nuc': 'Nuc', 'cyto': 'Cyto'}, 'cells': 'Cell'}),
+    'roi.op': _stage('roi_op', 'ROI 연산', '이름으로 고른 ROI A (· B)를 빼기 · 겹친 부분 · 넓히기 … → 새 이름.',
+                     {'a': 'Cyto', 'b': 'Spot', 'do': 'subtract', 'pair': 'cell', 'um': 1.0, 'inner': 2.0,
+                      'outer': 6.0, 'n': 4, 'avoid': '', 'out': 'Cyto_noSpot'}),
+    'roi.filter': _stage('roi_filter', 'ROI 필터', '이름으로 고른 ROI에서 기준 (다른 ROI와의 관계 · 측정값)에 맞는 것만 → 새 이름.',
+                         {'input': 'Spot', 'by': 'relation', 'mode': 'all', 'conds': [], 'out': 'Spot_in',
+                          'rest': ''}),
+    'roi.track': _stage('roi_track', 'ROI 추적', '시점마다의 ROI를 트랙으로 잇습니다 (입자 추적 / 세포질 추적 알고리즘).',
+                        {'algorithm': 'particle', 'input': '', 'panel': None, 'cell_track': None, 'redo': True,
+                         'out': 'Spot_track'}),
+    'measure.roi': _stage('measure', '측정', 'ROI (이름) × 채널 → 형태 · 신호 강도 · 관계 파라미터.',
+                          {'type': 'signal', 'a': 'Cyto', 'b': '', 'channels': [], 'z': '',
+                           'params': ['Area', 'Mean', 'IntDen'], 'bg': 'none', 'name': ''}),
+    'calc.values': _stage('calc', '측정값 연산', '파라미터끼리 계산 · 정규화 → 새 파라미터.',
+                          {'table': '', 'a': '', 'op': '/', 'b': '', 'b_table': '', 'pair': 'same', 'expr': 'A / B',
+                           'norm': 'none', 'n': 3, 'control': '', 'scope': 'track', 'out': ''}),
     'human.review': _stage('human', '검토 (사용자 첨삭)', '멈추고 고른 이미지의 ROI를 고친 뒤 이어 갑니다.', {
         'images': [], 'chips': {'count': True, 'touching': True, 'nuc_shape': True, 'failed': True,
                                 'no_nucleus': False, 'edge': False},
@@ -106,6 +129,32 @@ def default_stage(kind) -> dict:
             'out': list(s['out']), 'review': False}
 
 
+def stage_meta(st) -> dict:
+    """group / panel / batch step of a stage; for v4 kinds they follow its
+    settings (detection method, tracking algorithm, bands / Coloc 2)."""
+    from . import pipeline_roi as R
+    k = st['kind']
+    m = dict(STAGES.get(k, {}))
+    s = st.get('settings') or {}
+    if k == 'detect.roi':
+        meth = R.METHODS.get(s.get('method', 'cells'), R.METHODS['cells'])
+        m.update(panel=meth[2], batch=meth[3])
+    elif k == 'roi.track':
+        t = R.TRACKERS.get(s.get('algorithm', 'particle'), R.TRACKERS['particle'])
+        m.update(panel=t[3], batch=t[4])
+    elif k == 'measure.roi':
+        ps = s.get('params') or []
+        if 'Bands' in ps:
+            m.update(panel='bands', batch='bands')
+        elif 'Coloc' in ps:
+            m.update(panel='coloc', batch='coloc')
+    return m
+
+
+def stage_group(st) -> str:
+    return STAGES.get(st['kind'], {}).get('group', 'end')
+
+
 # the feature (tab) each stage uses, for pipeline names (owner 2026-11-25: name = the features used)
 FEATURE_NAMES = {'detect.cells': '세포질 ROI', 'detect.particles': '입자 ROI', 'detect.mito': 'mitoROI',
                  'track.particles': '입자 추적', 'track.cytosol': '세포질 강도 추적', 'op': '연산',
@@ -113,23 +162,127 @@ FEATURE_NAMES = {'detect.cells': '세포질 ROI', 'detect.particles': '입자 RO
                  'measure.coloc': 'Coloc 2', 'measure.frap': 'FRAP', 'measure.mina': '미토 형태 (MiNA)'}
 
 
+def feature_of(st) -> str:
+    """The feature a stage uses (its title after 「그룹 · 」), e.g. 입자 추적, 신호 강도."""
+    from . import pipeline_roi as R
+    k = st['kind'] if isinstance(st, dict) else st
+    s = (st.get('settings') or {}) if isinstance(st, dict) else {}
+    if k == 'detect.roi':
+        return R.METHODS.get(s.get('method', 'cells'), R.METHODS['cells'])[0]
+    if k == 'roi.track':
+        return '입자 추적' if s.get('algorithm', 'particle') == 'particle' else '세포질 강도 추적'
+    if k == 'roi.op':
+        return 'ROI 연산'
+    if k == 'roi.filter':
+        return 'ROI 필터'
+    if k == 'measure.roi':
+        ps = s.get('params') or []
+        if 'Bands' in ps:
+            return '등거리 띠'
+        if 'Coloc' in ps:
+            return 'Coloc 2'
+        if 'Skeleton' in ps:
+            return '미토 형태 (MiNA)'
+        return dict(R.MEASURE_TYPES).get(s.get('type', 'signal'), '측정')
+    if k == 'calc.values':
+        return '측정값 연산'
+    return FEATURE_NAMES.get(k, '')
+
+
 def feature_name(stages) -> str:
-    """'세포질 ROI · 입자 ROI · 연산 · 세기' from a pipeline's stages (each feature once, in order;
+    """'세포질 ROI · 입자 ROI · ROI 연산 · 신호 강도' from a pipeline's stages (each feature once, in order;
     시작 / 검토 / 끝 stages are left out)."""
     out = []
     for st in stages:
-        f = FEATURE_NAMES.get(st['kind'] if isinstance(st, dict) else st)
+        f = feature_of(st)
         if f and (not isinstance(st, dict) or st.get('enabled', True)) and f not in out:
             out.append(f)
     return ' · '.join(out)
 
 
 def stage_title(st) -> str:
-    return st.get('name') or STAGES.get(st['kind'], {}).get('title', st['kind'])
+    """v4: the feature used, after the group (owner 2026-11-25: 「측정 · 신호 강도」,
+    「ROI 필터 · 관계」); result names only in the list's second line (`stage_io`)."""
+    from . import pipeline_roi as R
+    k = st['kind']
+    s = st.get('settings') or {}
+    if k == 'detect.roi':
+        return f'검출 · {feature_of(st)}'
+    if k == 'roi.op':
+        return f'ROI 연산 · {dict(R.ROI_OPS).get(s.get("do"), s.get("do", "")).split(" (")[0]}'
+    if k == 'roi.filter':
+        return 'ROI 필터 · ' + ('측정값' if s.get('by') == 'value' else '관계')
+    if k == 'roi.track':
+        return 'ROI 추적 · ' + ('입자 추적' if s.get('algorithm', 'particle') == 'particle' else '세포질 추적')
+    if k == 'measure.roi':
+        t = dict(R.MEASURE_TYPES).get(s.get('type', 'signal'), '')
+        f = feature_of(st)
+        return f'측정 · {t}' + (f' · {f}' if f != t else '')
+    if k == 'calc.values':
+        op = s.get('op', '/')
+        what = {'/': '나누기', '-': '빼기', '+': '더하기', '*': '곱하기', 'log2': 'log₂', 'expr': '식'}.get(op, op)
+        if not s.get('a') and s.get('norm', 'none') != 'none':
+            what = '정규화'
+        return f'측정값 연산 · {what}'
+    return st.get('name') or STAGES.get(k, {}).get('title', k)
+
+
+def stage_inputs(st) -> list:
+    """ROI names a stage reads."""
+    from . import pipeline_roi as R
+    k = st['kind']
+    s = st.get('settings') or {}
+    if k == 'detect.roi':
+        return [s.get('cells')] if s.get('method') == 'mito' and s.get('cells') else []
+    if k == 'roi.op':
+        return [x for x in (s.get('a'), s.get('b') if s.get('do') in R.NEEDS_B + ('bands',) else '',
+                            s.get('avoid') if s.get('do') == 'ring' else '') if x]
+    if k == 'roi.filter':
+        out = [s.get('input')]
+        for c in s.get('conds') or []:
+            f = str(c[0]) if c else ''
+            h, _, arg = f.partition(':')
+            if h in ('overlap', 'inside', 'contains', 'dist', 'parent_in') and arg:
+                out.append(arg)
+        return [x for x in out if x]
+    if k == 'roi.track':
+        return [s['input']] if s.get('input') else []
+    if k == 'measure.roi':
+        out = [s.get('a')]
+        if s.get('type') == 'relation' and s.get('b'):
+            out.append(s['b'])
+        if s.get('bg') == 'roi' and s.get('bg_roi'):
+            out.append(s['bg_roi'])
+        return [x for x in out if x]
+    return []
+
+
+def stage_io(st) -> str:
+    """The list's second line: 입력 → 결과 (names)."""
+    from . import pipeline_roi as R
+    k = st['kind']
+    s = st.get('settings') or {}
+    if k == 'detect.roi':
+        return '이미지 → ' + ' · '.join(n for n, _k in R.detect_outputs(st))
+    if k in ('roi.op', 'roi.filter', 'roi.track'):
+        ins = stage_inputs(st)
+        if k == 'roi.op' and s.get('do') == 'ring' and s.get('avoid'):
+            ins = [x for x in ins if x != s.get('avoid')]
+        src = (' · '.join(ins) if k != 'roi.filter' else s.get('input', '')) or '시점마다 검출'
+        return f'{src} → {" · ".join(produced(st)) or "?"}'
+    if k == 'measure.roi':
+        chs = s.get('channels') or []
+        ch = (' × ' + ' · '.join(chs)) if chs else (' × 모든 채널' if s.get('type') == 'signal' else '')
+        return f'{" · ".join(stage_inputs(st))}{ch} → {R.measure_name(s)}'
+    if k == 'calc.values':
+        return f'{s.get("table") or "?"} → {s.get("out") or "?"}'
+    return stage_summary(st)
 
 
 def stage_summary(st) -> str:
     k, s = st['kind'], st.get('settings', {})
+    if k in ('detect.roi', 'roi.op', 'roi.filter', 'roi.track', 'measure.roi', 'calc.values'):
+        return stage_io(st)
     if k == 'op':
         a = s.get('action', {})
         do = dict(ACTIONS).get(a.get('do'), a.get('do'))
@@ -162,7 +315,7 @@ def stage_summary(st) -> str:
     return STAGES.get(k, {}).get('desc', '')
 
 
-@dataclass
+@dataclass(eq=False)
 class PipelineSpec:
     name: str = '새 파이프라인'
     stages: list = field(default_factory=list)
@@ -175,9 +328,13 @@ class PipelineSpec:
                 'input': self.input, 'note': self.note, 'stages': self.stages}
 
     @classmethod
-    def from_dict(cls, d) -> 'PipelineSpec':
+    def from_dict(cls, d, convert=True) -> 'PipelineSpec':
+        """VERSION 2 (and v1 / 일괄 분석) pipelines are converted to the named-ROI
+        stages; `converted` lists what changed and `original` keeps the old
+        dict until the pipeline is saved (design §9: shown, undoable)."""
         if d.get('format') == 'cytosol-viewer-batch':   # 일괄 분석 settings → a pipeline without review
-            return from_batch(d)
+            spec = from_batch(d)
+            return spec.convert() if convert else spec
         if d.get('format') not in (FORMAT, None):
             raise ValueError(f'파이프라인 파일이 아닙니다 ({d.get("format")}).')
         stages = []
@@ -189,7 +346,30 @@ class PipelineSpec:
             base.update({k: v for k, v in st.items() if k != 'settings'})
             base['settings'].update(st.get('settings') or {})
             stages.append(base)
-        return cls(d.get('name') or '파이프라인', stages, d.get('input') or {}, d.get('note') or '')
+        spec = cls(d.get('name') or '파이프라인', stages, d.get('input') or {}, d.get('note') or '')
+        if convert and any(STAGES[st['kind']].get('legacy') for st in stages):
+            spec.original = copy.deepcopy(d)
+            spec.convert()
+        return spec
+
+    converted: list = None
+    original: dict = None
+
+    def convert(self) -> 'PipelineSpec':
+        """v2 kinds → v4 named-ROI stages in place (pipeline_roi.convert_stages)."""
+        from . import pipeline_roi as R
+        if not any(STAGES[st['kind']].get('legacy') for st in self.stages):
+            return self
+        new, notes = R.convert_stages(self.stages)
+        stages = []
+        for st in new:
+            base = default_stage(st['kind'])
+            base.update({k: v for k, v in st.items() if k != 'settings'})
+            base['settings'].update(st.get('settings') or {})
+            stages.append(base)
+        self.stages = stages
+        self.converted = notes
+        return self
 
     def save(self, path) -> Path:
         p = Path(path)
@@ -205,7 +385,9 @@ class PipelineSpec:
         return cls.from_dict(json.loads(Path(path).read_text(encoding='utf-8')))
 
     def copy(self) -> 'PipelineSpec':
-        return PipelineSpec.from_dict(json.loads(json.dumps(self.to_dict(), default=_json_default)))
+        c = PipelineSpec.from_dict(json.loads(json.dumps(self.to_dict(), default=_json_default)))
+        c.converted, c.original = self.converted, self.original
+        return c
 
     def objects_before(self, index) -> list:
         """Object names made by the enabled stages before stage ``index``."""
@@ -229,6 +411,7 @@ def _json_default(o):
     raise TypeError(type(o))
 
 
+V4_KINDS = ('detect.roi', 'roi.op', 'roi.filter', 'roi.track', 'measure.roi', 'calc.values')
 V1_KINDS = {'load': 'start.load', 'auto_group': 'start.auto_group', 'cells': 'detect.cells', 'roi': 'detect.cells',
             'particles': 'detect.particles', 'particle': 'detect.particles', 'mito': 'detect.mito',
             'track': 'track.particles', 'cyto_track': 'track.cytosol', 'bands': 'measure.bands',
@@ -275,16 +458,36 @@ def stage_rank(stages, i) -> int:
 
 
 def produced(st) -> list:
+    from . import pipeline_roi as R
     k = st['kind']
-    if k == 'op':
-        s = st['settings']
+    s = st.get('settings') or {}
+    if k in ('op', 'roi.filter'):
         return [x for x in (s.get('out'), s.get('rest')) if x]
+    if k == 'detect.roi':
+        return [n for n, _k in R.detect_outputs(st)]
+    if k in ('roi.op', 'roi.track'):
+        return [s['out']] if s.get('out') else []
+    if k in ('measure.roi', 'calc.values', 'measure.frap'):
+        return []
     return list(st.get('out') or STAGES.get(k, {}).get('out', ()))
 
 
+def produced_tables(st) -> list:
+    from . import pipeline_roi as R
+    if st['kind'] == 'measure.roi':
+        return [R.measure_name(st.get('settings') or {})]
+    if st['kind'] == 'measure.intensity':
+        s = st['settings']
+        return [s.get('name') or '측정 · ' + ' · '.join(t['object'] for t in s.get('targets') or [])]
+    return []
+
+
 def validate(spec: PipelineSpec, channels=None) -> list[str]:
-    """Problems before running: unknown kinds, objects used before they are
-    made, stages out of group order, channel names the images don't have."""
+    """Problems before running: unknown kinds, ROI names used before they are
+    made or made twice, channel names the images don't have. v4 pipelines run
+    in any order (owner 2026-11-25): only the names decide."""
+    if not any(STAGES.get(st.get('kind'), {}).get('legacy') for st in spec.stages):
+        return validate_v4(spec, channels)
     errs = []
     last = -1
     for i, st in enumerate(spec.stages, start=1):
@@ -329,6 +532,82 @@ def validate(spec: PipelineSpec, channels=None) -> list[str]:
             if n and n not in have:
                 errs.append(f'{i}단계 {stage_title(st)}: object "{n}"이(가) 앞 단계에 없습니다.')
     return errs
+
+
+def validate_v4(spec: PipelineSpec, channels=None) -> list[str]:
+    errs = []
+    made = {}
+    tables = []
+    for i, st in enumerate(spec.stages, start=1):
+        k = st.get('kind')
+        if k not in STAGES:
+            errs.append(f'{i}단계: 모르는 단계 종류 {k}')
+            continue
+        if not st.get('enabled', True):
+            continue
+        s = st.get('settings') or {}
+        title = stage_title(st)
+        for n in stage_inputs(st):
+            if n not in made:
+                errs.append(f'{i}단계 {title}: ROI "{n}"이(가) 앞 단계에 없습니다.')
+        if k == 'roi.track' and s.get('input') in made and made[s['input']] == 'track':
+            errs.append(f'{i}단계 {title}: "{s["input"]}"은(는) 이미 트랙입니다.')
+        if k == 'measure.roi':
+            if s.get('type') == 'relation' and not s.get('b') and not set(s.get('params') or []) <= {'Coloc'}:
+                errs.append(f'{i}단계 {title}: ROI B가 없습니다.')
+            if s.get('type') == 'signal' and channels:
+                for ch in s.get('channels') or []:
+                    if ch not in channels:
+                        errs.append(f'{i}단계 {title}: 채널 {ch}이(가) 이미지에 없습니다 ({", ".join(channels)}).')
+            if 'Coloc' in (s.get('params') or []) and len(s.get('channels') or []) not in (0, 2):
+                errs.append(f'{i}단계 {title}: Coloc 2는 채널 두 개를 받습니다.')
+            if not s.get('params'):
+                errs.append(f'{i}단계 {title}: 파라미터를 하나 이상 고르세요.')
+        if k == 'calc.values':
+            if s.get('table') not in tables:
+                errs.append(f'{i}단계 {title}: 측정 결과 "{s.get("table") or "?"}"이(가) 앞 단계에 없습니다.')
+            if not s.get('out'):
+                errs.append(f'{i}단계 {title}: 결과 파라미터 이름이 없습니다.')
+        if k in ('roi.op', 'roi.filter', 'roi.track') and not produced(st):
+            errs.append(f'{i}단계 {title}: 결과 이름이 없습니다.')
+        kinds = {}
+        if k == 'detect.roi':
+            from . import pipeline_roi as R
+            kinds = dict(R.detect_outputs(st))
+        for n in produced(st):
+            if n in made:
+                errs.append(f'{i}단계 {title}: 이름 "{n}"을(를) 앞 단계에서 이미 썼습니다. 이름은 한 번만 씁니다.')
+            made[n] = 'track' if k == 'roi.track' else kinds.get(n) or made.get((stage_inputs(st) or [''])[0],
+                                                                                 'region')
+        tables += produced_tables(st)
+    return errs
+
+
+def roi_kinds_before(spec: PipelineSpec, index) -> dict:
+    """name -> ROI kind (region / spot / track) made by the enabled stages before ``index``."""
+    from . import pipeline_roi as R
+    out = {}
+    for st in spec.stages[:index]:
+        if not st.get('enabled', True):
+            continue
+        k = st['kind']
+        if k == 'detect.roi':
+            out.update(dict(R.detect_outputs(st)))
+            continue
+        src = out.get((stage_inputs(st) or [''])[0], 'region')
+        for n in produced(st):
+            out[n] = 'track' if k in ('roi.track', 'track.particles', 'track.cytosol') else src
+    return out
+
+
+def tables_before(spec: PipelineSpec, index) -> list:
+    out = []
+    for st in spec.stages[:index]:
+        if st.get('enabled', True):
+            for t in produced_tables(st):
+                if t not in out:
+                    out.append(t)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -412,8 +691,10 @@ def base_objects(it) -> dict:
 
 
 def objects_of(it) -> dict:
+    """The tab results under their v2 names plus the named ROIs (v4)."""
+    from .pipeline_roi import named_objects
     o = base_objects(it)
-    o.update(getattr(it, 'pipe_objects', None) or {})
+    o.update(named_objects(it, o))
     return o
 
 
@@ -479,6 +760,11 @@ def region_values(it, obj: PipeObject, fields, objs) -> dict:
                 else:
                     cy, cx = (int(round(x)) for x in r.centroid)
                     out[i][f] = bool(om[min(cy, H - 1), min(cx, W - 1)])
+        elif head in ('contains', 'dist', 'parent_in'):
+            from .pipeline_roi import relation_values
+            vals = relation_values(it, obj, f, objs)
+            for i in props:
+                out[i][f] = vals.get(i)
         elif head == 'edge':
             for i, r in props.items():
                 y0, x0, y1, x1 = r.bbox
@@ -686,7 +972,7 @@ def apply_op(it, settings, objs) -> dict:
             # a ring around cells stays outside every cell (배경 고리); a ring
             # around a nucleus / particle may lie inside its cell
             block = np.zeros(lab.shape, bool)
-            cells = objs.get('세포')
+            cells = objs.get(a.get('avoid') or '세포')
             if a.get('outside_cells', s.get('input') == '세포') and cells is not None and cells.labels is not None:
                 block = cells.labels > 0
             res = np.where((d_out > rin) & (d_out <= rout) & ~block & (src.labels == 0), near, 0)
@@ -695,7 +981,7 @@ def apply_op(it, settings, objs) -> dict:
                                source='op')
     elif do == 'bands':
         n = max(1, int(a.get('n', 4)))
-        nuc = objs.get('핵')
+        nuc = objs.get(a.get('nuc') or '핵')
         res = np.zeros_like(lab)
         par = {}
         for i, sl in enumerate(ndi.find_objects(lab), start=1):
@@ -940,7 +1226,7 @@ class _Settings:
 
     def __enter__(self):
         from .project import restore_widgets, widget_state
-        k = STAGES[self.stage['kind']]
+        k = stage_meta(self.stage)
         s = self.stage.get('settings') or {}
         if k['panel'] == 'cyto_track':
             if s.get('cell_track'):
@@ -948,9 +1234,19 @@ class _Settings:
                 self.win.cell_track_panel.set_settings(s['cell_track'])
             return self
         self.obj = _panel_obj(self.win, k['panel'])
-        if self.obj is not None and s.get('panel'):
+        over = channel_overrides(self.stage)
+        if self.obj is not None and (s.get('panel') or over):
             self.saved = widget_state(self.obj)
-            restore_widgets(self.obj, s['panel'])
+            if s.get('panel'):
+                restore_widgets(self.obj, s['panel'])
+            for attr, text in over.items():   # v4 input card: the stage's channels
+                w = getattr(self.obj, attr, None)
+                if w is not None and text:
+                    i = w.findText(text)
+                    if i < 0:
+                        i = w.findData(text)
+                    if i >= 0:
+                        w.setCurrentIndex(i)
         return self
 
     def __exit__(self, *a):
@@ -962,6 +1258,18 @@ class _Settings:
         else:
             restore_widgets(self.obj, self.saved)
         return False
+
+
+def channel_overrides(stage) -> dict:
+    """panel combo attribute -> channel name chosen in a v4 stage's input card."""
+    s = stage.get('settings') or {}
+    if stage['kind'] == 'detect.roi':
+        return {a: v for a, v in (s.get('channels') or {}).items() if v}
+    if stage['kind'] == 'measure.roi' and 'Coloc' in (s.get('params') or []):
+        chs = s.get('channels') or []
+        if len(chs) == 2:
+            return {'ch1': chs[0], 'ch2': chs[1]}
+    return {}
 
 
 # batch step -> export kind (export_dialog.KINDS) written by end.export when no kind is picked
@@ -984,9 +1292,10 @@ def default_export_opts(kinds) -> dict:
 
 
 def capture_settings(win, kind) -> dict | None:
-    """The tab's current settings for a stage (탭 설정 가져오기)."""
+    """The tab's current settings for a stage (탭 설정 가져오기); ``kind`` is a
+    stage kind or a stage dict (v4 kinds follow their method)."""
     from .project import widget_state
-    p = STAGES[kind]['panel']
+    p = stage_meta(kind)['panel'] if isinstance(kind, dict) else STAGES[kind]['panel']
     if p == 'cyto_track':
         return win.cell_track_panel.settings().to_dict()
     o = _panel_obj(win, p)
@@ -1069,6 +1378,9 @@ class Runner:
         st = self.state
         if not st.started:
             st.started = time.time()
+            for it in self.items:   # a fresh run: names come from this run's stages only
+                it.pipe_objects = {}
+                it.pipe_alias = {}
         st.status = 'running'
         n = len(self.spec.stages)
         while st.stage < n:
@@ -1137,6 +1449,8 @@ class Runner:
                     it.group = g[j]
             win.file_list.rebuild(win.items)
             return False
+        if k in V4_KINDS:
+            return self.run_v4(i, stage, items)
         meta = STAGES[k]
         if meta['batch']:
             with _Settings(win, stage):
@@ -1210,6 +1524,89 @@ class Runner:
             return False
         return False
 
+    def _batch(self, i, stage, items, step):
+        from . import batch
+        s = stage.get('settings') or {}
+        with _Settings(self.win, stage):
+            state = batch.BatchState()
+            state.steps = [step]
+            state.redo = bool(s.get('redo', True))
+            errs = batch.run(self.win, state, items)
+        for e in errs:
+            self.state.errors.append(f'{i + 1}단계: {e}')
+        return errs
+
+    def run_v4(self, i, stage, items) -> bool:
+        """The named-ROI stages (design v4)."""
+        from . import pipeline_roi as R
+        k = stage['kind']
+        s = stage.get('settings') or {}
+        title = stage_title(stage)
+        if k == 'detect.roi':
+            m = R.METHODS.get(s.get('method', 'cells'), R.METHODS['cells'])
+            errs = self._batch(i, stage, items, m[3])
+            for it in items:
+                if not isinstance(getattr(it, 'pipe_alias', None), dict):
+                    it.pipe_alias = {}
+                al = it.pipe_alias
+                for n, _kind in R.detect_outputs(stage):
+                    role = next(r for r, d, _k, _t in m[1] if (s.get('names') or {}).get(r, d) == n)
+                    al[n] = R.ROLE_BASE[role]
+            if m[3] == 'cells':
+                review = next((x for x in self.spec.stages[i + 1:] if x['kind'] == 'human.review'), None)
+                rs = (review or {}).get('settings') or default_stage('human.review')['settings']
+                for it in items:
+                    self.state.chips[it.image_id] = review_chips(it, rs)
+            self._log(event='stage_done', index=i + 1, images=len(items), errors=len(errs))
+            return False
+        if k == 'roi.track':
+            alg = R.TRACKERS.get(s.get('algorithm', 'particle'), R.TRACKERS['particle'])
+            errs = self._batch(i, stage, items, alg[4])
+            if alg[4] == 'track' and s.get('signal_thr') is not None:
+                self._signal_threshold(items, stage)
+            for it in items:
+                if not isinstance(getattr(it, 'pipe_alias', None), dict):
+                    it.pipe_alias = {}
+                if s.get('out'):
+                    it.pipe_alias[s['out']] = R.ROLE_BASE[alg[1]]
+            self._log(event='stage_done', index=i + 1, images=len(items), errors=len(errs))
+            return False
+        if k in ('roi.op', 'roi.filter'):
+            n = 0
+            for it in items:
+                objs = objects_of(it)
+                try:
+                    new = R.roi_op(it, s, objs) if k == 'roi.op' else \
+                        R.roi_filter(it, s, objs, self.state.tables)
+                except Exception as exc:  # noqa: BLE001
+                    self.state.errors.append(f'{it.label} {i + 1}단계 {title}: {exc}')
+                    continue
+                if not isinstance(getattr(it, 'pipe_objects', None), dict):
+                    it.pipe_objects = {}
+                it.pipe_objects.update(new)
+                n += sum(len(o.ids()) for o in new.values())
+            self._log(event='stage_done', index=i + 1, objects=n)
+            return False
+        if k == 'measure.roi':
+            step = stage_meta(stage)['batch']
+            if step:   # 등거리 띠 / Coloc 2: the tab's own measurement first
+                self._batch(i, stage, items, step)
+            name = R.measure_name(s)
+            rows = self.state.tables.setdefault(name, [])
+            for it in items:
+                try:
+                    rows += R.measure_rows(it, s, objects_of(it), self.win)
+                except Exception as exc:  # noqa: BLE001
+                    traceback.print_exc()
+                    self.state.errors.append(f'{it.label} {i + 1}단계 {title}: {exc}')
+            self._log(event='stage_done', index=i + 1, table=name, rows=len(rows))
+            return False
+        if k == 'calc.values':
+            tname, n = R.calc_values(self.state.tables, s)
+            self._log(event='stage_done', index=i + 1, table=tname, values=n)
+            return False
+        return False
+
     def _signal_threshold(self, items, stage):
         """입자 추적 › 5 신호 기준 at a fixed value: the threshold is the signal
         channel's LUT Min, so that Min is set on every image (e.g. 5 as in the
@@ -1226,13 +1623,13 @@ class Runner:
 
     def _tab_stages(self):
         """Enabled stages that run through a tab with stored settings."""
-        return [st for st in self.spec.stages if st.get('enabled', True) and STAGES[st['kind']]['batch']]
+        return [st for st in self.spec.stages if st.get('enabled', True) and stage_meta(st)['batch']]
 
     def export_kinds(self) -> list:
         """Export kinds of the tabs the pipeline's stages ran."""
         out = []
         for st in self._tab_stages():
-            kind = STAGE_EXPORT.get(STAGES[st['kind']]['batch'])
+            kind = STAGE_EXPORT.get(stage_meta(st)['batch'])
             if kind and kind not in out:
                 out.append(kind)
         return out
@@ -1245,6 +1642,35 @@ class Runner:
         p = Path(self.state.out)
         p.mkdir(parents=True, exist_ok=True)
         return p
+
+    def graph_tables(self) -> list:
+        """The pipeline's result tables for the graph window (design v4 §8): every
+        measured and calculated parameter a column, grouped by column set
+        (측정 · 신호 강도 / 형태 / 관계, 측정값 연산)."""
+        from . import graph as G
+        from . import pipeline_roi as R
+        kinds = {}
+        calc = {}
+        for st in self.spec.stages:
+            s = st.get('settings') or {}
+            if st['kind'] == 'measure.roi':
+                kinds[R.measure_name(s)] = dict(R.MEASURE_TYPES).get(s.get('type', 'signal'), '측정')
+            elif st['kind'] == 'calc.values' and s.get('out'):
+                calc.setdefault(s.get('table'), []).append(s['out'])
+        out = []
+        for name, rows in self.state.tables.items():
+            if not rows:
+                continue
+            t = G.Table.from_dicts(name, rows)
+            meas = [c for c in t.columns if ' › ' in c]
+            sets = {}
+            if meas:
+                sets[f'측정 · {kinds.get(name, "측정")}'] = meas
+            if calc.get(name):
+                sets['측정값 연산'] = [c for c in calc[name] if c in t.columns]
+            t.column_sets = {**sets, **(t.column_sets or {})}
+            out.append(t)
+        return out
 
     def all_tables(self) -> dict:
         """Pipeline tables + the 통합 데이터 categories."""
@@ -1329,7 +1755,7 @@ class Runner:
                  f'이미지 {len(self.active_items())}개 · 걸린 시간 {time.time() - self.state.started:.0f}초', '']
         for i, st in enumerate(self.spec.stages, start=1):
             if st.get('enabled', True):
-                lines.append(f'{i}. [{dict(GROUPS)[STAGES[st["kind"]]["group"]]}] {stage_title(st)}: {stage_summary(st)}')
+                lines.append(f'{i}. [{dict(GROUPS)[stage_group(st)]}] {stage_title(st)}: {stage_summary(st)}')
         if self.state.errors:
             lines += ['', '경고:'] + self.state.errors
         try:
@@ -1434,12 +1860,19 @@ def find_preset(name) -> PipelineSpec:
     raise KeyError(f'프리셋 "{name}"이(가) 없습니다.')
 
 
+def _flow_title(st) -> str:
+    if st['kind'] == 'op':
+        return st['settings'].get('out') or '연산'
+    t = stage_title(st)
+    g = dict(GROUPS)[stage_group(st)]
+    return t[len(g) + 3:] if t.startswith(g + ' · ') else t
+
+
 def chip_summary(spec: PipelineSpec) -> dict:
     """group title -> stage titles, for the library cards."""
     out = {}
     for st in spec.stages:
-        g = dict(GROUPS)[STAGES[st['kind']]['group']]
-        out.setdefault(g, []).append(stage_title(st) if st['kind'] != 'op' else (st['settings'].get('out') or '연산'))
+        out.setdefault(dict(GROUPS)[stage_group(st)], []).append(_flow_title(st))
     return out
 
 
@@ -1448,9 +1881,8 @@ def stage_flow(spec: PipelineSpec) -> list:
     library's top-to-bottom chip flow (v0.74); 검토 stays under the group before it."""
     out = []
     for st in spec.stages:
-        g = STAGES[st['kind']]['group']
-        title = stage_title(st) if st['kind'] != 'op' else (st['settings'].get('out') or '연산')
-        out.append((dict(GROUPS)[g], title, g, st.get('enabled', True)))
+        g = stage_group(st)
+        out.append((dict(GROUPS)[g], _flow_title(st), g, st.get('enabled', True)))
     return out
 
 

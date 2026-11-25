@@ -49,9 +49,27 @@ from . import theme
 from . import ui
 from .flow import FlowLayout
 
+from .pipeline_editors import RoiEditors
 from .ui.pipeline_parts import STAGE, HEAD, _hint, _status_chip, StageList, ReviewPicker, ReviewBand  # noqa: E402,F401  (component library)
-GROUP_NOTE = {'start': '데이터', 'detect': '이미지 → object', 'track': 'object → 트랙', 'op': 'object → object',
-              'measure': 'object → 표', 'human': '검토', 'end': '그래프 · 저장'}
+GROUP_NOTE = {'start': '데이터', 'detect': '이미지 → ROI', 'roi_op': 'ROI → ROI', 'roi_filter': 'ROI → 고른 ROI',
+              'roi_track': 'ROI → 트랙', 'measure': 'ROI × 채널 → 값', 'calc': '값 → 값', 'human': '검토',
+              'end': '그래프 · 저장', 'track': 'object → 트랙', 'op': 'object → object'}
+# 단계 추가 menu (design v4 pv4-11): group -> [(title, kind, settings)]
+ADD_MENU = (
+    ('start', [('불러오기', 'start.load', {}), ('자동 그룹', 'start.auto_group', {})]),
+    ('detect', [('세포질 ROI (세포 · 핵)', 'detect.roi', {'method': 'cells'}),
+                ('입자 ROI', 'detect.roi', {'method': 'particles'}), ('mitoROI', 'detect.roi', {'method': 'mito'})]),
+    ('roi_op', [('ROI 연산', 'roi.op', {})]),
+    ('roi_filter', [('다른 ROI와의 관계로', 'roi.filter', {'by': 'relation'}),
+                    ('측정값으로', 'roi.filter', {'by': 'value'})]),
+    ('roi_track', [('입자 추적 알고리즘', 'roi.track', {'algorithm': 'particle'}),
+                   ('세포질 추적 알고리즘', 'roi.track', {'algorithm': 'cytosol'})]),
+    ('measure', [('형태', 'measure.roi', {'type': 'shape'}), ('신호 강도', 'measure.roi', {'type': 'signal'}),
+                 ('관계', 'measure.roi', {'type': 'relation'}), ('FRAP 회복', 'measure.frap', {})]),
+    ('calc', [('측정값 연산', 'calc.values', {})]),
+    ('human', [('검토 (사용자 첨삭)', 'human.review', {})]),
+    ('end', [('그래프', 'end.graph', {}), ('저장 · 내보내기', 'end.export', {})]),
+)
 SOURCE_TEXT = ('이 단계에 저장된 설정', '탭의 지금 설정')
 TAB_OF = {'roi': 'roi_tab', 'particle': 'particle_tab', 'mito': 'mito_tab', 'track': 'track_tab',
           'bands': 'bands_tab', 'coloc': 'coloc_tab', 'frap': 'frap_tab', 'cyto_track': 'cyto_track_tab'}
@@ -132,7 +150,7 @@ def _chip_box(text, on):
     return b
 
 
-class PipelineWindow(QDialog):
+class PipelineWindow(RoiEditors, QDialog):
     def __init__(self, win, spec: P.PipelineSpec | None = None, path=None):
         super().__init__(win)
         self.win = win
@@ -187,6 +205,16 @@ class PipelineWindow(QDialog):
         self.out_label = QLabel('')
         theme.secondary(self.out_label)
         line.addWidget(self.out_label, 1)
+        # a v2 pipeline converted on opening (design §9): shown, undoable until saved
+        self.conv_chip = _status_chip('', 'info')
+        self.conv_chip.setWordWrap(False)
+        self.conv_btn = QPushButton('바뀐 내용…')
+        self.conv_btn.clicked.connect(self.show_conversion)
+        self.undo_btn = QPushButton('변환 되돌리기')
+        self.undo_btn.clicked.connect(self.undo_conversion)
+        for w in (self.conv_chip, self.conv_btn, self.undo_btn):
+            line.addWidget(w)
+            w.setVisible(False)
         outer.addLayout(line)
 
         # progress / done row (hidden until a run)
@@ -206,13 +234,13 @@ class PipelineWindow(QDialog):
         left = QVBoxLayout()
         self.add_btn = QPushButton('＋ 단계 추가')
         self.add_menu = QMenu(self.add_btn)
-        for g, title in P.GROUPS:
-            sub = self.add_menu.addMenu(title)
-            for k, v in P.STAGES.items():
-                if v['group'] == g:
-                    a = sub.addAction(v['title'])
-                    a.setToolTip(v['desc'])
-                    a.triggered.connect(lambda _c=False, k=k: self.add_stage(k))
+        for g, entries in ADD_MENU:
+            sub = self.add_menu.addMenu(dict(P.GROUPS)[g])
+            sub.setToolTipsVisible(True)
+            for title, k, extra in entries:
+                a = sub.addAction(title)
+                a.setToolTip(P.STAGES[k]['desc'])
+                a.triggered.connect(lambda _c=False, k=k, extra=extra: self.add_stage(k, **extra))
         self.add_btn.setMenu(self.add_menu)
         left.addWidget(self.add_btn, 0, Qt.AlignmentFlag.AlignLeft)
         self.list = StageList()
@@ -262,6 +290,9 @@ class PipelineWindow(QDialog):
 
     def set_spec(self, spec, path=None):
         folder = self.folder.text()
+        self._before = (getattr(self, 'spec', None), getattr(self, 'path', None))
+        if not getattr(spec, 'auto_name', False):
+            spec.auto_name = spec.name in ('새 파이프라인', '') or spec.name == P.feature_name(spec.stages)
         self.spec = spec
         self.path = Path(path) if path else None
         if folder and not spec.input.get('folder'):
@@ -270,6 +301,26 @@ class PipelineWindow(QDialog):
         self.sel = 0
         self._fill_pick()
         self.rebuild()
+        self._show_conversion_line()
+
+    def _show_conversion_line(self):
+        notes = getattr(self.spec, 'converted', None)
+        for w in (self.conv_chip, self.conv_btn, self.undo_btn):
+            w.setVisible(bool(notes))
+        if notes:
+            self.conv_chip.setText(f'이전 형식에서 새 형식으로 바꿈 · {len(notes)}곳 · 저장 전')
+
+    def show_conversion(self):
+        notes = getattr(self.spec, 'converted', None) or []
+        ui.information(self, '파이프라인 변환', '이전 형식 (단계 v2)의 파이프라인을 이름 붙인 ROI 형식으로 바꿨습니다. '
+                       '저장하기 전까지는 파일이 바뀌지 않습니다.\n\n' + '\n'.join(notes))
+
+    def undo_conversion(self):
+        """Back to the pipeline shown before this one was opened (the file is untouched)."""
+        spec, path = getattr(self, '_before', (None, None))
+        self.spec.converted = None
+        self.set_spec(spec if spec is not None else P.PipelineSpec(), path)
+        self.win.statusBar().showMessage('변환한 파이프라인을 닫았습니다. 원래 파일은 그대로입니다.', 5000)
 
     def save(self, ask=False):
         path = self.path
@@ -283,7 +334,10 @@ class PipelineWindow(QDialog):
             path = Path(fn)
             if ask or self.spec.name in ('새 파이프라인',) or path.stem != self.spec.name:
                 self.spec.name = path.stem
+                self.spec.auto_name = self.spec.name == P.feature_name(self.spec.stages)
         self.path = self.spec.save(path)
+        self.spec.converted = self.spec.original = None
+        self._show_conversion_line()
         self.win.statusBar().showMessage(f'파이프라인 저장: {self.path}')
         self._fill_pick()
         return self.path
@@ -323,14 +377,20 @@ class PipelineWindow(QDialog):
     def rebuild(self):
         self.list.blockSignals(True)
         self.list.clear()
-        order = sorted(range(len(self.spec.stages)), key=lambda i: (P.stage_rank(self.spec.stages, i), i))
-        if order != list(range(len(order))):
-            self.spec.stages = [self.spec.stages[i] for i in order]
+        legacy = any(P.STAGES[st['kind']].get('legacy') for st in self.spec.stages)
+        if legacy:
+            order = sorted(range(len(self.spec.stages)), key=lambda i: (P.stage_rank(self.spec.stages, i), i))
+            if order != list(range(len(order))):
+                self.spec.stages = [self.spec.stages[i] for i in order]
+        if getattr(self.spec, 'auto_name', False):   # default name = the features used (owner 2026-11-25)
+            self.spec.name = P.feature_name(self.spec.stages) or '새 파이프라인'
+            if self.pick.count() and self.pick.itemData(self.pick.currentIndex()) is None:
+                self.pick.setItemText(self.pick.currentIndex(), self.spec.name)
         errs = P.validate(self.spec)
         bad = {int(e.split('단계')[0]) - 1 for e in errs if e.split('단계')[0].isdigit()}
         last = None
         for i, st in enumerate(self.spec.stages):
-            g = P.STAGES[st['kind']]['group']
+            g = P.stage_group(st)
             if g == 'human' and last is not None:
                 g = last           # a 검토 stage sits under the group it follows
             if g != last:
@@ -343,14 +403,14 @@ class PipelineWindow(QDialog):
                 self.list.addItem(h)
                 last = g
             title = P.stage_title(st) if st['kind'] != 'op' else (st['settings'].get('out') or '연산')
-            sub = P.stage_summary(st)
+            sub = P.stage_io(st)
             tags = []
             if st['kind'] == 'human.review':
                 tags.append('● 검토')
             if not st.get('enabled', True):
                 tags.append('꺼짐')
             if i in bad:
-                tags.append('⚠ object 없음')
+                tags.append('⚠ 확인')
             it = QListWidgetItem(f'{i + 1}  {title}{"   " + " · ".join(tags) if tags else ""}\n     {sub}')
             it.setData(STAGE, i)
             it.setSizeHint(QSize(280, 46))
@@ -370,7 +430,7 @@ class PipelineWindow(QDialog):
         objs = len(self.spec.objects_before(n))
         rv = sum(1 for s in self.spec.stages if s['kind'] == 'human.review' and s.get('enabled', True))
         errs = P.validate(self.spec)
-        self.count_chip.setText(f'{n}단계 · object {objs}개 · 검토 {rv}번' + (f' · 문제 {len(errs)}' if errs else ''))
+        self.count_chip.setText(f'{n}단계 · ROI 이름 {objs}개 · 검토 {rv}번' + (f' · 문제 {len(errs)}' if errs else ''))
         self.count_chip.set_kind('warning' if errs else 'neutral')
         items = self._items_for_name()
         try:
@@ -403,6 +463,8 @@ class PipelineWindow(QDialog):
             self.move_stage(i, j)
 
     def _same_group(self, i, j):
+        if not any(P.STAGES[st['kind']].get('legacy') for st in self.spec.stages):
+            return True          # v4: any order, the names decide (owner 2026-11-25)
         g = lambda k: P.STAGES[self.spec.stages[k]['kind']]['group']  # noqa: E731
         return g(i) == g(j) or 'human' in (g(i), g(j))
 
@@ -410,18 +472,22 @@ class PipelineWindow(QDialog):
         if not self._same_group(frm, to):
             self.win.statusBar().showMessage('단계는 자기 묶음 안에서만 옮길 수 있습니다.', 4000)
             return
+        before = {e.split(': ', 1)[-1] for e in P.validate(self.spec)}
         st = self.spec.stages.pop(frm)
         self.spec.stages.insert(to, st)
-        errs = [e for e in P.validate(self.spec) if 'object' in e]
+        errs = [e for e in P.validate(self.spec) if e.split(': ', 1)[-1] not in before and ('ROI' in e or 'object' in e
+                                                                                          or '측정 결과' in e)]
         if errs:
             self.spec.stages.pop(to)
             self.spec.stages.insert(frm, st)
-            self.win.statusBar().showMessage('그 자리에서는 쓸 object가 아직 없어 옮기지 않았습니다: ' + errs[0], 6000)
+            self.win.statusBar().showMessage('그 자리에서는 쓸 ROI가 아직 없어 옮기지 않았습니다: ' + errs[0], 6000)
             return
         self.sel = to
         self.rebuild()
 
-    def add_stage(self, kind):
+    def add_stage(self, kind, **extra):
+        if kind in P.V4_KINDS or not P.STAGES[kind].get('legacy'):
+            return self.add_stage_v4(kind, **extra)
         st = P.default_stage(kind)
         g = P.GROUP_ORDER[P.STAGES[kind]['group']]
         have = self.spec.objects_before(len(self.spec.stages))
@@ -444,8 +510,70 @@ class PipelineWindow(QDialog):
         self.sel = at
         self.rebuild()
 
+    def add_stage_v4(self, kind, **extra):
+        """A new stage right after the selected one (any order); its inputs are
+        the last fitting names before it, its result names unique."""
+        from . import pipeline_roi as R
+        st = P.default_stage(kind)
+        s = st['settings']
+        s.update(copy.deepcopy(extra))
+        at = min(self.sel + 1, len(self.spec.stages)) if self.spec.stages else 0
+        rois = P.roi_kinds_before(self.spec, at)
+        names = list(rois)
+        regions = [n for n, k in rois.items() if k != 'track']
+
+        def last(kinds, default=''):
+            return next((n for n in reversed(names) if rois[n] in kinds), default)
+
+        def unique(n):
+            used = set(P.roi_kinds_before(self.spec, len(self.spec.stages)))
+            k, base = 2, n
+            while n in used:
+                n = f'{base}{k}'
+                k += 1
+            return n
+        if kind == 'detect.roi':
+            m = R.METHODS[s.get('method', 'cells')]
+            s['names'] = {r: unique(n) for r, n, _k, _t in m[1]}
+            if s.get('method') == 'mito':
+                s['cells'] = last(('region',), 'Cell')
+        elif kind == 'roi.op':
+            s['a'] = last(('region',), 'Cell')
+            s['b'] = next((n for n in reversed(regions) if n != s['a']), '')
+            s['out'] = unique(f'{s["a"]}_{s["do"]}')
+        elif kind == 'roi.filter':
+            s['input'] = names[-1] if names else 'Cell'
+            s['out'] = unique(f'{s["input"]}_in')
+        elif kind == 'roi.track':
+            s['input'] = last(('spot',) if s.get('algorithm', 'particle') == 'particle' else ('region',))
+            s['out'] = unique(R.TRACKERS[s.get('algorithm', 'particle')][2])
+        elif kind == 'measure.roi':
+            t = s.get('type', 'signal')
+            s['params'] = {'shape': ['Area', 'Perimeter', 'Circularity'], 'signal': ['Area', 'Mean', 'IntDen'],
+                           'relation': ['Count', 'Density']}[t]
+            if t == 'relation':
+                s['a'] = next((n for n in names if rois[n] == 'region'), 'Cell')
+                s['b'] = next((n for n in reversed(names) if n != s['a']), '')
+            else:
+                s['a'] = names[-1] if names else 'Cell'
+                if rois.get(s['a']) == 'track':
+                    s['params'] = ['PerFrame'] if t == 'signal' else ['Frames', 'PathLength', 'Speed']
+        elif kind == 'calc.values':
+            tabs = P.tables_before(self.spec, at)
+            s['table'] = tabs[-1] if tabs else ''
+            s['out'] = '계산'
+        if kind in ('measure.frap',) or (kind == 'detect.roi') or kind == 'roi.track':
+            key = 'cell_track' if kind == 'roi.track' and s.get('algorithm') == 'cytosol' else 'panel'
+            s[key] = P.capture_settings(self.win, st)
+        self.spec.stages.insert(at, st)
+        self.sel = at
+        self.rebuild()
+        return st
+
     @staticmethod
     def _settings_key(kind):
+        if isinstance(kind, dict):
+            return 'cell_track' if P.stage_meta(kind)['panel'] == 'cyto_track' else 'panel'
         return 'cell_track' if kind == 'track.cytosol' else 'panel'
 
     def _stage_menu(self, i, pos):
@@ -497,7 +625,7 @@ class PipelineWindow(QDialog):
             return
         i = max(0, min(i, len(self.spec.stages) - 1))
         st = self.spec.stages[i]
-        meta = P.STAGES[st['kind']]
+        meta = P.stage_meta(st)
         head = QLabel(P.stage_title(st) if st['kind'] != 'op' else
                       f'{st["settings"].get("out") or "연산"}')
         theme.text_style(head, 'title-3')
@@ -507,13 +635,13 @@ class PipelineWindow(QDialog):
         if build is None:
             build = self._ed_panel if meta['panel'] else self._ed_plain
         build(lay, st, i)
-        # name
-        box, form = _card('이름')
-        name = QLineEdit(st.get('name', ''))
-        name.setPlaceholderText(meta['title'])
-        name.editingFinished.connect(lambda: (st.__setitem__('name', name.text().strip()), self._refresh_row()))
-        form.addRow('단계 이름', name)
-        lay.addWidget(box)
+        if meta.get('legacy'):   # v2 stages (not converted) keep their own name
+            box, form = _card('이름')
+            name = QLineEdit(st.get('name', ''))
+            name.setPlaceholderText(meta['title'])
+            name.editingFinished.connect(lambda: (st.__setitem__('name', name.text().strip()), self._refresh_row()))
+            form.addRow('단계 이름', name)
+            lay.addWidget(box)
         lay.addStretch()
         theme.unify(page)
         self.editor.setWidget(page)
@@ -596,24 +724,24 @@ class PipelineWindow(QDialog):
     def edit_in_tab(self, i):
         st = self.spec.stages[i]
         k = st['kind']
-        key = self._settings_key(k)
-        panel = P.STAGES[k]['panel']
+        key = self._settings_key(st)
+        panel = P.stage_meta(st)['panel']
         tab = TAB_OF.get(panel)
-        before = P.capture_settings(self.win, k)
+        before = P.capture_settings(self.win, st)
         if st['settings'].get(key):
-            self._apply_tab(k, st['settings'][key])
+            self._apply_tab(st, st['settings'][key])
         if tab:
             self.win.show_tab(tab)
 
         def apply():
-            st['settings'][key] = P.capture_settings(self.win, k)
-            self._apply_tab(k, before)
+            st['settings'][key] = P.capture_settings(self.win, st)
+            self._apply_tab(st, before)
             self.show()
             self.raise_()
             self.rebuild()
 
         def cancel():
-            self._apply_tab(k, before)
+            self._apply_tab(st, before)
             self.show()
             self.raise_()
         self.win.pipeline_band().edit_mode(f'파이프라인 {i + 1}단계 「{P.stage_title(st)}」 설정 편집 중', apply, cancel)
@@ -623,10 +751,11 @@ class PipelineWindow(QDialog):
         from .project import restore_widgets
         if d is None:
             return
-        if kind == 'track.cytosol':
+        panel = P.stage_meta(kind)['panel'] if isinstance(kind, dict) else P.STAGES[kind]['panel']
+        if panel == 'cyto_track':
             self.win.cell_track_panel.set_settings(d)
         else:
-            o = P._panel_obj(self.win, P.STAGES[kind]['panel'])
+            o = P._panel_obj(self.win, panel)
             if o is not None:
                 restore_widgets(o, d)
 
@@ -842,17 +971,35 @@ class PipelineWindow(QDialog):
 
     def preview_objects(self, i, it=None):
         """Objects of the current image after the 연산 stages up to stage i."""
+        from . import pipeline_roi as R
         it = it or self.win.current
         if it is None:
             return None, None
         objs = P.base_objects(it)
         made = None
         for k, st in enumerate(self.spec.stages[:i + 1]):
-            if st['kind'] == 'op' and st.get('enabled', True):
-                new = P.apply_op(it, st['settings'], objs)
-                objs.update(new)
-                if k == i:
-                    made = new
+            if not st.get('enabled', True):
+                continue
+            s = st['settings']
+            if st['kind'] == 'op':
+                new = P.apply_op(it, s, objs)
+            elif st['kind'] == 'detect.roi':   # names of the tab results as they are now
+                m = R.METHODS.get(s.get('method', 'cells'), R.METHODS['cells'])
+                new = {}
+                for role, default, _k, _t in m[1]:
+                    o = objs.get(R.ROLE_BASE[role])
+                    n = (s.get('names') or {}).get(role, default)
+                    if o is not None and n:
+                        new[n] = P.PipeObject(n, o.kind, o.labels, o.parent, o.source)
+            elif st['kind'] == 'roi.op':
+                new = R.roi_op(it, s, objs)
+            elif st['kind'] == 'roi.filter':
+                new = R.roi_filter(it, s, objs, {})
+            else:
+                continue
+            objs.update(new)
+            if k == i:
+                made = new
         return objs, made
 
     def update_preview(self):
@@ -878,6 +1025,9 @@ class PipelineWindow(QDialog):
             return
         name = self.spec.stages[self._preview_i]['settings'].get('out')
         obj = made.get(name) or next(iter(made.values()))
+        if obj.labels is not None and obj.labels.ndim != 2:
+            lab.setText(f'{obj.name}: ROI {len(obj.ids())}개')
+            return
         if obj.labels is None:
             lab.setText(f'{obj.name}: 트랙 {len(obj.ids())}개')
         else:
@@ -886,7 +1036,7 @@ class PipelineWindow(QDialog):
         for n, o in made.items():
             if o is not obj:
                 self.preview_chips.addWidget(_status_chip(f'{n} {len(o.ids())}개', 'neutral'))
-        self.preview_chips.addWidget(_status_chip('세포 번호 물려받음', 'neutral'))
+        self.preview_chips.addWidget(_status_chip('부모 번호 물려받음', 'neutral'))
         self.preview_chips.addStretch()
 
     def _ed_measure_intensity(self, lay, st, i):
@@ -1289,7 +1439,7 @@ def kind_options(kind) -> dict:
 
 
 def STAGES_PANEL(kind) -> bool:  # noqa: N802
-    return bool(P.STAGES[kind]['panel'])
+    return bool(P.stage_meta(kind)['panel'] if isinstance(kind, dict) else P.STAGES[kind]['panel'])
 
 
 def open_folder(path):

@@ -1894,6 +1894,8 @@ class MainWindow(QMainWindow):
                            '세포질 강도 추적 탭에서 시간축이 있는 이미지를 먼저 추적하세요.'),
             'integrated': ('통합 데이터', None, lambda: S.integrated(self),
                            '측정한 결과가 없습니다. 측정 탭에서 먼저 측정하세요.'),
+            'pipeline': ('파이프라인 결과', None, lambda: S.pipeline(self),
+                         '파일 › 파이프라인…에서 측정 단계가 있는 파이프라인을 먼저 실행하세요.'),
         }
 
     def data_entries(self) -> list[dict]:
@@ -1901,6 +1903,15 @@ class MainWindow(QMainWindow):
         2026-11-14): feature, name, 점 하나 =, rows, state (ok / stale / auto),
         graph source key, the MeasureBox when there is one."""
         out = self.integrated_entries()
+        r = getattr(self, 'pipeline_runner', None)
+        if r is not None:   # 파이프라인 (v4): measured and calculated parameters, one table per 측정
+            try:
+                for t in r.graph_tables():
+                    out.append({'feature': '파이프라인', 'name': t.name, 'unit': 'ROI', 'rows': len(t.rows),
+                                'state': 'ok', 'key': 'pipeline', 'table': t.name,
+                                'features': sorted(t.column_sets)})
+            except Exception:  # noqa: BLE001
+                traceback.print_exc()
         boxes = (('세포질 ROI', 'roi', self.roi_panel.measure), ('입자 ROI', 'particle', self.particle_panel.measure),
                  ('강도 측정', 'intensity', self.intensity_panel.measure),
                  ('등거리 띠', 'bands', self.bands_panel.bands_measure))

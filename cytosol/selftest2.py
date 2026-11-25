@@ -1374,45 +1374,69 @@ def pipeline_step(out: Path):
         for i in range(len(spec.stages)):
             pw.show_stage(i)
             app.processEvents()
-    # every stage kind can be added and edited
-    pw.set_spec(P.PipelineSpec(stages=[P.default_stage('detect.cells')]))
-    for k in P.STAGES:
-        pw.add_stage(k)
+    # every entry of 단계 추가 can be added and edited; v4 stages run in any order (owner 2026-11-25)
+    from .pipeline_window import ADD_MENU
+    pw.set_spec(P.PipelineSpec())
+    n_add = 0
+    for _g, entries in ADD_MENU:
+        for _t, k, extra in entries:
+            pw.add_stage(k, **extra)
+            n_add += 1
+            app.processEvents()
+    if len(pw.spec.stages) != n_add or P.validate(pw.spec):
+        raise AssertionError(f'add stage: {len(pw.spec.stages)} / {n_add}, {P.validate(pw.spec)}')
+    if not pw.spec.name.startswith('세포질 ROI · 입자 ROI'):   # default name = the features used
+        raise AssertionError(pw.spec.name)
+    for i in range(len(pw.spec.stages)):
+        pw.show_stage(i)
         app.processEvents()
-    if len(pw.spec.stages) != len(P.STAGES) + 1:
-        raise AssertionError('add stage')
-    order = [P.GROUP_ORDER[P.STAGES[s['kind']]['group']] for s in pw.spec.stages
-             if P.STAGES[s['kind']]['group'] != 'human']
-    if order != sorted(order):
-        raise AssertionError(f'stages out of group order: {order}')
-    # moving across groups is refused, inside a group allowed
+    # a move that leaves a name unmade is refused, others are free
     kinds = [s['kind'] for s in pw.spec.stages]
-    pw.move_stage(kinds.index('detect.cells'), kinds.index('track.particles'))
+    pw.move_stage(kinds.index('roi.op'), 0)
     if [s['kind'] for s in pw.spec.stages] != kinds:
-        raise AssertionError('moved across groups')
-    spec = P.PipelineSpec.from_dict({'name': '셀프테스트', 'stages': [
-        {'kind': 'start.auto_group'}, {'kind': 'detect.cells'}, {'kind': 'detect.particles'},
-        {'kind': 'op', 'settings': {'input': '세포', 'out': '큰 세포', 'rest': '작은 세포',
-                                    'where': {'mode': 'all', 'conds': [['Area', '>=', 100], ['edge', 'no']]},
-                                    'action': {'do': 'keep'}}},
-        {'kind': 'op', 'settings': {'input': '세포질', 'out': '세포질 (입자 뺀)',
-                                    'action': {'do': 'subtract', 'with': '입자', 'pair': 'cell'}}},
-        {'kind': 'op', 'settings': {'input': '세포', 'out': '배경 고리', 'action': {'do': 'ring', 'inner': 1,
-                                                                                  'outer': 4}}},
-        {'kind': 'op', 'settings': {'input': '세포', 'out': '띠', 'action': {'do': 'bands', 'n': 3}}},
+        raise AssertionError('moved before its input')
+    pw.move_stage(kinds.index('start.auto_group'), kinds.index('roi.op'))
+    if [s['kind'] for s in pw.spec.stages] == kinds:
+        raise AssertionError('free move refused')
+    stages = [
+        {'kind': 'start.auto_group'},
+        {'kind': 'detect.roi', 'settings': {'method': 'cells'}},
+        {'kind': 'detect.roi', 'settings': {'method': 'particles', 'names': {'spot': 'Spot'}}},
+        {'kind': 'roi.filter', 'settings': {'input': 'Cell', 'by': 'value', 'conds': [['Area', '>=', 100], ['edge', 'no']],
+                                            'out': 'Cell_big', 'rest': 'Cell_small'}},
+        {'kind': 'roi.op', 'settings': {'a': 'Cyto', 'do': 'subtract', 'b': 'Spot', 'out': 'Cyto_noSpot'}},
+        {'kind': 'roi.op', 'settings': {'a': 'Cell', 'do': 'ring', 'inner': 1, 'outer': 4, 'avoid': 'Cell',
+                                        'out': 'Ring'}},
+        {'kind': 'roi.op', 'settings': {'a': 'Cell', 'do': 'bands', 'b': 'Nuc', 'n': 3, 'out': 'Band'}},
+        {'kind': 'roi.filter', 'settings': {'input': 'Spot', 'by': 'relation',
+                                            'conds': [['overlap:Cell_big', '>', 0]], 'out': 'Spot_big'}},
         {'kind': 'human.review', 'settings': {'images': ['PIPE-0', 'PIPE-2']}},
-        {'kind': 'measure.intensity', 'settings': {
-            'targets': [{'object': '세포질 (입자 뺀)', 'channels': ['GFP']}, {'object': '띠', 'channels': []}],
-            'stats': ['Area', 'Mean', 'IntDen'], 'bg': 'ring:배경 고리', 'name': '세기'}},
-        {'kind': 'measure.count', 'settings': {'object': '입자', 'parent': '세포'}},
-        {'kind': 'end.export', 'settings': {'dest': str(out / 'pipe_out'), 'opts': {}}}]})
+        {'kind': 'measure.roi', 'settings': {'type': 'signal', 'a': 'Cyto_noSpot', 'channels': ['GFP'],
+                                             'params': ['Area', 'Mean', 'IntDen'], 'bg': 'roi', 'bg_roi': 'Ring',
+                                             'name': '세기'}},
+        {'kind': 'measure.roi', 'settings': {'type': 'signal', 'a': 'Band', 'params': ['Mean', 'CV'], 'name': '띠'}},
+        {'kind': 'measure.roi', 'settings': {'type': 'shape', 'a': 'Spot', 'params': ['Area', 'Circularity', 'X'],
+                                             'name': '모양'}},
+        {'kind': 'measure.roi', 'settings': {'type': 'relation', 'a': 'Cell', 'b': 'Spot', 'channels': ['GFP'],
+                                             'params': ['Count', 'Density', 'OverlapA', 'Partition'], 'name': '관계'}},
+        {'kind': 'roi.filter', 'settings': {'input': 'Cyto_noSpot', 'by': 'value',
+                                            'conds': [['세기 › GFP Mean', '>', -1e9]], 'out': 'Cyto_kept'}},
+        {'kind': 'calc.values', 'settings': {'table': '세기', 'a': '세기 › GFP IntDen', 'op': '/',
+                                             'b': '세기 › Area', 'norm': 'minmax', 'scope': 'image',
+                                             'out': '계산 › 밀도'}},
+        {'kind': 'end.export', 'settings': {'dest': str(out / 'pipe_out'), 'opts': {}}}]
+    spec = P.PipelineSpec.from_dict({'name': '셀프테스트', 'version': 3, 'stages': stages})
     if P.validate(spec, ['DAPI', 'GFP']):
         raise AssertionError(P.validate(spec, ['DAPI', 'GFP']))
     if not P.validate(spec, ['DAPI']):
         raise AssertionError('missing channel not reported')
+    bad = P.PipelineSpec.from_dict({'stages': [stages[1], dict(stages[1])]})
+    if not any('이미' in e for e in P.validate(bad)):
+        raise AssertionError('duplicate names not reported')
     pw.set_spec(spec)
-    pw.show_stage(4)   # 연산 editor with the preview
-    app.processEvents()
+    for i in range(len(spec.stages)):
+        pw.show_stage(i)   # every editor, the ROI 연산 one with the preview
+        app.processEvents()
     dest = out / 'pipe_out' / 'run'
     res = pw.start(spec.copy(), list(win.items), out=dest)
     if res != 'review':
@@ -1432,7 +1456,7 @@ def pipeline_step(out: Path):
     r.state.confirmed = list(r.state.review_images)   # skip the 'not confirmed' question
     band._go()
     app.processEvents()
-    if r.state.status != 'done':
+    if r.state.status != 'done' or r.state.errors:
         raise AssertionError(f'run state {r.state.status}: {r.state.errors}')
     for f in ('pipeline.json', 'summary.json', 'README.txt', 'review_log.csv', 'progress.jsonl',
               'project.cyproj', '1_통합데이터/세기.csv'):
@@ -1446,17 +1470,65 @@ def pipeline_step(out: Path):
     if summ['images'] != 3 or summ['status'] != 'done' or summ['tables']['세기'] < 3:
         raise AssertionError(summ)
     objs = summ['objects']['pipe_00']
-    for name in ('큰 세포', '세포질 (입자 뺀)', '배경 고리', '띠'):
+    for name in ('Cell', 'Nuc', 'Cyto', 'Spot', 'Cell_big', 'Cyto_noSpot', 'Ring', 'Band', 'Cyto_kept'):
         if not objs.get(name):
-            raise AssertionError(f'object {name}: {objs}')
+            raise AssertionError(f'ROI {name}: {objs}')
     rows = r.state.tables['세기']
-    if not any('bg (GFP)' in x for x in rows) or 'Mean (GFP)' not in rows[0]:
+    if '세기 › GFP bg' not in rows[0] or '세기 › GFP Mean' not in rows[0] or '계산 › 밀도' not in rows[0]:
         raise AssertionError(rows[0])
-    # rerun from the 측정 stage keeps the ROIs
+    v = [x['계산 › 밀도'] for x in rows if x['image_id'] == 'PIPE-0']
+    if not (abs(min(v)) < 1e-9 and abs(max(v) - 1) < 1e-9):
+        raise AssertionError(f'min–max normalization {min(v)} {max(v)}')
+    rel = r.state.tables['관계'][0]
+    if '관계 › Count' not in rel or '관계 › GFP Partition' not in rel:
+        raise AssertionError(rel)
+    tabs = {t.name: t for t in r.graph_tables()}
+    if '측정값 연산' not in tabs['세기'].column_sets or '측정 · 관계' not in tabs['관계'].column_sets:
+        raise AssertionError({k: list(t.column_sets) for k, t in tabs.items()})
+    if not any(e['key'] == 'pipeline' for e in win.data_entries()):
+        raise AssertionError('pipeline tables not in the graph data list')
+    # rerun from the 측정 stages keeps the ROIs
     n_cells = len(items[0].cells)
-    r.rerun_from(8)
+    r.rerun_from(9)
     if len(items[0].cells) != n_cells or r.state.status != 'done':
         raise AssertionError(f'rerun: {len(items[0].cells)} vs {n_cells}, {r.state.status}, {r.state.errors}')
+    # a v2 pipeline converts (design §9) and gives the same numbers as before
+    import copy as _copy
+    import math as _math
+    old = {'name': 'v2', 'stages': [
+        {'kind': 'detect.cells', 'settings': {'redo': False}}, {'kind': 'detect.particles', 'settings': {'redo': False}},
+        {'kind': 'op', 'settings': {'input': '세포', 'out': '큰 세포', 'rest': '',
+                                    'where': {'mode': 'all', 'conds': [['Area', '>=', 100]]}, 'action': {'do': 'keep'}}},
+        {'kind': 'op', 'settings': {'input': '세포질', 'out': '세포질 (입자 뺀)',
+                                    'action': {'do': 'subtract', 'with': '입자', 'pair': 'cell'}}},
+        {'kind': 'op', 'settings': {'input': '세포', 'out': '띠', 'action': {'do': 'bands', 'n': 3}}},
+        {'kind': 'op', 'settings': {'input': '입자', 'out': '큰 입자', 'where': {'conds': [['overlap:큰 세포', '>=', 50]]},
+                                    'action': {'do': 'dilate', 'um': 0.5}}},
+        {'kind': 'measure.intensity', 'settings': {
+            'targets': [{'object': '세포질 (입자 뺀)', 'channels': ['GFP']}, {'object': '띠', 'channels': []},
+                        {'object': '큰 입자', 'channels': []}],
+            'stats': ['Area', 'Mean', 'IntDen', 'Perimeter'], 'bg': 'outside', 'name': '세기'}},
+        {'kind': 'measure.count', 'settings': {'object': '입자', 'parent': '세포'}}]}
+    conv = P.PipelineSpec.from_dict(_copy.deepcopy(old))
+    if not conv.converted or conv.original is None or any(P.STAGES[s['kind']].get('legacy') for s in conv.stages):
+        raise AssertionError('v2 conversion')
+    legacy = P.PipelineSpec.from_dict(_copy.deepcopy(old), convert=False)
+    r1 = P.Runner(win, legacy, items[:2], out / 'pipe_v2', interactive=False)
+    r1.run()
+    r2 = P.Runner(win, conv, items[:2], out / 'pipe_v3', interactive=False)
+    r2.run()
+    for name, rows in r1.state.tables.items():
+        a = sorted(x for row in rows for k, x in row.items() if isinstance(x, float) and _math.isfinite(x))
+        b = sorted(x for row in r2.state.tables.get(name, []) for k, x in row.items()
+                   if isinstance(x, float) and _math.isfinite(x))
+        if len(a) != len(b) or not np.allclose(a, b, rtol=1e-9, atol=1e-12):
+            raise AssertionError(f'converted pipeline gives other values in {name}: {len(a)} vs {len(b)}')
+    pw.set_spec(P.PipelineSpec.from_dict(_copy.deepcopy(old)))
+    if not pw.conv_chip.isVisibleTo(pw):
+        raise AssertionError('conversion line hidden')
+    pw.undo_conversion()
+    if pw.spec.converted:
+        raise AssertionError('undo conversion')
     # CLI
     import contextlib
     import io as _io
@@ -1464,7 +1536,7 @@ def pipeline_step(out: Path):
     with contextlib.redirect_stdout(buf):
         cli.main(['stages', '--json'])
         cli.main(['presets', '--json'])
-    if 'op' not in buf.getvalue() or '세포질 ROI · 세기' not in buf.getvalue():
+    if 'roi.filter' not in buf.getvalue() or '세포질 ROI · 신호 강도' not in buf.getvalue():
         raise AssertionError('cli output')
     f = out / 'cli.cypipe'
     with contextlib.redirect_stdout(_io.StringIO()):
@@ -1475,14 +1547,14 @@ def pipeline_step(out: Path):
         raise AssertionError('cli edit / validate')
     from .pipeline_presets import PRESETS   # presets are named by their features (owner 2026-11-25)
     if any(p['name'] != P.feature_name(p['stages']) for p in PRESETS) \
-            or len({p['name'] for p in PRESETS}) != len(PRESETS) or P.PipelineSpec.load(f).name != '세포질 ROI · 세기':
+            or len({p['name'] for p in PRESETS}) != len(PRESETS) or P.PipelineSpec.load(f).name != '세포질 ROI · 신호 강도':
         raise AssertionError('cli edit / validate')
     # old 일괄 분석 settings → pipeline
     from . import batch
     win.batch.steps = ['cells', 'particles', 'coloc']
     b = P.PipelineSpec.from_dict(batch.settings_dict(win, win.batch))
-    if [s['kind'] for s in b.stages] != ['detect.cells', 'detect.particles', 'measure.coloc'] \
-            or not b.stages[0]['settings'].get('panel'):
+    if [s['kind'] for s in b.stages] != ['detect.roi', 'detect.roi', 'measure.roi'] \
+            or not b.stages[0]['settings'].get('panel') or b.stages[2]['settings']['params'] != ['Coloc']:
         raise AssertionError([s['kind'] for s in b.stages])
     # review chips: a nucleus with a hole is odd
     m = np.zeros((40, 40), bool)

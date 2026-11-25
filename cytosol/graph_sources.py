@@ -319,6 +319,19 @@ def integrated(win) -> G.GraphData | None:
     return G.GraphData('통합 데이터', tables, G.GraphSpec(), 'integrated', _folder(it) if it else '')
 
 
+# ---- 파이프라인 (v4) -------------------------------------------------------------------------------
+
+def pipeline(win) -> G.GraphData | None:
+    """The last pipeline run's tables: measured (「측정 이름 › 채널 파라미터」) and
+    calculated parameters as columns, grouped in column sets (design v4 §8)."""
+    r = getattr(win, 'pipeline_runner', None)
+    tables = r.graph_tables() if r is not None else []
+    if not tables:
+        return None
+    it = win.current
+    return G.GraphData(f'파이프라인 · {r.spec.name}', tables, G.GraphSpec(), 'pipeline', _folder(it) if it else '')
+
+
 # ---- measurement tables ---------------------------------------------------------------------------
 
 def measure(box, title) -> G.GraphData | None:

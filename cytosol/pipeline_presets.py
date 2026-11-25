@@ -1,74 +1,103 @@
-"""Built-in pipelines of the 보관함 (design v3.1 ch. 7). Each is a plain
-pipeline dict; ``settings.panel = None`` means the tab's current settings, so
-a preset follows what the user set in the tabs until they save their own."""
+"""Built-in pipelines of the 보관함, in the named-ROI format (design v4,
+owner approval 2026-11-25; rebuilt from the v2 presets, same analyses).
+Each is a plain pipeline dict; ``settings.panel = None`` means the tab's
+current settings, so a preset follows what the user set in the tabs until
+they save their own. Names are the features used (owner 2026-11-25)."""
 
 from __future__ import annotations
 
 
 def S(kind, **settings):
-    d = {'kind': kind, 'settings': settings}
-    return d
+    return {'kind': kind, 'settings': settings}
 
 
-def OP(inp, out, do='keep', conds=None, mode='all', rest='', **action):
-    return {'kind': 'op', 'settings': {'input': inp, 'out': out, 'rest': rest,
-                                       'where': {'mode': mode, 'conds': conds or []},
-                                       'action': {'do': do, **action}}}
+def DETECT(method, names=None, **settings):
+    from .pipeline_roi import METHODS
+    nm = {r: n for r, n, _k, _t in METHODS[method][1]}
+    nm.update(names or {})
+    return S('detect.roi', method=method, names=nm, panel=None, redo=True, channels={}, **settings)
 
 
-def M(*targets, stats=('Area', 'Mean', 'IntDen'), bg='none', name=''):
-    return {'kind': 'measure.intensity', 'settings': {
-        'targets': [{'object': t, 'channels': []} for t in targets], 'stats': list(stats), 'bg': bg, 'name': name}}
+def TRACK(algorithm, out, **settings):
+    return S('roi.track', algorithm=algorithm, input='', out=out, panel=settings.pop('panel', None),
+             cell_track=settings.pop('cell_track', None), redo=True, **settings)
 
 
+def FILTER(inp, out, conds, by='relation', mode='all', rest=''):
+    return S('roi.filter', input=inp, by=by, mode=mode, conds=conds, out=out, rest=rest)
+
+
+def OP(a, do, b, out, **settings):
+    return S('roi.op', a=a, do=do, b=b, out=out, pair=settings.pop('pair', 'cell'), **settings)
+
+
+def MEASURE(kind, a, params, b='', channels=(), name='', **settings):
+    return S('measure.roi', type=kind, a=a, b=b, channels=list(channels), params=list(params), name=name,
+             bg=settings.pop('bg', 'none'), **settings)
+
+
+SIGNAL = ('Area', 'Mean', 'IntDen')
 ON = {'checked': True}
 REVIEW = {'kind': 'human.review', 'settings': {'images': ['chips']}}
 END = [{'kind': 'end.export', 'settings': {}}]
 
 
-OLD_NAMES: dict = {}   # name before v0.75.3 -> feature name (CLI --from, old notes)
+OLD_NAMES: dict = {}   # earlier names (before v0.75.3, and the v0.75.3 feature names) -> name
 
 
 def P(old, note, stages):
-    """A preset named by the features it uses (owner 2026-11-25), e.g. '입자 추적 · 세기'."""
+    """A preset named by the features it uses (owner 2026-11-25), e.g. '입자 추적 · 신호 강도'."""
     from .pipeline import feature_name
     name = feature_name(stages)
-    OLD_NAMES[old] = name
-    return {'format': 'cytosol-viewer-pipeline', 'version': 2, 'name': name, 'note': note, 'stages': stages}
+    for o in old:
+        OLD_NAMES[o] = name
+    return {'format': 'cytosol-viewer-pipeline', 'version': 3, 'name': name, 'note': note, 'stages': stages}
 
 
 PRESETS = [
-    P('세포질 + 입자 · 띠', '세포 · 핵 → 입자 → 가장자리 세포 빼기 → 세포질 · 입자 세기 → 등거리 띠', [
-        S('start.auto_group'), S('detect.cells'), S('detect.particles'),
-        OP('세포', '세포 (안쪽)', conds=[['edge', 'no']]),
-        OP('세포질', '세포질 (입자 뺀)', do='subtract', **{'with': '입자', 'pair': 'cell'}),
-        M('세포질', '입자', '세포질 (입자 뺀)'),
-        S('measure.count', object='입자', parent='세포'),
-        S('measure.bands'), REVIEW, *END]),
-    P('261118 TCF', 'TCF RI + FL: ParticleTracker 방식 입자 추적, 5 신호 기준 (green ≥ 5, 3 프레임), 6 신호 변화 트랙', [
-        S('start.auto_group'),
-        S('track.particles', panel={'sig_on': ON, 'chg_on': ON}, signal_thr=5),
-        M('입자 트랙', name='입자 추적 · 점'), *END]),
-    P('세포질 세기', '세포 · 핵 → 세포질 Mean / IntDen (배경 = 세포 밖 중앙값)', [
-        S('detect.cells'), M('세포', '핵', '세포질', bg='outside'), REVIEW, *END]),
-    P('ParticleTracker 기본', '입자 추적 탭의 ParticleTracker 방식 그대로', [
-        S('track.particles'), *END]),
-    P('ParticleTracker 신호 기준', '입자 추적 → 신호 있는 트랙만', [
-        S('track.particles'), OP('입자 트랙', '신호 트랙', conds=[['class', '=', 'signal']]),
-        M('신호 트랙'), *END]),
-    P('FRAP', 'FRAP 측정 탭의 설정으로 회복 곡선', [S('start.auto_group'), S('measure.frap'), *END]),
-    P('세포질 강도 추적 + 변화 필터', '입자 추적 (ParticleTracker 세포) → 세포 추적 (같은 세포 · 형광 격자) → 분열 · '
-      '가장자리 제외 → 필터 1 세포', [
-        S('start.auto_group'), S('track.particles'), S('track.cytosol', cell_track={'algorithm': 'particle'}),
-        OP('세포 트랙', '바뀐 세포', conds=[['divided', 'no'], ['edge', 'no']]),
-        M('바뀐 세포', name='세포질 강도 추적 · 고른 세포'), *END]),
-    P('Mito Analyzer (형태)', '세포 → 미토 ROI → MiNA', [
-        S('detect.cells'), S('detect.mito'), S('measure.mina'), REVIEW, *END]),
-    P('Mito Analyzer (관심 단백질)', '세포 → 미토 ROI → 미토 조각 × 채널 세기', [
-        S('detect.cells'), S('detect.mito'), M('미토 조각', stats=('Area', 'Mean', 'Max', 'IntDen')), *END]),
-    P('Coloc 2', '세포마다 Coloc 2', [S('detect.cells'), S('measure.coloc'), REVIEW, *END]),
-    P('Analyze Particles', '입자 → 크기 · 모양 · 세기 (ImageJ Analyze Particles 열)', [
-        S('detect.particles'),
-        M('입자', stats=('Area', 'Perimeter', 'Circularity', 'Mean', 'Min', 'Max', 'IntDen', 'RawIntDen')),
-        *END]),
+    P(('세포질 + 입자 · 띠', '세포질 ROI · 입자 ROI · 연산 · 세기 · 개수 · 등거리 띠'),
+      'Cell · Nuc · Cyto → Spot → 가장자리 세포 빼기 → Cyto − Spot → 신호 강도 · 개수 · 등거리 띠', [
+          S('start.auto_group'), DETECT('cells'), DETECT('particles'),
+          FILTER('Cell', 'Cell_inner', [['edge', 'no']], by='value'),
+          OP('Cyto', 'subtract', 'Spot', 'Cyto_noSpot'),
+          MEASURE('signal', 'Cyto', SIGNAL, name='신호 · Cyto'),
+          MEASURE('signal', 'Spot', SIGNAL, name='신호 · Spot'),
+          MEASURE('signal', 'Cyto_noSpot', SIGNAL, name='신호 · Cyto_noSpot'),
+          MEASURE('relation', 'Cell', ('Count', 'Density'), b='Spot', name='개수 · Spot'),
+          MEASURE('relation', 'Cell', ('Bands',), b='Nuc', name='등거리 띠'), REVIEW, *END]),
+    P(('261118 TCF', '입자 추적 · 세기'),
+      'TCF RI + FL: ParticleTracker 방식 입자 추적, 5 신호 기준 (green ≥ 5, 3 프레임), 6 신호 변화 트랙', [
+          S('start.auto_group'),
+          TRACK('particle', 'Spot_track', panel={'sig_on': ON, 'chg_on': ON}, signal_thr=5),
+          MEASURE('signal', 'Spot_track', ('PerFrame',), name='입자 추적 · 점'), *END]),
+    P(('세포질 세기', '세포질 ROI · 세기'), 'Cell · Nuc · Cyto → 신호 강도 (배경 = 세포 밖 중앙값)', [
+        DETECT('cells'),
+        MEASURE('signal', 'Cell', SIGNAL, name='신호 · Cell', bg='outside'),
+        MEASURE('signal', 'Nuc', SIGNAL, name='신호 · Nuc', bg='outside'),
+        MEASURE('signal', 'Cyto', SIGNAL, name='신호 · Cyto', bg='outside'), REVIEW, *END]),
+    P(('ParticleTracker 기본', '입자 추적'), '입자 추적 탭의 ParticleTracker 방식 그대로', [
+        TRACK('particle', 'Spot_track'), *END]),
+    P(('ParticleTracker 신호 기준', '입자 추적 · 연산 · 세기'), '입자 추적 → 신호 있는 트랙만 (Spot_signal)', [
+        TRACK('particle', 'Spot_track'),
+        FILTER('Spot_track', 'Spot_signal', [['class', '=', 'signal']], by='value'),
+        MEASURE('signal', 'Spot_signal', ('PerFrame',), name='신호 · Spot_signal'), *END]),
+    P(('FRAP',), 'FRAP 측정 탭의 설정으로 회복 곡선', [S('start.auto_group'), S('measure.frap'), *END]),
+    P(('세포질 강도 추적 + 변화 필터', '입자 추적 · 세포질 강도 추적 · 연산 · 세기'),
+      '입자 추적 (ParticleTracker 세포) → 세포질 추적 (같은 세포 · 형광 격자) → 분열 · 가장자리 제외 → Cell_kept', [
+          S('start.auto_group'), TRACK('particle', 'Spot_track'),
+          TRACK('cytosol', 'Cell_track', cell_track={'algorithm': 'particle'}),
+          FILTER('Cell_track', 'Cell_kept', [['divided', 'no'], ['edge', 'no']], by='value'),
+          MEASURE('signal', 'Cell_kept', ('PerFrame',), name='세포질 강도 추적 · 고른 세포'), *END]),
+    P(('Mito Analyzer (형태)', '세포질 ROI · mitoROI · 미토 형태 (MiNA)'), 'Cell → Mito → MiNA 골격', [
+        DETECT('cells'), DETECT('mito', cells='Cell'),
+        MEASURE('shape', 'Mito', ('Skeleton',), name='미토 형태 (MiNA)'), REVIEW, *END]),
+    P(('Mito Analyzer (관심 단백질)', '세포질 ROI · mitoROI · 세기'), 'Cell → Mito → Mito × 채널 신호 강도', [
+        DETECT('cells'), DETECT('mito', cells='Cell'),
+        MEASURE('signal', 'Mito', ('Area', 'Mean', 'Max', 'IntDen'), name='신호 · Mito'), *END]),
+    P(('Coloc 2', '세포질 ROI · Coloc 2'), 'Cell마다 Coloc 2 (Coloc 2 탭의 두 채널)', [
+        DETECT('cells'), MEASURE('relation', 'Cell', ('Coloc',), name='Coloc 2'), REVIEW, *END]),
+    P(('Analyze Particles', '입자 ROI · 세기'), 'Spot → 크기 · 모양 · 신호 강도 (ImageJ Analyze Particles 열)', [
+        DETECT('particles'),
+        MEASURE('shape', 'Spot', ('Area', 'Perimeter', 'Circularity'), name='형태 · Spot'),
+        MEASURE('signal', 'Spot', ('Mean', 'Min', 'Max', 'IntDen', 'RawIntDen'), name='신호 · Spot'), *END]),
 ]
