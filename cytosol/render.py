@@ -161,6 +161,7 @@ def add_scale_bar(
         text = _format_um(length_um, has_mu)
         tw = draw.textlength(text, font=font)
         tx = x0 + (bar_px - tw) / 2
+        tx = min(max(tx, 1), w - tw - 1)  # a small image (crop view): keep the label inside
         gap = max(2, thickness_px // 2) if gap_px is None else gap_px
         if bottom:
             ty = y0 - gap - font_px

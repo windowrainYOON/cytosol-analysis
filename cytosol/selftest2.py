@@ -1572,6 +1572,10 @@ def components_step(out: Path):
         raise AssertionError(f'scale bar in crop view {sb.length_um}')
     if fit_scale(ScaleBarStyle(length_um=2.0), 300, 0.2).length_um != 2.0:
         raise AssertionError('scale bar changed on a large image')
+    from .render import add_scale_bar
+    small, _ = add_scale_bar(np.zeros((60, 60, 3), np.float32), 0.2, 2.0)
+    if small[:, -1].max() > 0:
+        raise AssertionError('scale bar label cut at the crop edge')
     # crop items: own data, label, cached while the box stays
     sub = it.crop_item(0)
     if sub.image.shape[-2:] != (40, 32) or not sub.label.endswith('· Crop 1') or it.crop_item(0) is not sub:
