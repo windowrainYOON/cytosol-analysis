@@ -106,6 +106,24 @@ def default_stage(kind) -> dict:
             'out': list(s['out']), 'review': False}
 
 
+# the feature (tab) each stage uses, for pipeline names (owner 2026-11-25: name = the features used)
+FEATURE_NAMES = {'detect.cells': '세포질 ROI', 'detect.particles': '입자 ROI', 'detect.mito': 'mitoROI',
+                 'track.particles': '입자 추적', 'track.cytosol': '세포질 강도 추적', 'op': '연산',
+                 'measure.intensity': '세기', 'measure.count': '개수', 'measure.bands': '등거리 띠',
+                 'measure.coloc': 'Coloc 2', 'measure.frap': 'FRAP', 'measure.mina': '미토 형태 (MiNA)'}
+
+
+def feature_name(stages) -> str:
+    """'세포질 ROI · 입자 ROI · 연산 · 세기' from a pipeline's stages (each feature once, in order;
+    시작 / 검토 / 끝 stages are left out)."""
+    out = []
+    for st in stages:
+        f = FEATURE_NAMES.get(st['kind'] if isinstance(st, dict) else st)
+        if f and (not isinstance(st, dict) or st.get('enabled', True)) and f not in out:
+            out.append(f)
+    return ' · '.join(out)
+
+
 def stage_title(st) -> str:
     return st.get('name') or STAGES.get(st['kind'], {}).get('title', st['kind'])
 
@@ -1406,6 +1424,8 @@ def library() -> list[tuple[str, Path | None, PipelineSpec]]:
 
 
 def find_preset(name) -> PipelineSpec:
+    from .pipeline_presets import OLD_NAMES
+    name = OLD_NAMES.get(name, name)   # presets were renamed to their features (v0.75.3)
     for n, p, s in library():
         if n == name or (p is not None and (p.stem == name or str(p) == name)):
             return s.copy()

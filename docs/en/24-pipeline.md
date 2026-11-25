@@ -173,15 +173,17 @@ Saving a project saves the current pipeline with it.
 
 | Preset | Stages |
 |---|---|
-| 세포질 + 입자 · 띠 (cytosol + particles · bands) | auto group → cells · nuclei → particles → inner cells = cells not at the edge → cytosol (minus particles) → intensity · count · distance bands → review → save |
-| 261118 TCF | particle tracking (tab settings: ParticleTracker method, 5 signal threshold, 6 signal change tracks) → track point intensity |
-| 세포질 세기 (cytosol intensity) | cells · nuclei → cell / nucleus / cytosol intensity (background = outside cells) → review (replaces the intensity tab) |
-| ParticleTracker 기본 / 신호 기준 | particle tracking (→ only `class = signal` tracks) |
+| 세포질 ROI · 입자 ROI · 연산 · 세기 · 개수 · 등거리 띠 | auto group → cells · nuclei → particles → inner cells = cells not at the edge → cytosol (minus particles) → intensity · count · distance bands → review → save |
+| 입자 추적 · 세기 | particle tracking (tab settings: ParticleTracker method, 5 signal threshold, 6 signal change tracks) → track point intensity |
+| 세포질 ROI · 세기 | cells · nuclei → cell / nucleus / cytosol intensity (background = outside cells) → review (replaces the intensity tab) |
+| 입자 추적 / 입자 추적 · 연산 · 세기 | particle tracking (→ only `class = signal` tracks) |
 | FRAP | FRAP recovery |
-| 세포질 강도 추적 + 변화 필터 | cytosol intensity tracking → cell tracks not dividing and not at the edge → intensity per timepoint |
-| Mito Analyzer (형태) / (관심 단백질) | cells → mito ROI → MiNA / mito fragment × channel intensity |
-| Coloc 2 | cells → Coloc 2 |
-| Analyze Particles | particles → size · shape · intensity |
+| 입자 추적 · 세포질 강도 추적 · 연산 · 세기 | cytosol intensity tracking → cell tracks not dividing and not at the edge → intensity per timepoint |
+| 세포질 ROI · mitoROI · 미토 형태 (MiNA) / 세포질 ROI · mitoROI · 세기 | cells → mito ROI → MiNA / mito fragment × channel intensity |
+| 세포질 ROI · Coloc 2 | cells → Coloc 2 |
+| 입자 ROI · 세기 | particles → size · shape · intensity |
+
+A preset's name is the features it uses, in stage order (start, review and save stages left out). The old names (e.g. `세포질 세기`) still work with `cytosol.pipe --from`.
 
 The presets' tab stages use **the tab's current settings**. To keep your own settings, **Take Tab
 Settings** and then **Save…** to the library (`~/.cytosol/pipelines/`). Preset names are not translated.
@@ -195,7 +197,7 @@ readable lines, or one JSON object with `--json`.
 python3 -m cytosol.pipe stages [--json]          # stage kinds · settings · object rules
 python3 -m cytosol.pipe presets                  # library
 python3 -m cytosol.pipe inspect <folder>         # images · channels · timepoints · pixel size · auto groups
-python3 -m cytosol.pipe new my.cypipe --from '세포질 세기' --name myrun
+python3 -m cytosol.pipe new my.cypipe --from '세포질 ROI · 세기' --name myrun
 python3 -m cytosol.pipe edit my.cypipe --set 'stages[1].settings.bg="outside"'
 python3 -m cytosol.pipe add my.cypipe op --at 2
 python3 -m cytosol.pipe validate my.cypipe --folder <folder>

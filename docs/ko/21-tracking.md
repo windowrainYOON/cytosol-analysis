@@ -120,7 +120,7 @@ RI 채널이 있으면 (Tomocube TCF) ParticleTracker처럼 **두 번 연결**�
 
 내보내기 › 입자 추적 › **신호 변화 트랙**: 이미지마다 `<이름>_signal_change/`에 유형별 폴더(트랙 CSV +
 점수 + 시간 곡선), 모든 이미지는 `신호 변화 통합/per_image_change.csv`와 점수 분포 그래프.
-[파이프라인](24-pipeline.md)의 프리셋 **ParticleTracker 신호 기준**도 같은 판정을 씁니다.
+[파이프라인](24-pipeline.md)의 프리셋 **입자 추적 · 연산 · 세기**도 같은 판정을 씁니다.
 
 ## 데이터 · 내보내기
 

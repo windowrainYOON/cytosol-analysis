@@ -26,7 +26,14 @@ REVIEW = {'kind': 'human.review', 'settings': {'images': ['chips']}}
 END = [{'kind': 'end.export', 'settings': {}}]
 
 
-def P(name, note, stages):
+OLD_NAMES: dict = {}   # name before v0.75.3 -> feature name (CLI --from, old notes)
+
+
+def P(old, note, stages):
+    """A preset named by the features it uses (owner 2026-11-25), e.g. '입자 추적 · 세기'."""
+    from .pipeline import feature_name
+    name = feature_name(stages)
+    OLD_NAMES[old] = name
     return {'format': 'cytosol-viewer-pipeline', 'version': 2, 'name': name, 'note': note, 'stages': stages}
 
 

@@ -1464,7 +1464,7 @@ def pipeline_step(out: Path):
     with contextlib.redirect_stdout(buf):
         cli.main(['stages', '--json'])
         cli.main(['presets', '--json'])
-    if 'op' not in buf.getvalue() or '세포질 세기' not in buf.getvalue():
+    if 'op' not in buf.getvalue() or '세포질 ROI · 세기' not in buf.getvalue():
         raise AssertionError('cli output')
     f = out / 'cli.cypipe'
     with contextlib.redirect_stdout(_io.StringIO()):
@@ -1472,6 +1472,10 @@ def pipeline_step(out: Path):
         cli.main(['edit', str(f), '--set', 'stages[1].settings.bg="none"'])
         code = cli.main(['validate', str(f)])
     if code or P.PipelineSpec.load(f).stages[1]['settings']['bg'] != 'none':
+        raise AssertionError('cli edit / validate')
+    from .pipeline_presets import PRESETS   # presets are named by their features (owner 2026-11-25)
+    if any(p['name'] != P.feature_name(p['stages']) for p in PRESETS) \
+            or len({p['name'] for p in PRESETS}) != len(PRESETS) or P.PipelineSpec.load(f).name != '세포질 ROI · 세기':
         raise AssertionError('cli edit / validate')
     # old 일괄 분석 settings → pipeline
     from . import batch

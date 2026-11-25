@@ -128,7 +128,7 @@ in the table. On the image a solid ring = signal in that frame, dashed = no sign
 
 Export › 입자 추적 › **신호 변화 트랙**: per image `<name>_signal_change/` with a folder per kind (track CSV +
 score + time course), for all images `신호 변화 통합/per_image_change.csv` and a score histogram. The
-[pipeline](24-pipeline.md) preset **ParticleTracker 신호 기준** uses the same judgement.
+[pipeline](24-pipeline.md) preset **입자 추적 · 연산 · 세기** uses the same judgement.
 
 ## Data and export
 

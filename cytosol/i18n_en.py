@@ -5015,3 +5015,5 @@ TEMPLATES.update({
     '{} · 클릭: 색 고르기 · 오른쪽 클릭: 자동 (시리즈 색)': '{} · Click: pick a colour · Right-click: automatic (series colour)',
     '{} · 클릭: 색 고르기': '{} · Click: pick a colour',
 })
+
+EN.update({'개수': 'Count'})   # pipeline feature names (v0.75.3)

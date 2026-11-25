@@ -160,15 +160,17 @@
 
 | 프리셋 | 단계 |
 |---|---|
-| 세포질 + 입자 · 띠 | 자동 그룹 → 세포 · 핵 → 입자 → 세포 (안쪽) = 가장자리 아닌 세포 → 세포질 (입자 뺀) → 세기 · 개수 · 등거리 띠 → 검토 → 저장 |
-| 261118 TCF | 입자 추적 (탭 설정: ParticleTracker 방식, 5 신호 기준, 6 신호 변화 트랙) → 트랙 점 세기 |
-| 세포질 세기 | 세포 · 핵 → 세포 / 핵 / 세포질 세기 (배경 = 세포 밖) → 검토 (강도 측정 탭을 대신함) |
-| ParticleTracker 기본 / 신호 기준 | 입자 추적 (→ `class = signal` 트랙만) |
+| 세포질 ROI · 입자 ROI · 연산 · 세기 · 개수 · 등거리 띠 | 자동 그룹 → 세포 · 핵 → 입자 → 세포 (안쪽) = 가장자리 아닌 세포 → 세포질 (입자 뺀) → 세기 · 개수 · 등거리 띠 → 검토 → 저장 |
+| 입자 추적 · 세기 | 입자 추적 (탭 설정: ParticleTracker 방식, 5 신호 기준, 6 신호 변화 트랙) → 트랙 점 세기 |
+| 세포질 ROI · 세기 | 세포 · 핵 → 세포 / 핵 / 세포질 세기 (배경 = 세포 밖) → 검토 (강도 측정 탭을 대신함) |
+| 입자 추적 / 입자 추적 · 연산 · 세기 | 입자 추적 (→ `class = signal` 트랙만) |
 | FRAP | FRAP 회복 |
-| 세포질 강도 추적 + 변화 필터 | 세포질 강도 추적 → 분열 · 가장자리 아닌 세포 트랙 → 시점별 세기 |
-| Mito Analyzer (형태) / (관심 단백질) | 세포 → 미토 ROI → MiNA / 미토 조각 × 채널 세기 |
-| Coloc 2 | 세포 → Coloc 2 |
-| Analyze Particles | 입자 → 크기 · 모양 · 세기 |
+| 입자 추적 · 세포질 강도 추적 · 연산 · 세기 | 세포질 강도 추적 → 분열 · 가장자리 아닌 세포 트랙 → 시점별 세기 |
+| 세포질 ROI · mitoROI · 미토 형태 (MiNA) / 세포질 ROI · mitoROI · 세기 | 세포 → 미토 ROI → MiNA / 미토 조각 × 채널 세기 |
+| 세포질 ROI · Coloc 2 | 세포 → Coloc 2 |
+| 입자 ROI · 세기 | 입자 → 크기 · 모양 · 세기 |
+
+프리셋 이름은 쓰는 기능을 단계 순서대로 이은 것입니다 (시작 · 검토 · 저장 단계는 빼고). 예전 이름(예: `세포질 세기`)도 `cytosol.pipe --from`에서 그대로 찾습니다.
 
 기본 프리셋의 탭 단계는 **탭의 지금 설정**을 씁니다. 내 설정을 담아 두려면 **탭 설정 가져오기** 뒤
 **저장…**으로 보관함(`~/.cytosol/pipelines/`)에 저장하세요.
@@ -182,7 +184,7 @@
 python3 -m cytosol.pipe stages [--json]          # 단계 종류 · 설정 · object 규칙
 python3 -m cytosol.pipe presets                  # 보관함
 python3 -m cytosol.pipe inspect <폴더>             # 이미지 · 채널 · 시점 · 픽셀 크기 · 자동 그룹
-python3 -m cytosol.pipe new my.cypipe --from '세포질 세기' --name 내분석
+python3 -m cytosol.pipe new my.cypipe --from '세포질 ROI · 세기' --name 내분석
 python3 -m cytosol.pipe edit my.cypipe --set 'stages[1].settings.bg="outside"'
 python3 -m cytosol.pipe add my.cypipe op --at 2
 python3 -m cytosol.pipe validate my.cypipe --folder <폴더>
