@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -37,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
+from . import ui
 
 FORMAT = 'cytosol-viewer-batch'
 NO_GROUP = '(그룹 없음)'
@@ -557,7 +557,7 @@ class BatchDialog(QDialog):
 
     def _accept(self):
         if not self.groups() or not self.steps():
-            QMessageBox.information(self, '일괄 분석', '그룹과 분석을 하나 이상 고르세요.')
+            ui.information(self, '일괄 분석', '그룹과 분석을 하나 이상 고르세요.')
             return
         st = self.win.batch
         st.groups, st.steps, st.redo = self.groups(), self.steps(), self.redo.isChecked()

@@ -367,9 +367,9 @@ class PreferencesDialog(QDialog):
         mem.valueChanged.connect(self._view3d_changed)
         f.addRow('메모리 한도', mem)
         self.v3['memory_gb'] = mem
-        for key, label, tip in (('crop_only', '선택한 Crop만', '선택한 Crop 영역만 3D로 봅니다.'),
-                                ('lut_link', 'LUT 연동', 'LUT 탭의 Min / Max / 색을 그대로 씁니다 '
-                                 '(바꾸면 백그라운드에서 다시 준비).')):
+        # 선택한 Crop만 is gone (v0.75): a crop row picked in the sidebar shows that crop in 3D
+        for key, label, tip in (('lut_link', 'LUT 연동', 'LUT 탭의 Min / Max / 색을 그대로 씁니다 '
+                                 '(바꾸면 백그라운드에서 다시 준비).'),):
             b = QCheckBox(label)
             b.setToolTip(tip)
             b.setChecked(getattr(st, key))

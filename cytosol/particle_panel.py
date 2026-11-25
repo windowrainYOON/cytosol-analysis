@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QRadioButton,
     QSizePolicy,
@@ -32,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import hig_widgets, theme
+from . import ui
 from .flow import FlowLayout
 from .intensity import (
     SHAPES,
@@ -807,7 +807,7 @@ class ParticlePanel(QWidget):
             return
         s = self.settings()
         n = 0
-        for other in self.win.items:
+        for other in self.win.analysis_items():
             if s.channel not in other.channels and s.index >= len(other.channels):
                 continue
             other.particle_settings = replace(s)
@@ -824,7 +824,7 @@ class ParticlePanel(QWidget):
         it = self.item
         p = self.particles_for(it) if it is not None else None
         if p is None or not p.mask.any():
-            QMessageBox.information(self, '입자 ROI', '저장할 입자가 없습니다.')
+            ui.information(self, '입자 ROI', '저장할 입자가 없습니다.')
             return
         default = str(it.path.with_name(f'{item_stem(it)}_particles.zip'))
         path, _ = QFileDialog.getSaveFileName(self, '입자 ROI 저장', default,
@@ -835,7 +835,7 @@ class ParticlePanel(QWidget):
             files = self.save_particle_files(it, path, self.cells_for(it), p)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
             return
         self.status('입자 ROI 저장: ' + ', '.join(files))
 
@@ -851,7 +851,7 @@ class ParticlePanel(QWidget):
             self.load_particles_into(it, path)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '불러오기 실패', str(exc))
+            ui.warning(self, '불러오기 실패', str(exc))
             return
         self.bind(it)
         self.win.particles_changed()

@@ -26,7 +26,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QRadioButton,
@@ -45,16 +44,9 @@ from PySide6.QtWidgets import (
 from . import graph as G
 from . import stats as ST
 from . import theme
+from . import ui
 
-KINDS = [('xy', '선 · 점 (XY)', '시간 · 거리 같은 숫자 x'),
-         ('bar', '막대', '그룹 평균 ± 에러바'),
-         ('strip', '점 그림', '개별 값 + 평균'),
-         ('box', '상자 그림', '중앙값과 사분위'),
-         ('violin', '바이올린', '값의 분포 모양'),
-         ('hist', '히스토그램', '한 값의 분포'),
-         ('heatmap', '히트맵', 'x · y 위의 값'),
-         ('corr', '상관 행렬', '여러 열 사이의 상관'),
-         ('corrcmp', '상관 비교', '그룹마다 상관이 다른지')]
+from .ui.graph_kinds import KINDS, _THUMBS  # noqa: E402,F401  (component library)
 STATS_DEFAULTS = {k: getattr(G.Stats(), k) for k in G.STATS_LOOK}
 
 
@@ -95,186 +87,13 @@ def combo(items, cur=None) -> QComboBox:
 # chart kinds
 # ---------------------------------------------------------------------------
 
-_THUMBS = {}
 
-
-def thumb(kind) -> QIcon:
-    """A small picture of the chart kind (same sample data for all)."""
-    if kind in _THUMBS:
-        return _THUMBS[kind]
-    import numpy as np
-    from matplotlib.backends.backend_agg import FigureCanvasAgg
-    from matplotlib.figure import Figure
-
-    fig = Figure(figsize=(1.5, 1.0), dpi=160)
-    fig.patch.set_alpha(0)
-    FigureCanvasAgg(fig)
-    ax = fig.add_axes([0.08, 0.1, 0.88, 0.85])
-    ax.set_facecolor('none')
-    r = np.random.default_rng(1)
-    data = [r.normal(m, 1.0, 12) for m in (4, 6, 4.6)]
-    cs = ['#000000', '#d62728', '#1f77b4']
-    if kind == 'xy':
-        t = np.linspace(0, 10, 12)
-        for c, a in zip(cs, (0.5, 0.75, 0.9)):
-            ax.plot(t, a * (1 - np.exp(-t / 2.5)), '-o', color=c, ms=2.2, lw=1)
-    elif kind == 'bar':
-        ax.bar(range(3), [d.mean() for d in data], 0.6, color=cs, alpha=0.4, edgecolor=cs)
-        for k, d in enumerate(data):
-            ax.errorbar(k, d.mean(), d.std(), fmt='none', ecolor=cs[k], capsize=2, lw=0.8)
-    elif kind == 'strip':
-        for k, d in enumerate(data):
-            ax.plot(k + r.uniform(-.2, .2, d.size), d, 'o', ms=2.2, color=cs[k])
-            ax.hlines(d.mean(), k - .25, k + .25, color=cs[k], lw=1.4)
-    elif kind == 'box':
-        bp = ax.boxplot(data, widths=0.55, patch_artist=True, showfliers=False)
-        for b, c in zip(bp['boxes'], cs):
-            b.set(facecolor=c, alpha=0.35, edgecolor=c)
-        for k in ('whiskers', 'caps', 'medians'):
-            for ln in bp[k]:
-                ln.set(color='#333', lw=0.8)
-    elif kind == 'violin':
-        vp = ax.violinplot(data, showextrema=False, showmedians=True)
-        for b, c in zip(vp['bodies'], cs):
-            b.set(facecolor=c, alpha=0.4, edgecolor=c)
-        vp['cmedians'].set(color='#333', lw=0.8)
-    elif kind == 'hist':
-        for d, c in zip(data, cs):
-            ax.hist(d, bins=8, color=c, alpha=0.4, histtype='stepfilled', edgecolor=c)
-    else:
-        ax.imshow(r.random((6, 9)) + np.linspace(0, 1, 9), cmap='magma', aspect='auto')
-    ax.set_xticks([])
-    ax.set_yticks([])
-    for s in ('top', 'right'):
-        ax.spines[s].set_visible(False)
-    for s in ('left', 'bottom'):
-        ax.spines[s].set_color('#888')
-    fig.canvas.draw()
-    buf = fig.canvas.buffer_rgba()
-    from PySide6.QtGui import QImage
-
-    h, w = int(fig.bbox.height), int(fig.bbox.width)
-    img = QImage(bytes(buf), w, h, QImage.Format.Format_RGBA8888)
-    _THUMBS[kind] = QIcon(QPixmap.fromImage(img.copy()))
-    return _THUMBS[kind]
-
-
-class KindCard(QAbstractButton):
-    """One chart kind: thumbnail + name (+ description); checked = accent ring."""
-
-    def __init__(self, key, name, desc, big=True, parent=None):
-        super().__init__(parent)
-        self.key, self.big, self.desc = key, big, desc
-        self.recommended = False
-        self.setCheckable(True)
-        self.setAutoExclusive(True)
-        self.setText(name)
-        self.setToolTip(f'{name}: {desc}')
-        self.isz = QSize(120, 80) if big else QSize(60, 40)
-        self.setFixedSize(QSize(150, 158) if big else QSize(78, 70))
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-    def paintEvent(self, _e):
-        qp = QPainter(self)
-        qp.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = self.rect().adjusted(1, 1, -1, -1)
-        on = self.isChecked()
-        if on:
-            c = QColor(theme.color('blue'))
-            c.setAlphaF(0.10)
-            qp.setPen(QPen(theme.color('blue'), 2))
-            qp.setBrush(c)
-        else:
-            qp.setPen(Qt.PenStyle.NoPen)
-            qp.setBrush(theme.color('fill-tertiary'))
-        qp.drawRoundedRect(r, 12, 12)
-        isz = self.isz
-        y = 10 if self.big else 5
-        thumb(self.key).paint(qp, (self.width() - isz.width()) // 2, y, isz.width(), isz.height())
-        f = QFont(self.font())
-        f.setWeight(QFont.Weight.DemiBold if on else QFont.Weight.Medium)
-        if not self.big:
-            f.setPixelSize(10)
-        qp.setFont(f)
-        qp.setPen(theme.color('label'))
-        ty = y + isz.height() + (6 if self.big else 2)
-        qp.drawText(0, ty, self.width(), 20 if self.big else 16, Qt.AlignmentFlag.AlignHCenter, self.text())
-        if self.big:
-            f2 = QFont(self.font())
-            f2.setPixelSize(11)
-            qp.setFont(f2)
-            qp.setPen(theme.color('label-secondary'))
-            qp.drawText(6, ty + 20, self.width() - 12, 30,
-                        Qt.AlignmentFlag.AlignHCenter | Qt.TextFlag.TextWordWrap, self.desc)
-            if self.recommended:
-                f3 = QFont(self.font())
-                f3.setPixelSize(10)
-                f3.setWeight(QFont.Weight.DemiBold)
-                qp.setFont(f3)
-                qp.setPen(Qt.PenStyle.NoPen)
-                qp.setBrush(theme.color('green'))
-                qp.drawRoundedRect(self.width() - 42, 8, 34, 17, 8.5, 8.5)
-                qp.setPen(QColor('white'))
-                qp.drawText(self.width() - 42, 8, 34, 17, Qt.AlignmentFlag.AlignCenter, '추천')
-        qp.end()
-
-
-class KindPicker(QWidget):
-    picked = Signal(str)
-
-    def __init__(self, cols=4, big=True, parent=None):
-        super().__init__(parent)
-        g = QGridLayout(self)
-        g.setContentsMargins(0, 0, 0, 0)
-        g.setSpacing(10 if big else 6)
-        self.cards = {}
-        for i, (k, n, d) in enumerate(KINDS):
-            c = KindCard(k, n, d, big)
-            c.clicked.connect(lambda _=False, k=k: self.picked.emit(k))
-            g.addWidget(c, i // cols, i % cols)
-            self.cards[k] = c
-        g.setColumnStretch(cols, 1)
-
-    def set_kind(self, k):
-        c = self.cards.get(k)
-        if c is not None and not c.isChecked():
-            c.setChecked(True)
-
-    def set_recommended(self, keys):
-        for k, c in self.cards.items():
-            c.recommended = k in keys
-            c.update()
+from .ui.graph_parts import thumb, KindCard, KindPicker, RoleSwitch, Preview, StepBar, _GroupTree  # noqa: E402,F401  (component library)
 
 
 # ---------------------------------------------------------------------------
 # 축 배치
 # ---------------------------------------------------------------------------
-
-class RoleSwitch(QWidget):
-    """범주 | 값 for one axis."""
-
-    toggled = Signal(bool)  # True = 범주
-
-    def __init__(self, parent=None):
-        from .hig_widgets import Chip
-
-        super().__init__(parent)
-        h = QHBoxLayout(self)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(4)
-        h.addStretch()
-        self.cat, self.val = Chip('범주', False), Chip('값', False)
-        for c in (self.cat, self.val):
-            c.setAutoExclusive(True)
-            h.addWidget(c)
-        self.cat.clicked.connect(lambda: self.toggled.emit(True))
-        self.val.clicked.connect(lambda: self.toggled.emit(False))
-        self.setToolTip('범주: 같은 값끼리 한 자리에 모읍니다 · 값: 숫자 눈금 위에 놓습니다')
-
-    def set(self, cat: bool, value_ok=True):
-        self.val.setEnabled(value_ok)
-        self.val.setToolTip('' if value_ok else '글자 열은 범주로만 쓸 수 있습니다.')
-        (self.cat if cat or not value_ok else self.val).setChecked(True)
 
 
 def _align_end(form: QFormLayout):
@@ -687,13 +506,6 @@ class MappingEditor(QGroupBox):
 # 그룹
 # ---------------------------------------------------------------------------
 
-class _GroupTree(QTreeWidget):
-    reordered = Signal()
-
-    def dropEvent(self, e):
-        super().dropEvent(e)
-        self.reordered.emit()
-
 
 class GroupEditor(QGroupBox):
     """The values of the group column: check = drawn, drag = order."""
@@ -789,75 +601,10 @@ class GroupEditor(QGroupBox):
 # preview
 # ---------------------------------------------------------------------------
 
-class Preview(QFrame):
-    """A small drawing of a spec."""
-
-    def __init__(self, w=3.2, h=2.6, parent=None):
-        from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-        from matplotlib.figure import Figure
-
-        super().__init__(parent)
-        self.setObjectName('hig_content')
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(10, 10, 10, 10)
-        self.fig = Figure(figsize=(w, h), dpi=100, layout='constrained')
-        self.canvas = FigureCanvasQTAgg(self.fig)
-        self.canvas.setMinimumSize(int(w * 90), int(h * 90))
-        lay.addWidget(self.canvas)
-
-    def show_spec(self, spec, tables):
-        try:
-            sp = spec.copy()
-            sp.plot_auto = True
-            G.draw(self.fig, sp, tables)
-        except Exception as exc:  # noqa: BLE001
-            self.fig.clear()
-            self.fig.text(0.5, 0.5, f'그릴 수 없습니다: {exc}', ha='center', va='center', wrap=True)
-        self.canvas.draw_idle()
-
 
 # ---------------------------------------------------------------------------
 # 새 그래프: 종류 → 축 배치 → 그룹
 # ---------------------------------------------------------------------------
-
-class StepBar(QWidget):
-    def __init__(self, steps, parent=None):
-        super().__init__(parent)
-        self.steps, self.cur = steps, 0
-        self.setFixedHeight(40)
-
-    def set_step(self, i):
-        self.cur = i
-        self.update()
-
-    def paintEvent(self, _e):
-        qp = QPainter(self)
-        qp.setRenderHint(QPainter.RenderHint.Antialiasing)
-        n = len(self.steps)
-        seg = self.width() / n
-        f = QFont(self.font())
-        for i, name in enumerate(self.steps):
-            cx = seg * i + 20
-            done, now = i < self.cur, i == self.cur
-            qp.setPen(Qt.PenStyle.NoPen)
-            qp.setBrush(theme.color('blue') if (done or now) else theme.color('fill'))
-            qp.drawEllipse(int(cx - 12), 8, 24, 24)
-            f.setWeight(QFont.Weight.DemiBold)
-            f.setPixelSize(12)
-            qp.setFont(f)
-            qp.setPen(QColor('white') if (done or now) else theme.color('label-secondary'))
-            qp.drawText(int(cx - 12), 8, 24, 24, Qt.AlignmentFlag.AlignCenter, '✓' if done else str(i + 1))
-            f.setPixelSize(14)
-            f.setWeight(QFont.Weight.DemiBold if now else QFont.Weight.Normal)
-            qp.setFont(f)
-            qp.setPen(theme.color('label') if (done or now) else theme.color('label-secondary'))
-            qp.drawText(int(cx + 20), 8, int(seg - 60), 24, Qt.AlignmentFlag.AlignVCenter, name)
-            if i < n - 1:
-                x0 = cx + 28 + qp.fontMetrics().horizontalAdvance(name)
-                qp.setPen(QPen(theme.color('separator'), 1.5))
-                qp.drawLine(int(x0), 20, int(seg * (i + 1) + 2), 20)
-        qp.end()
 
 
 def _titled(title, w) -> QWidget:
@@ -904,6 +651,8 @@ class GraphWizard(QDialog):
         root.addWidget(tl)
         self.bar = StepBar((('표 가져오기',) if self.off else ('분석: ' + title,)) + self.STEPS)
         self.bar.set_step(0 if self.off else 1)
+        # a passed step chip goes back to it (the first chip is the data, not a page)
+        self.bar.stepClicked.connect(lambda i: self.go(i - (1 - self.off)) if i - (1 - self.off) >= 0 else None)
         root.addWidget(self.bar)
         body = QHBoxLayout()
         body.setSpacing(24)
@@ -1064,7 +813,7 @@ class GraphWizard(QDialog):
             self.accept()
         else:
             if self.off and self.step == 0 and not (self.gcard.result() and self.gcard.result().rows):
-                QMessageBox.information(self, '표 가져오기', '가져올 행이 없습니다. 읽는 방법과 역할을 확인하세요.')
+                ui.information(self, '표 가져오기', '가져올 행이 없습니다. 읽는 방법과 역할을 확인하세요.')
                 return
             self.go(self.step + 1)
 

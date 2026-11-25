@@ -131,6 +131,8 @@ def main():
     from PySide6.QtWidgets import QApplication, QMessageBox
     QMessageBox.information = staticmethod(lambda *x, **k: print('INFO:', x[1:3], flush=True))
     QMessageBox.warning = staticmethod(lambda *x, **k: print('WARN:', x[1:3], flush=True))
+    from cytosol.ui import dialogs as _dialogs  # the app's alerts since v0.75
+    _dialogs.HEADLESS = lambda kind, title, text: print(f'{kind.upper()}:', (title, text), flush=True)
     from cytosol import batch, exporter
     from cytosol.app import MainWindow
 

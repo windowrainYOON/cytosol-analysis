@@ -86,7 +86,7 @@ def _svg(body: str, w: int, h: int) -> str:
 
 def _icons(scheme: str) -> dict[str, str]:
     t = theme.TOKENS[scheme]
-    accent, white = t['blue'][:7], '#ffffff'
+    accent, white = t['accent'][:7], '#ffffff'
     fill = theme._hex(t['fill'])
     track = f'rgb({fill.red()},{fill.green()},{fill.blue()})'
     track_op = f'{fill.alphaF():.2f}'
@@ -203,7 +203,7 @@ R_ROW = 10  # selected row in the sidebar list
 R_INSET_GROUP = 12
 R_MENU = 12
 INSET = 8
-ROW_PAD = 12  # inset row padding = title / section header start (one grid line)
+ROW_PAD = 16  # settings card padding (design system 16) = title / section header start (one grid line)
 CHIP_H = 24
 
 
@@ -224,7 +224,7 @@ def stylesheet(scheme: str | None = None, glass: bool | None = None) -> str:
     more = lambda n, a: _more(n, a, s)  # noqa: E731
     d = icon_dir(s).as_posix()
     url = lambda n: f'url("{d}/{n}.svg")'  # noqa: E731
-    accent = c('blue')
+    accent = c('accent')
     line = tint('label', 0.12)  # hig-glass-line
     region = lambda r: _qrgba(theme.region_color(r, s, glass))  # noqa: E731
     edge = tint('label', 0.07 if s == 'light' else 0.10)
@@ -291,18 +291,20 @@ QPushButton:hover {{ background: {more('fill', 0.08)}; }}
 QPushButton:pressed {{ background: {more('fill', 0.18)}; }}
 QPushButton:checked {{ background: {accent}; color: {c('on-accent')}; font-weight: 600; }}
 QPushButton:disabled {{ color: {c('label-tertiary')}; background: {c('fill-quaternary')}; }}
-QPushButton:focus {{ border-color: {tint('blue', 0.45)}; }}
+QPushButton:focus {{ border-color: {tint('accent', 0.45)}; }}
 QPushButton[hig_prominent="true"] {{
     background: {accent}; color: {c('on-accent')}; font-weight: 600;
-    border-bottom: 2px solid {tint('blue', 0.55)};
+    border-bottom: 2px solid {tint('accent', 0.55)};
 }}
-QPushButton[hig_prominent="true"]:hover {{ background: {tint('blue', 0.88)}; }}
-QPushButton[hig_prominent="true"]:pressed {{ background: {tint('blue', 0.65)}; }}
-QPushButton[hig_prominent="true"]:disabled {{ background: {tint('blue', 0.40)}; }}
-QPushButton[hig_destructive="true"] {{ background: transparent; color: {c('red')}; }}
-QPushButton[hig_destructive="true"]:hover {{ background: {tint('red', 0.10)}; }}
-QPushButton[hig_destructive="true"]:pressed {{ background: {tint('red', 0.18)}; }}
-QPushButton[hig_destructive="true"]:disabled {{ color: {tint('red', 0.40)}; }}
+QPushButton[hig_prominent="true"]:hover {{ background: {tint('accent', 0.88)}; }}
+QPushButton[hig_prominent="true"]:pressed {{ background: {tint('accent', 0.65)}; }}
+QPushButton[hig_prominent="true"]:disabled {{ background: {tint('accent', 0.40)}; }}
+/* hig-delete: red squircle (radius 8) with the trash glyph (design system, v0.75) */
+QPushButton[hig_destructive="true"] {{ background: {tint('red', 0.12)}; color: {c('red')};
+    border-radius: 8px; padding: 0 10px 0 8px; }}
+QPushButton[hig_destructive="true"]:hover {{ background: {tint('red', 0.18)}; }}
+QPushButton[hig_destructive="true"]:pressed {{ background: {tint('red', 0.26)}; }}
+QPushButton[hig_destructive="true"]:disabled {{ color: {tint('red', 0.40)}; background: {tint('red', 0.06)}; }}
 QDialogButtonBox QPushButton {{ min-width: 64px; }}
 QToolButton {{
     min-height: {CTL - 4}px; min-width: {CTL - 4}px; border-radius: {R_CAPSULE}px;
@@ -311,8 +313,12 @@ QToolButton {{
 QToolButton:hover {{ background: {c('fill-tertiary')}; }}
 QToolButton:pressed {{ background: {c('fill')}; }}
 QToolButton:checked {{ background: {accent}; }}
-QToolButton:focus {{ border-color: {tint('blue', 0.45)}; }}
+QToolButton:focus {{ border-color: {tint('accent', 0.45)}; }}
 /* toolbar capsule (hig-glass-capsule): icon buttons float on one capsule */
+/* hig-scrubber: the canvas Z / T capsule (height 36, radius 18, floating surface) */
+QWidget#hig_scrubber {{
+    background: {tint('background', 0.72)}; border: 1px solid {line}; border-radius: 18px;
+}}
 QWidget#hig_capsule {{
     background: {tint('background', 0.62)}; border: 1px solid {line};
     border-radius: {(CTL + 6) // 2}px;
@@ -323,7 +329,7 @@ QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox,
 QAbstractSpinBox {{
     background: {c('fill-tertiary')}; color: {c('label')};
     border: 1px solid transparent; border-radius: {R_FIELD}px;
-    selection-background-color: {tint('blue', 0.30)}; selection-color: {c('label')};
+    selection-background-color: {tint('accent', 0.30)}; selection-color: {c('label')};
 }}
 QLineEdit, QComboBox {{ min-height: {CTL - 4}px; padding: 0 {FIELD_PAD}px; }}
 QPlainTextEdit, QTextEdit {{ padding: 4px {FIELD_PAD - 2}px; }}
@@ -407,7 +413,7 @@ QCheckBox[hig_chip="true"] {{
 }}
 QCheckBox[hig_chip="true"]:hover {{ background: {c('fill-quaternary')}; }}
 QCheckBox[hig_chip="true"]:checked {{
-    background: {tint('blue', 0.16)}; border-color: {accent}; font-weight: 600;
+    background: {tint('accent', 0.16)}; border-color: {accent}; font-weight: 600;
 }}
 QCheckBox[hig_chip="true"]:disabled {{ color: {c('label-tertiary')}; }}
 QCheckBox[hig_chip="true"]::indicator {{ width: 0; height: 0; image: none; }}
@@ -427,9 +433,9 @@ QTabBar {{ background: transparent; }}
 QTabBar::tab {{
     min-height: {CHIP_H}px; padding: 0 {PAD}px; margin: 2px 6px 10px 0;
     border: none; border-radius: {CHIP_H // 2}px;
-    background: {tint('blue', 0.12)}; color: {c('label')}; font-weight: 500;
+    background: {tint('accent', 0.12)}; color: {c('label')}; font-weight: 500;
 }}
-QTabBar::tab:hover {{ background: {tint('blue', 0.20)}; }}
+QTabBar::tab:hover {{ background: {tint('accent', 0.20)}; }}
 QTabBar::tab:selected {{ background: {accent}; color: {c('on-accent')}; font-weight: 600; }}
 QTabBar::close-button {{ image: {url('xmark')}; width: 12px; height: 12px;
     subcontrol-position: right; border-radius: 6px; margin-left: 4px; }}
@@ -442,15 +448,15 @@ QAbstractItemView {{
     alternate-background-color: {c('fill-quaternary')};
     border: 1px solid {line}; border-radius: {R_INSET_GROUP}px;
     outline: none; padding: 2px;
-    selection-background-color: {tint('blue', 0.16)}; selection-color: {c('label')};
+    selection-background-color: {tint('accent', 0.16)}; selection-color: {c('label')};
 }}
 QListView::item, QTreeView::item {{
     min-height: {ROW - 4}px; padding: 2px {FIELD_PAD}px; border-radius: {R_VALUE}px;
 }}
 QListView::item:hover, QTreeView::item:hover, QTableView::item:hover {{
-    background: {tint('blue', 0.06)}; }}
+    background: {tint('accent', 0.06)}; }}
 QListView::item:selected, QTreeView::item:selected, QTableView::item:selected {{
-    background: {tint('blue', 0.16)}; color: {c('label')};
+    background: {tint('accent', 0.16)}; color: {c('label')};
 }}
 QTreeView::branch {{ background: transparent; }}
 QTreeView::branch:has-children:closed {{ image: {url('tri_closed')}; }}

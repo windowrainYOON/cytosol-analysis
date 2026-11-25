@@ -60,6 +60,15 @@ def headless():
     QMessageBox.warning = staticmethod(lambda *x, **k: print('WARN:', *x[1:3], file=sys.stderr))
     QMessageBox.critical = staticmethod(lambda *x, **k: print('ERROR:', *x[1:3], file=sys.stderr))
     QMessageBox.question = staticmethod(lambda *x, **k: QMessageBox.StandardButton.No)
+    from .ui import dialogs
+
+    def _say(kind, title, text):  # the app's alerts / questions on stderr, answered No
+        tag = {'warning': 'WARN', 'critical': 'ERROR'}.get(kind, 'INFO')
+        print(f'{tag}:', title, text, file=sys.stderr)
+        return QMessageBox.StandardButton.No if kind == 'question' else (
+            False if kind == 'destructive' else None if kind == 'choose'
+            else QMessageBox.StandardButton.Ok)
+    dialogs.HEADLESS = _say
     _APP = QApplication.instance() or QApplication([sys.argv[0]])
     from . import i18n
     i18n.install()

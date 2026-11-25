@@ -158,8 +158,16 @@ of the icons at the top right of the canvas, handles them.
    the icon off, crop regions are not drawn on the canvas.
 2. While the icon is on, drag inside a region to move it.
 3. Each region is listed in the left sidebar under its image, e.g.
-   **Crop 1 77×77**. Picking a row selects that crop (yellow on the canvas);
-   the triangle before the image name folds the rows away.
+   **Crop 1 77×77**; the triangle before the image name folds the rows away.
+   - **Click a crop row**: that crop fills the canvas (v0.75, crop view). The status bar
+     shows its size and place, e.g. `Crop 1 · 60×60 px (x 50–110, y 10–70) · file 120×80 px`,
+     and the scale bar shrinks to fit the crop (the marker setting stays). **단면 보기**
+     (sections) and **3D 투영** (3D projection) show only that crop too.
+   - **Click the image row**: back to the whole image (with the crop boxes while the
+     Crop icon is on). Picking another image always starts with the whole image.
+6. **Crop 영역도 따로 분석** (also analyze crop regions separately; check box above the
+   measure bar, off by default): when on, all-image detection and measurement treat
+   each crop like an image of its own, with its own result rows `image name · Crop 1`.
 4. **Right-click a crop row or a crop on the canvas** for:
    - **이 ROI 복사** (copy, `⌘C` / `Ctrl+C`) and **붙여넣기** (paste, `⌘V` / `Ctrl+V`: a new
      crop of the same place and shape),
@@ -167,8 +175,7 @@ of the icons at the top right of the canvas, handles them.
    - **점 편집** (edit points): drag a vertex, click an edge to add a point,
      `Option(⌥)`/`Alt`+click a point to delete it (polygon crop); `Esc` or a click
      elsewhere ends it,
-   - **선택한 Crop만 보기** (show selected crop only), **같은 크기 이미지에 Crop 복사**
-     (copy crops to images of the same size),
+   - **같은 크기 이미지에 Crop 복사** (copy crops to images of the same size),
    - last, in red, **삭제…** (delete) and **이 이미지의 Crop 모두 삭제…** (delete all crops of
      this image); the alert's default button is **취소** (Cancel).
    The trash glyph at the end of the row and the `Delete` key delete too.

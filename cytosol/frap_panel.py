@@ -24,8 +24,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QMessageBox,
-    QProgressDialog,
     QPushButton,
     QSlider,
     QSpinBox,
@@ -36,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
+from . import ui
 from . import frap
 from .flow import FlowLayout
 from .frap import ROI_NAMES, FrapCurve, FrapState
@@ -624,12 +623,12 @@ class FrapPanel(QWidget):
     def groups(self, progress=True, items=None) -> list:
         """GroupCurve per image group (images without a group: one set);
         items: only these images (default all)."""
-        items = [it for it in (self.win.items if items is None else items) if it.nt > 1]
+        items = [it for it in (self.win.analysis_items() if items is None else items) if it.nt > 1]
         if not items:
             return []
         prog = None
         if progress and len(items) > 1:
-            prog = QProgressDialog('FRAP 측정 중…', '취소', 0, len(items), self)
+            prog = ui.Progress('FRAP 측정 중…', '취소', 0, len(items), self)
             prog.setWindowModality(Qt.WindowModality.WindowModal)
             prog.setMinimumDuration(400)
         by = {}
@@ -975,7 +974,7 @@ class FrapPanel(QWidget):
         if self.curve is None and self.item is not None and self.item.nt > 1:
             self.curve = self.curve_for(self.item)
         if self.curve is None:
-            QMessageBox.information(self, 'FRAP 측정', '시간축(T)이 있는 이미지를 고르세요.')
+            ui.information(self, 'FRAP 측정', '시간축(T)이 있는 이미지를 고르세요.')
             return False
         return True
 
@@ -996,7 +995,7 @@ class FrapPanel(QWidget):
                                self.item.id_properties())
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
             return
         self.win.statusBar().showMessage(f'FRAP CSV 저장: {path}')
 
@@ -1015,7 +1014,7 @@ class FrapPanel(QWidget):
             self.write_plot(path)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
             return
         self.win.statusBar().showMessage(f'FRAP 그래프 저장: {path}')
 
@@ -1031,7 +1030,7 @@ class FrapPanel(QWidget):
     def save_rois_current(self):
         it = self.item
         if it is None or not isinstance(it.frap, FrapState) or not it.frap.rois:
-            QMessageBox.information(self, 'FRAP 측정', '저장할 FRAP ROI가 없습니다.')
+            ui.information(self, 'FRAP 측정', '저장할 FRAP ROI가 없습니다.')
             return
         path, _ = QFileDialog.getSaveFileName(self, 'FRAP ROI 저장', self._default('_rois.zip'),
                                               'ImageJ RoiSet (*.zip)')
@@ -1059,11 +1058,11 @@ class FrapPanel(QWidget):
         gs = [g for g in self.groups(items=items) if g is not None]
         if not gs:
             if ask:
-                QMessageBox.information(self, 'FRAP 측정', '시간축(T)이 있는 이미지가 없습니다.')
+                ui.information(self, 'FRAP 측정', '시간축(T)이 있는 이미지가 없습니다.')
             return []
         written = []
         per_image = self.win.opt_per_image.isChecked()
-        by_label = {it.label: it for it in self.win.items}
+        by_label = {it.label: it for it in self.win.analysis_items()}
         curves = [c for g in gs for c in g.members]
         fit, raw = self.fit.isChecked(), False
         try:
@@ -1088,11 +1087,11 @@ class FrapPanel(QWidget):
         except Exception as exc:
             traceback.print_exc()
             if ask:
-                QMessageBox.warning(self, '저장 실패', str(exc))
+                ui.warning(self, '저장 실패', str(exc))
             return written
         self.win.statusBar().showMessage(f'FRAP 요약 저장: 이미지 {len(curves)}개, 그룹 {len(gs)}개 → {out}')
         if ask:
-            QMessageBox.information(self, '저장 완료',
+            ui.information(self, '저장 완료',
                                     f'이미지 {len(curves)}개, 그룹 {len(gs)}개의 FRAP 결과를 저장했습니다.\n'
                                     f'요약: frap_summary.csv, frap_summary.png, frap_groups.png\n{out}')
         return written

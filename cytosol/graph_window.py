@@ -30,14 +30,12 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
     QMenu,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -51,6 +49,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
+from . import ui
 from . import graph as G
 from .flow import FlowLayout
 
@@ -69,75 +68,9 @@ def _safe(name: str) -> str:
     return re.sub(r'[\\/:*?"<>|\s]+', '_', name).strip('_') or 'table'
 
 
-class ColorButton(QPushButton):
-    """Shows a color; click to pick another. allow_empty: right-click = '' (auto)."""
-
-    changed = Signal(str)
-
-    def __init__(self, allow_empty=False, parent=None):
-        super().__init__(parent)
-        self.allow_empty = allow_empty
-        self._color = '#000000'
-        self.setFixedWidth(64)
-        self.clicked.connect(self._pick)
-        if allow_empty:
-            self.setToolTip('클릭: 색 고르기 · 오른쪽 클릭: 자동 (시리즈 색)')
-
-    def color(self) -> str:
-        return self._color
-
-    def setColor(self, c: str):
-        self._color = c or ''
-        if self._color:
-            q = QColor(self._color)
-            self.setText(self._color)
-            self.setStyleSheet(f'background-color: {q.name()}; color: '
-                               f"{'black' if q.lightness() > 128 else 'white'}; font-size: 10px;")
-        else:
-            self.setText('자동')
-            self.setStyleSheet('font-size: 10px;')
-
-    def _pick(self):
-        c = QColorDialog.getColor(QColor(self._color or '#000000'), self, '색 고르기')
-        if c.isValid():
-            self.setColor(c.name())
-            self.changed.emit(self._color)
-
-    def mousePressEvent(self, e):
-        if self.allow_empty and e.button() == Qt.MouseButton.RightButton:
-            self.setColor('')
-            self.changed.emit('')
-            return
-        super().mousePressEvent(e)
-
-
-class FloatEdit(QLineEdit):
-    """A number field that keeps full precision (axis limits, tick spacing)."""
-
-    valueChanged = Signal(float)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setMaximumWidth(90)
-        self.editingFinished.connect(self._done)
-
-    def value(self) -> float:
-        t = self.text().replace(',', '.').strip()
-        try:
-            if '/' in t:  # 1/60 for s -> min
-                a, b = t.split('/', 1)
-                return float(a) / float(b)
-            return float(t)
-        except (ValueError, ZeroDivisionError):
-            return float('nan')
-
-    def setValue(self, v: float):
-        self.setText('' if v is None or not np.isfinite(v) else f'{v:.6g}')
-
-    def _done(self):
-        v = self.value()
-        if np.isfinite(v):
-            self.valueChanged.emit(v)
+# the colour well and the number field are components (cytosol.ui, v0.75)
+from .ui.color_well import ColorWell as ColorButton  # noqa: E402
+from .ui.fields import FloatEdit  # noqa: E402
 
 
 class Binder:
@@ -578,7 +511,7 @@ class GraphWindow(QMainWindow):
         d = self.doc
         if d.key is None:
             return
-        text, ok = QInputDialog.getText(self, '그래프 이름', '이름:', text=d.title)
+        text, ok = ui.get_text(self, '그래프 이름', '이름:', text=d.title)
         if ok and text.strip():
             d.title = text.strip()
             self._doc_item(d).setText(0, d.title)
@@ -778,7 +711,7 @@ class GraphWindow(QMainWindow):
             data = fn()
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '그래프 편집', f'데이터를 만들지 못했습니다: {exc}')
+            ui.warning(self, '그래프 편집', f'데이터를 만들지 못했습니다: {exc}')
             data = None
         if data is None:
             self.refresh_chips()
@@ -802,11 +735,11 @@ class GraphWindow(QMainWindow):
             data = fn()
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '그래프 편집', f'데이터를 만들지 못했습니다: {exc}')
+            ui.warning(self, '그래프 편집', f'데이터를 만들지 못했습니다: {exc}')
             return None
         if data is None or not data.tables:
             self.refresh_chips()
-            QMessageBox.information(self, '새 그래프', hint)
+            ui.information(self, '새 그래프', hint)
             return None
         if table and any(t.name == table for t in data.tables):
             data.tables = sorted(data.tables, key=lambda t: t.name != table)
@@ -825,10 +758,10 @@ class GraphWindow(QMainWindow):
                 return None
         try:
             if not T.read_grid(path, (T.sheets(path) or [''])[0]):
-                QMessageBox.information(self, '파일 불러오기', '빈 파일입니다.')
+                ui.information(self, '파일 불러오기', '빈 파일입니다.')
                 return None
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, '파일 불러오기', str(exc))
+            ui.warning(self, '파일 불러오기', str(exc))
             return None
         return self._wizard(Path(path).stem, None, None, None, run, import_path=path)
 
@@ -888,7 +821,7 @@ class GraphWindow(QMainWindow):
         gcol = (self.spec.calc.group if self.spec.chart == 'corrcmp' else '') \
             or next((c for c in ('group', '그룹') if c in t.columns), '') or (gc if gc in texts else '')
         if not gcol:
-            QMessageBox.information(self, '그룹 요약표', '표에 그룹 열이 없습니다.')
+            ui.information(self, '그룹 요약표', '표에 그룹 열이 없습니다.')
             return None
         cols = G.calc_columns(self.spec, t, 'x')
         out = G.group_summary_table(t, cols, gcol)
@@ -1347,7 +1280,7 @@ class GraphWindow(QMainWindow):
         if self.doc.key is None:
             return None
         if self.spec.chart not in G.CATEGORY_CHARTS:
-            QMessageBox.information(self, '통계', '유의성 표시는 막대 · 점 그림 · 상자 · 바이올린 그래프에서 씁니다. '
+            ui.information(self, '통계', '유의성 표시는 막대 · 점 그림 · 상자 · 바이올린 그래프에서 씁니다. '
                                     '‘데이터’ 탭에서 그래프 종류를 바꾸세요.')
             return None
         d = StatsDialog(self.spec, self.tables(), self)
@@ -1454,10 +1387,10 @@ class GraphWindow(QMainWindow):
             data = self.data_fn()
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '다시 불러오기', f'결과를 가져오지 못했습니다: {exc}')
+            ui.warning(self, '다시 불러오기', f'결과를 가져오지 못했습니다: {exc}')
             return
         if data is None:
-            QMessageBox.information(self, '다시 불러오기', '탭에 그릴 결과가 없습니다.')
+            ui.information(self, '다시 불러오기', '탭에 그릴 결과가 없습니다.')
             return
         self.set_data(data, keep_spec=True)
         self._status('탭의 현재 결과를 다시 불러왔습니다.')
@@ -1663,10 +1596,10 @@ class GraphWindow(QMainWindow):
             return
         cols = [c for c in t.columns if 1 < len(set(G._text(v) for v in t.values(c))) <= 50]
         if not cols:
-            QMessageBox.information(self, '값마다 나누기', '나눌 수 있는 열(값이 2–50가지)이 없습니다.')
+            ui.information(self, '값마다 나누기', '나눌 수 있는 열(값이 2–50가지)이 없습니다.')
             return
         pick = 'group' if 'group' in cols else cols[0]
-        col, ok = QInputDialog.getItem(self, '값마다 나누기', '이 열의 값마다 시리즈를 하나씩 만듭니다:',
+        col, ok = ui.get_item(self, '값마다 나누기', '이 열의 값마다 시리즈를 하나씩 만듭니다:',
                                        cols, cols.index(pick), False)
         if not ok:
             return
@@ -1693,7 +1626,7 @@ class GraphWindow(QMainWindow):
 
     def add_text(self, x=0.05, y=0.9, text=None):
         if text is None:
-            text, ok = QInputDialog.getMultiLineText(self, '글자 상자 추가', '글자:', 'Text')
+            text, ok = ui.get_multiline_text(self, '글자 상자 추가', '글자:', 'Text')
             if not ok or not text:
                 return
         self.spec.texts.append(G.TextBox(text=text, x=float(x), y=float(y),
@@ -2160,16 +2093,16 @@ class GraphWindow(QMainWindow):
     def _edit(self, kind, i, event):
         if kind == 'text':
             tb = self.spec.texts[i]
-            text, ok = QInputDialog.getMultiLineText(self, '글자 상자', '글자:', tb.text)
+            text, ok = ui.get_multiline_text(self, '글자 상자', '글자:', tb.text)
             if ok:
                 tb.text = text
         elif kind == 'title':
-            text, ok = QInputDialog.getText(self, '제목', '제목:', text=self.spec.title)
+            text, ok = ui.get_text(self, '제목', '제목:', text=self.spec.title)
             if ok:
                 self.spec.title = text
         elif kind in ('xlabel', 'ylabel'):
             a = self.spec.x if kind == 'xlabel' else self.spec.y
-            text, ok = QInputDialog.getText(self, '축 이름', '이름 (단위는 ‘축’ 탭):', text=a.label)
+            text, ok = ui.get_text(self, '축 이름', '이름 (단위는 ‘축’ 탭):', text=a.label)
             if ok:
                 a.label = text
         elif kind == 'legend':
@@ -2189,7 +2122,7 @@ class GraphWindow(QMainWindow):
         # entries: shown series with legend on (in order), then the extra items
         owners = [s for s in self.spec.series if s.visible and s.legend] + list(self.spec.legend_items)
         old = texts[hit].get_text()
-        text, ok = QInputDialog.getText(self, '범례 항목', '이름:', text=old)
+        text, ok = ui.get_text(self, '범례 항목', '이름:', text=old)
         if not ok:
             return
         for o in owners:
@@ -2298,10 +2231,10 @@ class GraphWindow(QMainWindow):
             data = fn()
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '데이터 가져오기', f'데이터를 만들지 못했습니다: {exc}')
+            ui.warning(self, '데이터 가져오기', f'데이터를 만들지 못했습니다: {exc}')
             return []
         if data is None or not data.tables:
-            QMessageBox.information(self, '데이터 가져오기', hint)
+            ui.information(self, '데이터 가져오기', hint)
             return []
         added = self.add_tables(title, data.tables)
         self._status(f'{title}: 표 {len(added)}개를 가져와 시리즈를 하나 더 그렸습니다.')
@@ -2328,7 +2261,7 @@ class GraphWindow(QMainWindow):
             try:
                 return T.read_table(path)
             except Exception as exc:  # noqa: BLE001
-                QMessageBox.warning(self, 'CSV 불러오기', str(exc))
+                ui.warning(self, 'CSV 불러오기', str(exc))
                 return None
         try:
             with open(path, newline='', encoding='utf-8-sig') as f:
@@ -2340,10 +2273,10 @@ class GraphWindow(QMainWindow):
                     dialect = csv.excel
                 rows = list(csv.reader(f, dialect))
         except Exception as exc:
-            QMessageBox.warning(self, 'CSV 불러오기', str(exc))
+            ui.warning(self, 'CSV 불러오기', str(exc))
             return None
         if not rows:
-            QMessageBox.information(self, 'CSV 불러오기', '빈 파일입니다.')
+            ui.information(self, 'CSV 불러오기', '빈 파일입니다.')
             return None
         head = rows[0]
 
@@ -2357,7 +2290,7 @@ class GraphWindow(QMainWindow):
         if self.data is None or not self.data.tables:
             return
         names = [t.name for t in self.data.tables]
-        name, ok = QInputDialog.getItem(self, '표 지우기', '이 그래프에서 뺄 표 (그 표를 쓰는 시리즈도 지웁니다):',
+        name, ok = ui.get_item(self, '표 지우기', '이 그래프에서 뺄 표 (그 표를 쓰는 시리즈도 지웁니다):',
                                         names, len(names) - 1, False)
         if not ok:
             return
@@ -2453,7 +2386,7 @@ class GraphWindow(QMainWindow):
             G.save_figure(path, self.spec, self.tables())
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
             return None
         self._status(f'그래프 저장: {path}')
         return path
@@ -2465,7 +2398,7 @@ class GraphWindow(QMainWindow):
             n = G.write_csv(path, table, rows)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
             return None
         self._status(f'{table.name} {n}행 저장: {path}')
         return path
@@ -2474,7 +2407,7 @@ class GraphWindow(QMainWindow):
         only = None
         if selected:
             if self.cur_series() is None:
-                QMessageBox.information(self, '내보내기', '‘데이터 시리즈’ 탭에서 시리즈를 고르세요.')
+                ui.information(self, '내보내기', '‘데이터 시리즈’ 탭에서 시리즈를 고르세요.')
                 return None
             only = {self._series_i}
         t = G.plotted_table(self.spec, self.tables(), only)
@@ -2484,7 +2417,7 @@ class GraphWindow(QMainWindow):
     def export_summary(self, path=None):
         t = G.summary_table(self.spec, self.tables())
         if not t.rows:
-            QMessageBox.information(self, '내보내기', '요약은 막대·점 그림·상자·바이올린 그래프에서 만듭니다.')
+            ui.information(self, '내보내기', '요약은 막대·점 그림·상자·바이올린 그래프에서 만듭니다.')
             return None
         return self._write(path or self._ask_csv('그래프 요약 저장', '_summary.csv'), t)
 
@@ -2495,7 +2428,7 @@ class GraphWindow(QMainWindow):
     def export_selected_rows(self, path=None):
         rows = sorted({i.row() for i in self.view.selectionModel().selectedIndexes()})
         if not rows:
-            QMessageBox.information(self, '내보내기', '아래 표에서 행을 고르세요 (Shift / Cmd·Ctrl + 클릭).')
+            ui.information(self, '내보내기', '아래 표에서 행을 고르세요 (Shift / Cmd·Ctrl + 클릭).')
             return None
         t = self.model.table
         return self._write(path or self._ask_csv('선택한 행 저장', f'_{_safe(t.name)}_selected.csv'), t,
@@ -2520,7 +2453,7 @@ class GraphWindow(QMainWindow):
                 out.append(str(p))
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
             return out
         self._status(f'데이터 표 {len(out)}개 저장: {folder}')
         return out
@@ -2534,7 +2467,7 @@ class GraphWindow(QMainWindow):
         try:
             G.save_spec(path, self.spec)
         except Exception as exc:
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
             return None
         self._status(f'그래프 설정 저장: {path}')
         return path
@@ -2548,7 +2481,7 @@ class GraphWindow(QMainWindow):
         try:
             spec = G.load_spec(path)
         except Exception as exc:
-            QMessageBox.warning(self, '불러오기 실패', str(exc))
+            ui.warning(self, '불러오기 실패', str(exc))
             return False
         self.spec = G.apply_style(self.spec, spec) if style_only else spec
         self._series_i = 0 if self.spec.series else -1

@@ -4,6 +4,8 @@ outlines of the bleach regions stored in the image file."""
 
 from __future__ import annotations
 
+import functools
+
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
+from .ui.color_well import RgbColorWell
 from .render import TIME_UNITS, OutlineStyle, ScaleBarStyle, TimeStampStyle
 
 POSITIONS = ['lower right', 'lower left', 'upper right', 'upper left']
@@ -36,27 +39,8 @@ def _auto_spin(maximum=1000, suffix=' px') -> QSpinBox:
     return sp
 
 
-class ColorButton(QPushButton):
-    changed = Signal()
-
-    def __init__(self, rgb=(1.0, 1.0, 1.0)):
-        super().__init__()
-        self.setFixedWidth(48)
-        self.set_rgb(rgb)
-        self.clicked.connect(self._pick)
-
-    def set_rgb(self, rgb):
-        self.rgb = tuple(float(c) for c in rgb)
-        # the swatch shows the data colour; a hairline keeps white visible on a light card
-        self.setStyleSheet(f'background-color: {QColor.fromRgbF(*self.rgb).name()};'
-                           'border: 1px solid rgba(128, 128, 128, 0.55);')
-
-    def _pick(self):
-        c = QColorDialog.getColor(QColor.fromRgbF(*self.rgb), self, '마커 색')
-        if c.isValid():
-            self.set_rgb((c.redF(), c.greenF(), c.blueF()))
-            self.changed.emit()
-
+# the marker colour wells (cytosol.ui.color_well, v0.75)
+ColorButton = functools.partial(RgbColorWell, title='마커 색')
 
 class MarkerPanel(QWidget):
     """Two groups of controls; ``changed`` fires on every edit."""

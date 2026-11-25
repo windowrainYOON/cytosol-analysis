@@ -157,7 +157,7 @@ class MinaPanel(QWidget):
 
     def run_all(self):
         done = 0
-        for it in list(self.win.items):
+        for it in list(self.win.analysis_items()):
             if getattr(it, 'mito', None) is None:
                 continue
             try:
@@ -179,7 +179,7 @@ class MinaPanel(QWidget):
         self.win.live_box.schedule()
 
     def bar_status(self):
-        n = sum(1 for it in self.win.items if getattr(it, 'mito', None) is not None)
+        n = sum(1 for it in self.win.analysis_items() if getattr(it, 'mito', None) is not None)
         if not n:
             return 'mitoROI 탭에서 먼저 미토콘드리아를 찾으세요.', 'warning'
         return f'미토 ROI가 있는 이미지 {n}개', None
@@ -212,7 +212,7 @@ class MinaPanel(QWidget):
 
     def data_tables(self):
         out = {k: [] for k in DATA_NAMES}
-        for it in self.win.items:
+        for it in self.win.analysis_items():
             r = getattr(it, 'mina', None)
             if r is None:
                 continue

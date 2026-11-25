@@ -49,19 +49,7 @@ def criterion_text(c: dict | None, k_stat: float | None = None) -> str:
             f'{c["k"]:.1f}σ · 크기 ≥ {c.get("area", 0):.2f} µm²')
 
 
-class Tile(QLabel):
-    clicked = Signal(int)
-
-    def __init__(self, n):
-        super().__init__()
-        self.n = n
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip(f'{n + 1}번 · 클릭 = 이 후보부터 입자')
-
-    def mousePressEvent(self, ev):
-        if ev.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self.n)
-        super().mousePressEvent(ev)
+from .ui.picker_tile import Tile  # noqa: E402,F401  (component library)
 
 
 def tile_pixmap(crop, lo, hi, color, n, caption, state):

@@ -217,6 +217,8 @@ class ImageItem:
         if outline is not None:
             rgb = outline.draw(rgb, self.bleach_rois, region[:2] if region else (0, 0))
         if scale is not None:
+            if region and self.pixel_um and scale.enabled:
+                scale = fit_scale(scale, rgb.shape[1], self.pixel_um)
             rgb = scale.draw(rgb, self.pixel_um)
         if time is not None and self.nt > 1:
             rgb = time.draw(rgb, self.image.times, self.t if t is None else t)
@@ -367,6 +369,68 @@ class ImageItem:
 
         p = polys_of(self)[index]
         return list(p) if p is not None else rect_points(self.crops[index])
+
+    # ---- crops analysed as images of their own (v0.75, 'Crop 영역도 따로 분석') ----
+
+    def crop_item(self, index: int) -> 'ImageItem':
+        """Crop ``index`` as an image of its own (its bounding box; the parent's
+        file, Z, T and LUTs): detection and measurement treat it like any image,
+        its rows read 「이미지 · Crop n」. Kept while the crop's box is unchanged."""
+        import copy as _copy
+
+        x0, y0, x1, y1 = (int(v) for v in self.crops[index])
+        cache = self.__dict__.setdefault('_crop_items', {})
+        key = (index, x0, y0, x1, y1)
+        sub = cache.get(key)
+        if sub is not None:
+            if sub.image.t != self.image.t:
+                sub.set_t(self.image.t)
+            sub.z = self.z
+            return sub
+        img = self.image
+        sl = (Ellipsis, slice(y0, y1), slice(x0, x1))
+        c, nz = img.shape[0], img.shape[1]
+        if img.lazy:
+            data = None
+            loader = (lambda t, _i=img: _i.loader(t)[sl]) if img.loader is not None else None
+            plane = lambda t, z, _i=img: _i.plane_loader(t, z)[sl]  # noqa: E731
+            prev = (lambda t, z, _i=img: _i.preview_loader(t, z)[sl]) if img.preview_loader else None
+        else:
+            data = img.data[sl]
+            loader = (lambda t, _i=img: _i.loader(t)[sl]) if img.loader is not None else None
+            plane = prev = None
+        sub_img = Image(data=data, channels=list(img.channels), voxel_size_um=dict(img.voxel_size_um),
+                        metadata=dict(img.metadata), colors=list(img.colors), times=list(img.times),
+                        t=img.t, loader=loader, ranges=list(img.ranges),
+                        range_notes=list(img.range_notes), plane_loader=plane,
+                        shape=(c, nz, y1 - y0, x1 - x0), preview_loader=prev)
+        sub = ImageItem(path=self.path, image=sub_img, label=f'{self.label} · Crop {index + 1}',
+                        z=self.z, luts=_copy.deepcopy(self.luts), group=self.group,
+                        id_suffix=(f'{self.id_suffix}-' if self.id_suffix else '') + f'crop{index + 1}',
+                        load_kwargs=dict(self.load_kwargs),
+                        particle_settings=_copy.deepcopy(self.particle_settings))
+        sub.__dict__['crop_of'] = (self, index)
+        for k in [k for k in cache if k[0] == index]:
+            del cache[k]  # the crop moved / was resized: its old results go
+        cache[key] = sub
+        return sub
+
+    def crop_items(self) -> list:
+        """Every crop of this image as an image of its own (see crop_item)."""
+        return [self.crop_item(k) for k in range(len(self.crops))]
+
+
+def fit_scale(scale, width_px: int, pixel_um: float):
+    """The scale bar of a crop view: a bar longer than 40 % of the crop's width
+    is cut to the largest 1 / 2 / 5 × 10ⁿ µm that fits (the marker setting stays)."""
+    import dataclasses
+    import math
+    room = 0.4 * width_px * pixel_um
+    if scale.length_um is None or scale.length_um <= room or room <= 0:  # None: sized to the image
+        return scale
+    e = math.floor(math.log10(room))
+    nice = max(m * 10 ** e for m in (1, 2, 5) if m * 10 ** e <= room)
+    return dataclasses.replace(scale, length_um=float(nice))
 
 
 def match_channel(item: ImageItem, name: str, index: int, like: ImageItem | None = None):

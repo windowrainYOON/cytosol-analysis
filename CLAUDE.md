@@ -21,7 +21,7 @@ owner writes in Korean, so reply in Korean.
 - `docs/ko/`, `docs/en/`: user manuals, one file per feature (01–13), same
   structure in both languages.
 
-## Window structure (v0.74.1)
+## Window structure (v0.75.0)
 
 - **Regions** (owner request 2026-11-04, v0.58, after mockups; replaces the
   v0.52 RegionLayout shade): the sidebar is the window's own, lowest layer
@@ -66,7 +66,17 @@ owner writes in Korean, so reply in Korean.
     `_crop_clip`), 수정 (8 handles) and 점 편집 (drag a vertex, click an edge
     = new point, Option+click = delete) via `edit_crop('resize' | 'points')`
     (`Canvas._edit_press/_move/_release`, signals → `_crop_resized`,
-    `_crop_points`), 선택한 Crop만 보기, Crop 복사, red 삭제… last.
+    `_crop_points`), Crop 복사, red 삭제… last.
+    **Crop view** (owner request 2026-11-24, v0.75; replaces 선택한 Crop만 보기 and the
+    3D 선택한 Crop만 preference): a crop row (`ImageTree.cropPicked`, also on a click
+    of the current row, `_clicked`) sets `MainWindow._crop_view` and fills the canvas with
+    that crop (status line with size / place, scale bar cut to fit by `lut.fit_scale`),
+    `crop_region()` feeds 3D (`View3DPane.show_item(region)`) and sections
+    (`ImageItem.crop_item`); the image row (`imagePicked`) or another image = whole image.
+    **Crop 영역도 따로 분석** (`measure_bar.crops`, off): `MainWindow.analysis_items()`
+    (used by every panel instead of `win.items` for 전체 이미지 runs and data tables)
+    adds `ImageItem.crop_items()` (sub-images 「이미지 · Crop n」, id suffix `cropN`,
+    cached per box) after each image.
     Polygon crops: `ImageItem.crop_polys` (None = plain rectangle,
     `crops.polys_of`), `item.crops[k]` stays the bounding box; exported as
     that box with the outside 0.
@@ -368,6 +378,29 @@ per-widget style sheets.
   under the preview, Fusion-drawn controls instead of native AppKit ones
   on macOS (needed for one styled look).
 
+## Component library (`cytosol/ui/`, owner rule 2026-11-25, v0.75)
+
+Every widget class, dialog and painter part lives in `cytosol/ui/`; screens
+(panels, windows) only import and arrange them (design system reuse rules
+1–9). Same-role parts are one component with variants: `ui.dialogs`
+(`Alert`, `information` / `warning` / `critical` / `question`, `choose`,
+`confirm_destructive`, `Prompt` + `get_text` / `get_item` / `get_int` /
+`get_double`, `Progress` with the QProgressDialog API, `HEADLESS` hook for the
+CLI), `ui.window` (`RoundedDialog`, `button_row`, window variants),
+`ui.color_well` (`ColorWell` row / header / inline, `RgbColorWell`),
+`ui.histogram` (`Histogram` lut / threshold / mini, ▲ handles →
+`rangeEdited`), `ui.scrubber` (Z / T capsule, ▶ play), `ui.steps`,
+`ui.overlay` (canvas pens per kind and state, label capsule), `ui.empty`,
+`ui.fields`, `ui.prism` (graph defaults = the Prism exception), and the
+parts moved from screens (`lut_channel`, `figure_parts`, `graph_parts`,
+`graph_kinds`, `pipeline_parts`, `page_stack`, `tables`, `import_parts`,
+`legend`, `picker_tile`, `overlay_chip`; old modules re-export them).
+The self-test lint (`selftest2._lint_ui`) fails on direct `QMessageBox` /
+`QInputDialog` / `QProgressDialog` calls and `setStyleSheet` in screen files
+(`# hig-allow` marks the figure preview exception). A component change must
+keep each button's signals: `scripts/signal_map.py snap` before / after +
+`diff` (baseline `/mnt/project-files/components/signal-baseline-v0.74.2.json`).
+
 ## Modules (`cytosol/`)
 
 | Module | Role |
@@ -580,5 +613,6 @@ not affected.
 | dev branch | 0.74.0 | Owner request (2026-11-24, "반영해서 바로 개발해줘"): 3D view fixed (macOS drew a mirrored copy of the window: the GL view now renders into an offscreen FBO and paints the image, fast lower-resolution frames while dragging); 단면 보기 MIP check box (XY = Z max, sections unchanged) and a scale bar per panel; 자 canvas icon (1 µm ticks, `N µm` label, gone when off); line profile legend beside the plot in the live box (`PlotLegend`, number tiles hidden, plot size unchanged); 파일 › 새 파이프라인 (empty; the window also starts empty), library cards as top-to-bottom chip flows (`stage_flow_widget`); View menu grouped 검출 / 추적 / 측정 (`MainWindow.TAB_GROUPS`, `view_groups`) |
 | dev branch | 0.74.1 | Owner request (2026-11-24, "같은 파일로 입자추적, 세포 추적 파이프라인 돌려보고 결과 비교 … 기존이랑 같은 결과"; 261118 T001P vs the 2026-11-19 batch): pipeline `end.export` with no kind picked writes the export defaults of the tab stages it ran (`pipeline.default_export_opts`, `STAGE_EXPORT`) with those stages' settings applied (`_Settings` per stage); `track.particles` setting `signal_thr` sets the 5 신호 기준 channel's LUT Min (preset 261118 TCF: 5 + 6 on, Min 5); 세포질 강도 추적 '입자 추적 결과의 세포' keeps ParticleTracker's cell IDs and measures on its fluorescence grid (`cell_track.pt_native`, ring < 50 px dropped, threshold from all pixels) like `scripts/cell_local_bg.py` / `cell_green_thr.py`; preset 세포질 강도 추적 + 변화 필터 runs PT tracking first; exporter `track_all` skips the 신호 변화 tables (KeyError). P01: tracks / points / PT folder / green split equal, cells 6 = 6 with values equal to 5 decimals |
 | dev branch | 0.74.2 | Design-system check before the build (owner rule 2026-11-24): canvas view icons also as View commands with shortcuts (`view_mode_actions`: 라인 프로파일 ⌃⌥L, 자 ⌃⌥R, 단면 보기 ⌃⌥S, 3D 투영 보기 ⌃⌥3), 단면 MIP check box moved to the top row (no controls on the bottom edge), library: review chips info (not warning), 새 파이프라인 prominent at the trailing end after 파일에서 불러오기… |
+| dev branch | 0.75.0 | Owner request (2026-11-25 08:58, "개발 시작해 … 각 버튼이나 컴포넌트의 신호 전달이 이전과 동일하면 돼"; component sheet + crop-view mockups): design system foundations applied (accent #0066cc / #2997ff, label / secondary / tertiary, grouped background #f5f5f7, separators, row padding 16, inspector ≤ 360), 9 new components, the `cytosol/ui` library (all dialogs, colour wells, histograms with ▲ handles, Z / T scrubber with ▶, steps, overlay pens, empty state, Prism graph defaults); every QMessageBox / QInputDialog / QProgressDialog replaced; signal map before / after: no lost connection except the removed 선택한 Crop만 controls; crop view (crop row fills the canvas, 3D / sections of the crop, fitted scale bar) and Crop 영역도 따로 분석; self-test step `components + crop view` + reuse lint |
 | dev branch | 0.73.1 | Pipeline fix: the result folder's `summary.json` / `README.txt` are written again after the last stage, so `status` reads `done` (it stayed `running` because the export stage wrote them first) |
 | #50 (main) | 0.53.0 (main) | 핵 다시 찾기: nuclei re-detected inside the (edited) cell ROIs, cells untouched, one nucleus per cell, each cell its own threshold (자동 = own LUT stretch + Otsu over the cell and a 2 µm ring, or a manual value per cell, live), noise in nucleus-free cells dropped (`cellroi.cell_nucleus`, `CellRois.redetect_nucleus`, `nuc_thr` saved in projects); PRD 24h ref-cell nucleus IoU 0.969 |

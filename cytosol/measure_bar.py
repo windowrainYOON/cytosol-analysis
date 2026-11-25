@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from . import theme
 
@@ -58,6 +58,17 @@ class MeasureBar(QWidget):
         row.addWidget(self.one_btn, 1)
         row.addWidget(self.all_btn, 1)
         lay.addLayout(row)
+        # Crop 영역도 따로 분석 (owner request 2026-11-24, v0.75): crops are
+        # detected / measured as images of their own in 전체 이미지 runs
+        self.crops = QCheckBox('Crop 영역도 따로 분석')
+        self.crops.setToolTip('켜면 Crop 영역마다 결과 행이 따로 생깁니다 (이미지 이름 · Crop 1 …).\n'
+                              '전체 이미지 검출 · 측정이 Crop 영역도 이미지 하나처럼 다룹니다.')
+        self.crops_hint = QLabel('켜면 Crop 영역마다 결과 행이 따로 생깁니다 (이미지 이름 · Crop 1 …)')
+        self.crops_hint.setWordWrap(True)
+        theme.hint(self.crops_hint)
+        self.crops.toggled.connect(self._crops_toggled)
+        lay.insertWidget(0, self.crops)
+        lay.insertWidget(1, self.crops_hint)
         self._timer = QTimer(self)
         self._timer.setInterval(1000)
         self._timer.timeout.connect(self.refresh)
@@ -99,6 +110,12 @@ class MeasureBar(QWidget):
         text = (text or '').split(' · ')[0] if len(text or '') > 60 else (text or '')
         self.state.setText(text)
         self.state.setVisible(bool(text))
+
+    def _crops_toggled(self, on: bool):
+        self.win.statusBar().showMessage(
+            'Crop 영역도 따로 분석: 켬 (전체 이미지 검출 · 측정에 Crop 영역 포함)' if on
+            else 'Crop 영역도 따로 분석: 끔')
+        self.refresh()
 
     def _run(self, which):
         m = self.measurer
@@ -144,8 +161,9 @@ class DataRows(QWidget):
             h.setContentsMargins(0, 0, 0, 0)
             h.setSpacing(8)
             lab = QLabel(f'<b>{name}</b>')
+            lab.setWordWrap(True)  # a long data name wraps in a 360 inspector
             lab.setToolTip(f'점 하나 = {unit}')
-            h.addWidget(lab)
+            h.addWidget(lab, 1)
             n_img = len({r.get('image_id', r.get('image')) for r in rows})
             size = QLabel(f'{len(rows)}행 · 이미지 {n_img}' if rows else '없음')
             theme.secondary(size)

@@ -17,11 +17,11 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QGroupBox,
-                               QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMessageBox, QProgressDialog,
-                               QPushButton, QScrollArea, QSpinBox, QStackedWidget, QTreeWidget, QTreeWidgetItem,
+                               QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QScrollArea, QSpinBox, QStackedWidget, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
 from . import theme
+from . import ui
 
 # kind key -> (sidebar title, [(card title, [(output key, label, tip, default on)])])
 KINDS: dict = {
@@ -555,7 +555,7 @@ class ExportDialog(QDialog):
                 msg += '\n\n' + '\n'.join(res.skipped)
             if res.errors:
                 msg += '\n\n실패:\n' + '\n'.join(res.errors[:20])
-            QMessageBox.information(self, '내보내기 완료', msg)
+            ui.information(self, '내보내기 완료', msg)
             self.accept()
 
         timer.timeout.connect(tick)
@@ -567,13 +567,13 @@ class ExportDialog(QDialog):
 
         out = self.dest.text().strip()
         if not out:
-            QMessageBox.information(self, '내보내기', '저장 위치를 고르세요.')
+            ui.information(self, '내보내기', '저장 위치를 고르세요.')
             return None
         out = str(Path(out).expanduser())
         items = self.target_items()
         opts = self.options()
         self._remember()
-        prog = QProgressDialog('내보내는 중…', '취소', 0, max(len(items), 1), self)
+        prog = ui.Progress('내보내는 중…', '취소', 0, max(len(items), 1), self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
         prog.setMinimumDuration(300)
 
@@ -602,6 +602,6 @@ class ExportDialog(QDialog):
                 msg += '\n\n' + '\n'.join(res.skipped)
             if res.errors:
                 msg += '\n\n실패:\n' + '\n'.join(res.errors[:20])
-            QMessageBox.information(self, '내보내기 완료', msg)
+            ui.information(self, '내보내기 완료', msg)
             self.accept()
         return res

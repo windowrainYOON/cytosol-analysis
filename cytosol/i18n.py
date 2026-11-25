@@ -624,7 +624,7 @@ def _wrap_getters():
         cls.text = text
 
 
-WRAP_W = 250  # px: a check box with a longer text gets a word-wrapping label
+WRAP_W = 200  # px: a check box with a longer text gets a word-wrapping label (inspector 360)
 
 
 def _install_wrapping():
@@ -642,11 +642,18 @@ def _install_wrapping():
                 except Exception:  # noqa: BLE001
                     pass
             return False
+    global _wrapper
     app = QApplication.instance()
-    if app is not None:
-        global _wrapper
+    if app is not None and _wrapper is None:
         _wrapper = Wrapper(app)
         app.installEventFilter(_wrapper)
+
+
+def ensure_wrapping():
+    """Install the check-box wrapping once a QApplication exists (install()
+    may run before it, as in the self-test)."""
+    if _installed and _wrapper is None:
+        _install_wrapping()
 
 
 _wrapper = None

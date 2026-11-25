@@ -1491,6 +1491,181 @@ def pipeline_step(out: Path):
     _close(win)
 
 
+def _lint_ui():
+    """Screens import the component library (owner rule 2026-11-25, reuse
+    rules): no direct QMessageBox / QInputDialog / QProgressDialog calls,
+    no per-widget style sheets and no hex colours outside the library."""
+    import re
+
+    root = Path(__file__).parent
+    allowed = {'theme.py', 'hig_style.py', 'hig_widgets.py', 'i18n.py', 'pipe.py',
+               'selftest.py', 'selftest2.py', 'graph.py', 'figure.py', 'render.py', 'movie.py'}
+    bad = []
+    pat = re.compile(r'QMessageBox\.(information|warning|critical|question)\(|QInputDialog\.get\w+\(|'
+                     r'QProgressDialog\(|setStyleSheet\(')
+    for f in sorted(root.glob('*.py')):
+        if f.name in allowed:
+            continue
+        for n, line in enumerate(f.read_text(encoding='utf-8').splitlines(), 1):
+            code = line.split('#', 1)[0]
+            if pat.search(code) and 'hig-allow' not in line:
+                bad.append(f'{f.name}:{n}: {line.strip()}')
+    if bad:
+        raise AssertionError('screen files call Qt dialogs / style sheets directly:\n' + '\n'.join(bad))
+
+
+def components_step(out: Path):
+    """v0.75: the crop view (sidebar crop row fills the canvas, image row =
+    whole image, 3D / sections of the crop, scale bar fitted), 「Crop 영역도
+    따로 분석」, and the library components (Progress, Steps, Histogram
+    handles, ColorWell, Scrubber ▶), plus the reuse lint."""
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtCore import QEvent
+
+    from .lut import fit_scale
+    from .render import ScaleBarStyle
+    from .ui import Progress
+    from .ui.color_well import ColorWell
+    from .ui.histogram import Histogram
+    from .ui.steps import Steps
+
+    _lint_ui()
+    app, win = _window()
+    win.show()
+    d = out / 'components'
+    d.mkdir(parents=True, exist_ok=True)
+    win.add_files([_cell_tiff(d / 'a.tif', 1), _cell_tiff(d / 'b.tif', 2)], explicit=True)
+    win.file_list.setCurrentRow(0)
+    app.processEvents()
+    it = win.items[0]
+    it.crops = [(10, 20, 42, 60), (50, 10, 110, 70)]
+    it.crop_polys = [None, None]
+    win._refresh_crop_list(0)
+    app.processEvents()
+    # crop view: a crop row fills the canvas with that crop
+    if win._crop_view or win.crop_region() is not None:
+        raise AssertionError('crop view on before a crop row was picked')
+    win.file_list.cropPicked.emit(0, 1)
+    app.processEvents()
+    if not win._crop_view or win.crop_region() != (50, 10, 110, 70):
+        raise AssertionError(f'crop row: view {win._crop_view} region {win.crop_region()}')
+    shown = win.canvas.pix.pixmap()
+    if (shown.width(), shown.height()) != (60, 60):
+        raise AssertionError(f'crop view image {shown.width()}×{shown.height()}')
+    if win._view_offset() != (50, 10):
+        raise AssertionError('crop view offset')
+    win.file_list.imagePicked.emit(0)
+    app.processEvents()
+    if win._crop_view or win.crop_region() is not None:
+        raise AssertionError('image row did not show the whole image')
+    win.file_list.cropPicked.emit(0, 0)
+    win.file_list.setCurrentRow(1)
+    app.processEvents()
+    if win._crop_view:
+        raise AssertionError('another image kept the crop view')
+    win.file_list.setCurrentRow(0)
+    app.processEvents()
+    # the scale bar of a crop view fits the crop
+    sb = fit_scale(ScaleBarStyle(length_um=10.0), 32, 0.2)
+    if not sb.length_um <= 0.4 * 32 * 0.2 or sb.length_um != 2.0:
+        raise AssertionError(f'scale bar in crop view {sb.length_um}')
+    if fit_scale(ScaleBarStyle(length_um=2.0), 300, 0.2).length_um != 2.0:
+        raise AssertionError('scale bar changed on a large image')
+    # crop items: own data, label, cached while the box stays
+    sub = it.crop_item(0)
+    if sub.image.shape[-2:] != (40, 32) or not sub.label.endswith('· Crop 1') or it.crop_item(0) is not sub:
+        raise AssertionError(f'crop item {sub.image.shape} {sub.label}')
+    # Crop 영역도 따로 분석
+    bar = win.measure_bar
+    if bar.crops.isChecked() or win.analysis_items() != win.items:
+        raise AssertionError('crop analysis on by default')
+    bar.crops.setChecked(True)
+    names = [x.label for x in win.analysis_items()]
+    if len(names) != 4 or not names[1].endswith('· Crop 1') or not names[2].endswith('· Crop 2'):
+        raise AssertionError(f'analysis items {names}')
+    from .cellroi import CellRois
+    for x in win.analysis_items():
+        lab = np.zeros(x.image.shape[-2:], np.int32)
+        lab[2:-2, 2:-2] = 1
+        x.cells = CellRois(lab, np.zeros_like(lab), x.pixel_um)
+    box = win.roi_panel.measure
+    box.measure_all()
+    ids = {r.get('image') for r in box.batch_rows}
+    if not any(str(i).endswith('Crop 1') for i in ids if i):
+        imgs = {r.get('image_id') for r in box.batch_rows}
+        if not any('crop1' in str(i) for i in imgs):
+            raise AssertionError(f'crop rows missing: {ids} {imgs}')
+    bar.crops.setChecked(False)
+    for x in win.items:
+        x.cells = None
+    # Progress: QProgressDialog semantics
+    pr = Progress('작업', '취소', 0, 10, win)
+    got = []
+    pr.canceled.connect(lambda: got.append(1))
+    pr.setValue(3)
+    if pr.value() != 3 or pr.wasCanceled():
+        raise AssertionError('progress value')
+    pr.cancel()
+    if not got or not pr.wasCanceled():
+        raise AssertionError('progress cancel')
+    pr.reset() if hasattr(pr, 'reset') else None
+    pr.close()
+    # Steps: only passed steps are clickable
+    st = Steps(['종류', '축 배치', '그룹'])
+    st.resize(400, 40)
+    st.set_step(2)
+    hits = []
+    st.stepClicked.connect(hits.append)
+    r = st._rects()
+    from PySide6.QtTest import QTest
+    QTest.mouseClick(st, Qt.MouseButton.LeftButton, pos=r[0].center().toPoint())
+    QTest.mouseClick(st, Qt.MouseButton.LeftButton, pos=r[2].center().toPoint())
+    if hits != [0]:
+        raise AssertionError(f'steps clicks {hits}')
+    # Histogram handles: drag / keys emit rangeEdited, min ≤ max
+    h = Histogram('lut', editable=True)
+    h.resize(256, h.height())
+    h.set_data(np.arange(1000, dtype=float).reshape(10, 100), 0.0, 1000.0)
+    h.set_lut(100.0, 900.0, (0, 1, 0))
+    seen = []
+    h.rangeEdited.connect(lambda a, b: seen.append((a, b)))
+    QTest.mousePress(h, Qt.MouseButton.LeftButton, pos=QPoint(int(h._x(900)), 30))
+    QTest.mouseMove(h, QPoint(int(h._x(500)), 30))
+    QTest.mouseRelease(h, Qt.MouseButton.LeftButton, pos=QPoint(int(h._x(500)), 30))
+    if not seen or not 450 < seen[-1][1] < 550 or seen[-1][0] != 100.0:
+        raise AssertionError(f'histogram drag {seen[-1:]}')
+    h.keyPressEvent(QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Right, Qt.KeyboardModifier.NoModifier))
+    if seen[-1][1] <= seen[-2][1]:
+        raise AssertionError('histogram key')
+    if Histogram('mini', editable=True).editable:
+        raise AssertionError('mini histogram editable')
+    # the LUT tab's histogram drives Min / Max
+    panel = win.panels[0]
+    if panel.hist.editable:
+        panel.hist.rangeEdited.emit(float(panel.min_spin.value()), float(panel.min_spin.value()) + 50)
+        app.processEvents()
+        if abs(panel.max_spin.value() - (panel.min_spin.value() + 50)) > 1:
+            raise AssertionError('LUT histogram → Max')
+    # ColorWell: changed(str) once per new colour, tool tip names it
+    cw = ColorWell('#ff0000')
+    cols = []
+    cw.changed.connect(cols.append)
+    cw._accept(__import__('PySide6.QtGui', fromlist=['QColor']).QColor('#00ff00'))
+    if cols != ['#00ff00'] or cw.color().lower() != '#00ff00' or '#00ff00' not in cw.toolTip().lower():
+        raise AssertionError(f'color well {cols} {cw.toolTip()}')
+    # Scrubber ▶: steps through T, stops on a single frame image
+    if win.t_row.play_btn is None or win.z_col.play_btn is not None:
+        raise AssertionError('scrubber play buttons')
+    win.t_row.play_btn.setChecked(True)
+    if not win.t_row.timer.isActive():
+        raise AssertionError('play timer')
+    win._play_step()  # a single-frame image: play stops
+    if win.t_row.playing():
+        raise AssertionError('play kept running on one frame')
+    _close(win)
+
+
 STEPS = [
     ('image stacking', stacking_step),
     ('graph correlation', graph_corr_step),
@@ -1505,4 +1680,5 @@ STEPS = [
     ('pipeline', pipeline_step),
     ('mitoROI', mito_step),
     ('language', language_step),
+    ('components + crop view', components_step),
 ]

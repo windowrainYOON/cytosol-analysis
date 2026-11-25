@@ -115,7 +115,7 @@ class WrapDelegate(QStyledItemDelegate):
 
         pill = None
         if selected:
-            pill = theme.color('blue') if active else theme.color('fill')
+            pill = theme.color('accent') if active else theme.color('fill')
         elif opt.state & QStyle.StateFlag.State_MouseOver:
             pill = theme.color('fill-quaternary')
         if pill is not None:
@@ -164,6 +164,7 @@ class ImageTree(QTreeWidget):
     currentRowChanged = Signal(int)
     removeClicked = Signal(int)
     cropPicked = Signal(int, int)  # image row, crop index
+    imagePicked = Signal(int)  # an image row was picked (also its own row again, after a crop row)
     cropRemoveClicked = Signal(int, int)
     EMPTY_TITLE = '이미지를 여기로 끌어다 놓으세요'
     EMPTY_HINT = 'TCF · CZI · OIR · TIF 파일이나 폴더 · 파일 → 불러오기'
@@ -189,6 +190,7 @@ class ImageTree(QTreeWidget):
         self.itemCollapsed.connect(lambda n: self._folded(n, True))
         self.itemExpanded.connect(lambda n: self._folded(n, False))
         self.currentItemChanged.connect(self._current_changed)
+        self.itemClicked.connect(self._clicked)
         self.setMouseTracking(True)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         # images can be dragged out (onto the Figure window); the list itself
@@ -255,32 +257,12 @@ class ImageTree(QTreeWidget):
         super().paintEvent(ev)
         if self._leaves:
             return
-        # empty state: a translucent drop glyph, one sentence, the next action
-        from . import hig_widgets, theme  # noqa: PLC0415
+        # empty state (EmptyState, hig-empty): drop glyph, title, one line
+        from .ui.empty import paint_empty  # noqa: PLC0415
 
         vp = self.viewport()
         qp = QPainter(vp)
-        qp.setRenderHint(QPainter.RenderHint.Antialiasing)
-        size = 44
-        cy = vp.height() * 0.40
-        qp.drawPixmap(round((vp.width() - size) / 2), round(cy - size), hig_widgets.pixmap(
-            'tray.and.arrow.down', size, 'label-tertiary'))
-        f = QFont(self.font())
-        f.setWeight(QFont.Weight.DemiBold)
-        qp.setFont(f)
-        qp.setPen(theme.color('label-secondary'))
-        w = vp.width() - 24
-        qp.drawText(QRectF(12, cy + 10, w, 40),
-                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop
-                    | Qt.TextFlag.TextWordWrap, self.EMPTY_TITLE)
-        f.setWeight(QFont.Weight.Normal)
-        f.setPixelSize(max(10, round(self.font().pixelSize() * 12 / 13)) if
-                       self.font().pixelSize() > 0 else 12)
-        qp.setFont(f)
-        qp.setPen(theme.color('label-tertiary'))
-        qp.drawText(QRectF(12, cy + 50, w, 40),
-                    Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop
-                    | Qt.TextFlag.TextWordWrap, self.EMPTY_HINT)
+        paint_empty(qp, QRectF(vp.rect()), self.font(), self.EMPTY_TITLE, self.EMPTY_HINT)
         qp.end()
 
     def resizeEvent(self, event):
@@ -300,6 +282,17 @@ class ImageTree(QTreeWidget):
         elif item.data(0, ROW) is not None:
             if item.data(0, ROW) != self._row_of(prev):
                 self.currentRowChanged.emit(item.data(0, ROW))
+            self.imagePicked.emit(item.data(0, ROW))
+
+    def _clicked(self, item, _col=0):
+        """A click on the current row again: a crop row opens its crop, an
+        image row its whole image (v0.75 crop view)."""
+        if item is None or item is not self.currentItem():
+            return
+        if item.data(0, CROP) is not None:
+            self.cropPicked.emit(item.parent().data(0, ROW), item.data(0, CROP))
+        elif item.data(0, ROW) is not None:
+            self.imagePicked.emit(item.data(0, ROW))
 
     @staticmethod
     def _row_of(item):

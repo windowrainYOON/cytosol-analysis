@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -22,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
+from . import ui
 from .lineprofile import (Profile, draw_profile, line_overlay, line_profile, write_line_roi,
                           write_profile_csv)
 
@@ -182,7 +182,7 @@ class ProfilePanel(QWidget):
 
     def save_csv(self):
         if self.profile is None:
-            QMessageBox.information(self, '라인 프로파일', '먼저 이미지 위에 선을 그리세요.')
+            ui.information(self, '라인 프로파일', '먼저 이미지 위에 선을 그리세요.')
             return
         path, _ = QFileDialog.getSaveFileName(self, '프로파일 CSV 저장', self._default('.csv'),
                                               'CSV (*.csv)')
@@ -195,11 +195,11 @@ class ProfilePanel(QWidget):
             self._save_companions(path)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
 
     def save_plot(self):
         if self.profile is None:
-            QMessageBox.information(self, '라인 프로파일', '먼저 이미지 위에 선을 그리세요.')
+            ui.information(self, '라인 프로파일', '먼저 이미지 위에 선을 그리세요.')
             return
         path, flt = QFileDialog.getSaveFileName(
             self, '그래프 저장', self._default('.png'),
@@ -214,7 +214,7 @@ class ProfilePanel(QWidget):
             self._save_companions(path)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
 
     def _save_companions(self, path) -> list[str]:
         """<stem>_line.roi and <stem>_image.png next to a saved CSV / plot."""

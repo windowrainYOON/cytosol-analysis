@@ -28,7 +28,8 @@ kind of **파일 › 내보내기…**.
 | **High-quality render** | **when 3D is turned on** or **when an image is picked (ahead)** |
 | **Memory limit** | RAM kept for prepared volumes |
 | **Follow LUT** | use the LUT tab's Min / Max / colour |
-| **Selected crop only** | 3D of the selected crop only |
+
+**Click a crop row** in the sidebar (crop view, v0.75): the 3D projection and the section view show only that crop. Click the image row for the whole image again.
 
 ## Section view
 
@@ -109,3 +110,4 @@ Choose an item in the **Tool › 스택** menu of the menu bar; a window with th
   instead (one frame per timepoint or angle, at **MP4 프레임 속도**, fps).
 - **3D는 원본 해상도로 저장** (Save 3D at full resolution) uses the original
   resolution instead of the preview resolution.
+

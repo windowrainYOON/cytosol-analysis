@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -24,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
+from . import ui
 from .imageinfo import InfoSummary, summarize
 
 NOTE = ('레이저 세기는 소프트웨어에 저장된 설정값(%)입니다. 정격 최대 출력과 곱한 명목 출력은 '
@@ -180,7 +180,7 @@ class InfoPanel(QWidget):
         try:
             Path(path).write_text(text, encoding='utf-8')
         except Exception as exc:
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
 
 
 def raw_metadata(item) -> tuple[str, str]:

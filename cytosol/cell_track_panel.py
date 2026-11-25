@@ -667,7 +667,7 @@ class CellTrackPanel(QWidget):
 
     def run_all(self):
         done = 0
-        for it in list(self.win.items):
+        for it in list(self.win.analysis_items()):
             if it.nt < 2:
                 continue
             try:
@@ -690,7 +690,7 @@ class CellTrackPanel(QWidget):
         self.draw()
 
     def bar_status(self):
-        n = sum(1 for it in self.win.items if it.nt > 1)
+        n = sum(1 for it in self.win.analysis_items() if it.nt > 1)
         if not n:
             return '시간축이 있는 이미지가 없습니다.', 'warning'
         return f'시간축이 있는 이미지 {n}개', None
@@ -701,7 +701,7 @@ class CellTrackPanel(QWidget):
         """(image_id, cell_id) -> class over every tracked image."""
         s = self.settings()
         cells = []
-        for it in self.win.items:
+        for it in self.win.analysis_items():
             st = getattr(it, 'cell_tracks', None)
             if st is None:
                 continue
@@ -719,7 +719,7 @@ class CellTrackPanel(QWidget):
     def summary_rows(self, cls=None) -> list:
         cls = self.classes() if cls is None else cls
         out = []
-        for it in self.win.items:
+        for it in self.win.analysis_items():
             st = getattr(it, 'cell_tracks', None)
             if st is None:
                 continue
@@ -743,7 +743,7 @@ class CellTrackPanel(QWidget):
     def frame_rows(self, cls=None) -> list:
         cls = self.classes() if cls is None else cls
         out = []
-        for it in self.win.items:
+        for it in self.win.analysis_items():
             st = getattr(it, 'cell_tracks', None)
             if st is None:
                 continue

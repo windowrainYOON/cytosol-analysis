@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QMessageBox,
     QPushButton,
     QRadioButton,
     QSlider,
@@ -39,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from . import mito as M
 from . import theme
+from . import ui
 from .flow import FlowLayout
 
 LAYERS = [('mito', '미토 면적', (255, 0, 255, 150)), ('skeleton', '골격', (0, 255, 0, 255)),
@@ -369,7 +369,7 @@ class MitoPanel(QWidget):
 
     def run_all(self):
         done = 0
-        for it in list(self.win.items):
+        for it in list(self.win.analysis_items()):
             if it.cells is None or not len(it.cells):
                 continue
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -503,7 +503,7 @@ class MitoPanel(QWidget):
 
     def bar_status(self):
         """One line for the 측정 바."""
-        ok = [it for it in self.win.items if it.cells is not None and len(it.cells)]
+        ok = [it for it in self.win.analysis_items() if it.cells is not None and len(it.cells)]
         done = [it for it in ok if getattr(it, 'mito', None) is not None]
         if not ok:
             return '세포 ROI가 있는 이미지가 없습니다.', None
@@ -589,7 +589,7 @@ class MitoPanel(QWidget):
     def data_tables(self):
         """(name, 점 하나 =, rows) of every analysed image."""
         out = {k: [] for k in DATA_NAMES}
-        for it in self.win.items:
+        for it in self.win.analysis_items():
             r = getattr(it, 'mito', None)
             if r is None:
                 continue
@@ -609,7 +609,7 @@ class MitoPanel(QWidget):
         if kind == 'corrcmp':
             gw.spec.chart = 'corrcmp'
             gw.spec.calc.group = 'group'
-            groups = sorted({it.group for it in self.win.items if it.group and it.mito is not None})
+            groups = sorted({it.group for it in self.win.analysis_items() if it.group and it.mito is not None})
             if len(groups) >= 2:
                 gw.spec.calc.a, gw.spec.calc.b = groups[0], groups[1]
         gw._changed()
@@ -631,7 +631,7 @@ class MitoPanel(QWidget):
             n = self.load_results(Path(path), it)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '불러오기 실패', str(exc))
+            ui.warning(self, '불러오기 실패', str(exc))
             return
         self.status(f'Mito Analyzer 결과: 세포 {n}개 ({Path(path).name})')
 
@@ -640,7 +640,7 @@ class MitoPanel(QWidget):
         onto the image whose name matches ``<name>``, else ``item``."""
         path = Path(path)
         stem = path.name[:-len('_per_cell.csv')] if path.name.endswith('_per_cell.csv') else path.stem
-        target = next((it for it in self.win.items if stem and (stem == it.path.stem or stem == it.label
+        target = next((it for it in self.win.analysis_items() if stem and (stem == it.path.stem or stem == it.label
                                                                 or it.label.startswith(stem))), None) or item
         if target is None:
             raise ValueError('붙일 이미지가 없습니다.')

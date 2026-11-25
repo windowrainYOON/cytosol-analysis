@@ -49,7 +49,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QLabel,
-    QMessageBox,
     QPushButton,
     QStyleFactory,
     QWidget,
@@ -61,14 +60,14 @@ TOKENS = {
     'light': {
         'red': '#ff383c', 'orange': '#ff8d28', 'green': '#34c759', 'blue': '#0088ff',
         'gray': '#8e8e93', 'gray-3': '#c7c7cc', 'gray-5': '#e5e5ea',
-        'background': '#ffffff', 'background-secondary': '#f2f2f7',
-        'region-base': '#e3e3e8', 'region-canvas': '#f2f2f7', 'region-box': '#ffffff',
+        'background': '#ffffff', 'background-secondary': '#f5f5f7', 'accent': '#0066cc',
+        'region-base': '#e3e3e8', 'region-canvas': '#f5f5f7', 'region-box': '#ffffff',
         'background-tertiary': '#ffffff',
-        'label': '#000000', 'label-secondary': '#3c3c4399', 'label-tertiary': '#3c3c434d',
-        'placeholder': '#3c3c434d', 'separator': '#3c3c434a', 'separator-opaque': '#c6c6c8',
+        'label': '#1d1d1f', 'label-secondary': '#1d1d1fcc', 'label-tertiary': '#7a7a7a',
+        'placeholder': '#3c3c434d', 'separator': '#3c3c434a', 'separator-opaque': '#e0e0e0',
         'fill': '#78788033', 'fill-secondary': '#78788029', 'fill-tertiary': '#7676801f',
-        'fill-quaternary': '#74748014', 'link': '#007aff', 'on-accent': '#ffffff',
-        'grouped-background': '#f2f2f7', 'grouped-background-secondary': '#ffffff',
+        'fill-quaternary': '#74748014', 'link': '#0066cc', 'on-accent': '#ffffff',
+        'grouped-background': '#f5f5f7', 'grouped-background-secondary': '#ffffff',
         'gray-2': '#aeaeb2', 'gray-4': '#d1d1d6', 'gray-6': '#f2f2f7',
         'status-success-tint': '#34c75929', 'status-warning-tint': '#ff8d2829',
         'status-error-tint': '#ff383c29', 'status-info-tint': '#0088ff29',
@@ -77,13 +76,13 @@ TOKENS = {
     'dark': {
         'red': '#ff4245', 'orange': '#ff9230', 'green': '#30d158', 'blue': '#0091ff',
         'gray': '#8e8e93', 'gray-3': '#48484a', 'gray-5': '#2c2c2e',
-        'background': '#000000', 'background-secondary': '#1c1c1e',
+        'background': '#000000', 'background-secondary': '#272729', 'accent': '#2997ff',
         'region-base': '#0e0e10', 'region-canvas': '#18181b', 'region-box': '#1f1f22',
         'background-tertiary': '#2c2c2e',
-        'label': '#ffffff', 'label-secondary': '#ebebf599', 'label-tertiary': '#ebebf54d',
+        'label': '#ffffff', 'label-secondary': '#cccccc', 'label-tertiary': '#ebebf54d',
         'placeholder': '#ebebf54d', 'separator': '#54545899', 'separator-opaque': '#38383a',
         'fill': '#7878805c', 'fill-secondary': '#78788052', 'fill-tertiary': '#7676803d',
-        'fill-quaternary': '#7676802e', 'link': '#0984ff', 'on-accent': '#ffffff',
+        'fill-quaternary': '#7676802e', 'link': '#2997ff', 'on-accent': '#ffffff',
         'grouped-background': '#000000', 'grouped-background-secondary': '#1c1c1e',
         'gray-2': '#636366', 'gray-4': '#3a3a3c', 'gray-6': '#1c1c1e',
         'status-success-tint': '#30d1583d', 'status-warning-tint': '#ff92303d',
@@ -107,7 +106,7 @@ STATUS = {
 TEXT_ROLES = {
     'title-2': (17, QFont.Weight.Normal),
     'title-3': (15, QFont.Weight.Normal),
-    'headline': (13, QFont.Weight.Bold),
+    'headline': (13, QFont.Weight.DemiBold),  # design system: 600
     'body': (13, QFont.Weight.Normal),
     'callout': (12, QFont.Weight.Normal),
     'subhead': (11, QFont.Weight.Normal),
@@ -259,14 +258,14 @@ def palette(name: str | None = None) -> QPalette:
         p.setColor(group, R.Mid, t['separator-opaque'])
         p.setColor(group, R.Dark, t['gray'])
         p.setColor(group, R.Shadow, t['gray'].darker(160))
-        p.setColor(group, R.Highlight, t['blue'])  # accent
+        p.setColor(group, R.Highlight, t['accent'])  # accent (design system #0066cc)
         p.setColor(group, R.HighlightedText, t['on-accent'])
         p.setColor(group, R.Link, t['link'])
         p.setColor(group, R.LinkVisited, t['link'])
         p.setColor(group, R.BrightText, t['red'])
         p.setColor(group, R.PlaceholderText, t['placeholder'])
         if hasattr(R, 'Accent'):
-            p.setColor(group, R.Accent, t['blue'])
+            p.setColor(group, R.Accent, t['accent'])
         text = t['label'] if group != G.Disabled else _blend(t['label-tertiary'], win)
         for role in (R.WindowText, R.Text, R.ButtonText, R.ToolTipText):
             p.setColor(group, role, text)
@@ -380,11 +379,13 @@ def is_auto_choice(box) -> bool:
 
 # ---- one layout system for every inspector page -------------------------------
 
+SELECT_FIT_W = 220  # a Select wider than this shows its value elided
+SELECT_FIT_CHARS = 14
 PAGE_SPACING = 12  # between groups (plus the 24 px title band of the next group)
-GROUP_MARGINS = (12, 10, 12, 12)  # inset row padding 12: titles, labels, controls align
+GROUP_MARGINS = (16, 6, 16, 6)  # settings card: 16 left / right (design system), rows carry their own 40
 GROUP_SPACING = 8
 FORM_H_SPACING = 12
-FORM_V_SPACING = 12  # settings rows: 28 + 12 = desktop-settings-row 40, a hairline between
+FORM_V_SPACING = 0  # settings rows are 40 high themselves (desktop-settings-row), the hairline at their edge
 
 
 def unify(page: QWidget):
@@ -421,6 +422,11 @@ def unify(page: QWidget):
         root.setContentsMargins(0, 0, 4, 12)
         root.setSpacing(PAGE_SPACING)
     for w in page.findChildren(QWidget):
+        if isinstance(w, QComboBox) and not w.isEditable() and w.sizeHint().width() > SELECT_FIT_W:
+            # Select: a long item list never holds the pane wide (inspector 240–360);
+            # the pop-up still lists the full texts
+            w.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            w.setMinimumContentsLength(SELECT_FIT_CHARS)
         lay = w.layout()
         if lay is None:
             continue
@@ -434,7 +440,7 @@ def unify(page: QWidget):
     forms(root)
 
 
-SETTINGS_ROW_H = 30  # every settings row of a card the same height (owner rule 2026-11-04)
+SETTINGS_ROW_H = 40  # every settings row of a card 40 high (design system hig-settings__row)
 PLAIN_NUM_W = 76  # number field beside a slider
 PLAIN_NUM_MAX_W = 104
 
@@ -771,11 +777,14 @@ def _apply_separator(line: QFrame):
 # ---- destructive actions --------------------------------------------------
 
 def destructive(button: QAbstractButton) -> QAbstractButton:
-    """Button --plain --destructive: no fill, red label (states-and-interaction.md)."""
+    """Button variant ``destructive`` = hig-delete: red squircle (radius 8)
+    with the trash glyph, red label (design system, v0.75)."""
     button.setProperty(_DESTRUCTIVE, True)
     if isinstance(button, QPushButton):
-        button.setFlat(True)
         button.setAutoDefault(False)
+        if button.icon().isNull():
+            from . import hig_widgets  # noqa: PLC0415
+            button.setIcon(hig_widgets.icon('trash', 14, 'red'))
     _apply_destructive(button)
     return button
 
@@ -789,26 +798,16 @@ def _apply_destructive(button: QAbstractButton):
 
 def confirm_destructive(parent, title: str, text: str, action: str,
                         info: str = '') -> bool:
-    """Alert for an action that cannot be undone: the title names the object,
-    the default (Return) and Escape button is 취소, the action is red."""
-    box, act = destructive_alert(parent, title, text, action, info)
-    box.exec()
-    return box.clickedButton() is act
+    """Alert for an action that cannot be undone (Window variant ``alert``,
+    ``ui.dialogs``): 취소 is the default and the Escape button."""
+    from .ui import dialogs  # noqa: PLC0415
+    return dialogs.confirm_destructive(parent, title, text, action, info)
 
 
 def destructive_alert(parent, title: str, text: str, action: str, info: str = ''):
     """The confirmation alert of :func:`confirm_destructive` (not shown)."""
-    box = QMessageBox(parent)
-    box.setIcon(QMessageBox.Icon.Warning)
-    box.setWindowTitle(title)
-    box.setText(text)
-    box.setInformativeText(info or '이 작업은 되돌릴 수 없습니다.')
-    cancel = box.addButton('취소', QMessageBox.ButtonRole.RejectRole)
-    act = box.addButton(action, QMessageBox.ButtonRole.DestructiveRole)
-    _apply_destructive(act)
-    box.setDefaultButton(cancel)
-    box.setEscapeButton(cancel)
-    return box, act
+    from .ui import dialogs  # noqa: PLC0415
+    return dialogs.destructive_alert(parent, title, text, action, info)
 
 
 # ---- status ---------------------------------------------------------------
@@ -993,6 +992,8 @@ def apply(app: QApplication):
     palette, the body font (13 px, typography-desktop.md) and the component
     style sheet of `hig_style` on every platform, so macOS and Windows show
     the same design system components."""
+    from . import i18n  # noqa: PLC0415
+    i18n.ensure_wrapping()  # long check boxes wrap in a 360 inspector
     global _custom_palette, _polisher, _body_font
     if not app.property('hig_applied'):
         app.setProperty('hig_applied', True)
@@ -1027,111 +1028,13 @@ def prominent(button: QPushButton) -> QPushButton:
     return button
 
 
-# ---- windows the app opens (design system StepFlow § 3, owner request 2026-11-14) ----
-
+# ---- windows the app opens: the Window component lives in ``cytosol.ui`` ----
 WINDOW_RADIUS = 18  # --hig-r-window (Desktop)
 WINDOW_SHADOW = 32  # room around the panel for the float shadow
 
 
-class RoundedDialog(QDialog):
-    """A window the app opens (question, 이미지 묶기, 입자 기준 잡기 …): a
-    frameless window with a rounded panel (`WINDOW_RADIUS`) and one soft
-    float shadow; drag anywhere on the panel's background to move it.
-    Put the content into ``self.body`` (a QVBoxLayout with padding 20);
-    ``self.title`` is the headline at the top."""
-
-    def __init__(self, parent=None, title: str = '', text: str = ''):
-        from PySide6.QtGui import QColor as _QColor  # noqa: PLC0415
-        from PySide6.QtWidgets import (  # noqa: PLC0415
-            QFrame, QGraphicsDropShadowEffect, QVBoxLayout)
-
-        super().__init__(parent)
-        self.setWindowTitle(title)
-        self.setProperty('hig_float', True)
-        offscreen = QApplication.platformName() in ('offscreen', 'minimal')
-        if not offscreen:
-            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
-            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        outer = QVBoxLayout(self)
-        m = 0 if offscreen else WINDOW_SHADOW
-        outer.setContentsMargins(m, m - 8 if m else 0, m, m + 8 if m else 0)
-        self.panel = QFrame()
-        self.panel.setObjectName('hig_window_panel')
-        if not offscreen:
-            fx = QGraphicsDropShadowEffect(self.panel)
-            fx.setBlurRadius(32)
-            fx.setOffset(0, 8)
-            fx.setColor(_QColor(0, 0, 0, 46))
-            self.panel.setGraphicsEffect(fx)
-        outer.addWidget(self.panel)
-        self.body = QVBoxLayout(self.panel)
-        self.body.setContentsMargins(20, 20, 20, 20)
-        self.body.setSpacing(8)
-        self.title = QLabel(title)
-        text_style(self.title, 'headline')
-        self.title.setWordWrap(True)
-        self.body.addWidget(self.title)
-        self.text = QLabel(text)
-        self.text.setWordWrap(True)
-        text_style(self.text, 'callout', secondary=True)
-        self.text.setVisible(bool(text))
-        self.body.addWidget(self.text)
-        self.body.addSpacing(4)
-        self._drag = None
-
-    def button_row(self, *buttons, default=None):
-        """Buttons at the end of one row: [secondary] [default] — the default
-        last and prominent (Return)."""
-        from PySide6.QtWidgets import QHBoxLayout  # noqa: PLC0415
-
-        row = QHBoxLayout()
-        row.addStretch(1)
-        for b in buttons:
-            row.addWidget(b)
-        if default is not None:
-            prominent(default)
-            default.setDefault(True)
-            default.setAutoDefault(True)
-        self.body.addSpacing(8)
-        self.body.addLayout(row)
-        return row
-
-    def mousePressEvent(self, ev):
-        if ev.button() == Qt.MouseButton.LeftButton:
-            self._drag = ev.globalPosition().toPoint() - self.frameGeometry().topLeft()
-        super().mousePressEvent(ev)
-
-    def mouseMoveEvent(self, ev):
-        if self._drag is not None and ev.buttons() & Qt.MouseButton.LeftButton:
-            self.move(ev.globalPosition().toPoint() - self._drag)
-        super().mouseMoveEvent(ev)
-
-    def mouseReleaseEvent(self, ev):
-        self._drag = None
-        super().mouseReleaseEvent(ev)
-
-    def place_on(self, widget, top: bool = True):
-        """A short question sits at the top centre of `widget` (the canvas);
-        a work window in the middle of the screen."""
-        self.adjustSize()
-        if widget is None:
-            return
-        g = widget.mapToGlobal(widget.rect().topLeft())
-        x = g.x() + (widget.width() - self.width()) // 2
-        y = g.y() + (40 if top else (widget.height() - self.height()) // 2)
-        self.move(max(x, 0), max(y, 0))
-
-
-def ask(parent, title: str, text: str, primary: str, secondary: str, near=None) -> bool:
-    """A question window (rounded, StepFlow § 3): True = the primary
-    (recommended) action, False = the secondary one or Escape."""
-    from PySide6.QtWidgets import QPushButton  # noqa: PLC0415
-
-    dlg = RoundedDialog(parent, title, text)
-    a = QPushButton(secondary)
-    b = QPushButton(primary)
-    a.clicked.connect(dlg.reject)
-    b.clicked.connect(dlg.accept)
-    dlg.button_row(a, b, default=b)
-    dlg.place_on(near)
-    return dlg.exec() == 1
+def __getattr__(name):  # RoundedDialog / ask moved to the component library (v0.75)
+    if name in ('RoundedDialog', 'ask'):
+        from .ui import window  # noqa: PLC0415
+        return getattr(window, name)
+    raise AttributeError(name)

@@ -233,7 +233,7 @@ def run(out_dir) -> int:
         from . import hig_style
         if not app.property('hig_applied'):
             raise AssertionError('design system not applied')
-        want = theme.color('blue').name()
+        want = theme.color('accent').name()
         if app.palette().color(QPalette.ColorRole.Highlight).name() != want:
             raise AssertionError('accent is not the Highlight role')
         sheet = app.styleSheet()
@@ -1747,8 +1747,10 @@ def run(out_dir) -> int:
         # 자동: each image gets its own range, shown in the fields
         from PySide6.QtWidgets import QMessageBox as _MB
         from . import theme as _theme
-        _q, _cd = _MB.question, _theme.confirm_destructive
+        from . import ui as _ui
+        _q, _cd, _uq = _MB.question, _theme.confirm_destructive, _ui.question
         _MB.question = staticmethod(lambda *a, **k: _MB.StandardButton.Yes)
+        _ui.question = lambda *a, **k: _MB.question(*a, **k)  # the app asks through ui
         _theme.confirm_destructive = lambda *a, **k: True
         kept = [(it, it.cells, it.roi_roles) for it in win.items]
         try:
@@ -1776,6 +1778,7 @@ def run(out_dir) -> int:
                 raise AssertionError('same range for all images not applied')
         finally:
             _MB.question = _q
+            _ui.question = _uq
             _theme.confirm_destructive = _cd
             rp.__dict__.pop('_jobs', None)
             for it, cells, roles in kept:

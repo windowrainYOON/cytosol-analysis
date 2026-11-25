@@ -20,8 +20,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
-    QProgressDialog,
     QPushButton,
     QTableWidget,
     QVBoxLayout,
@@ -29,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
+from . import ui
 from .flow import FlowLayout
 from .groups import GROUP_FILE, summarize, write_groups
 from .intensity import STATS, measure_cells, overlay_image, region_names, write_rows
@@ -259,7 +258,7 @@ class MeasureBox(QWidget):
             rows = measure_cells(it.planes(), cells, regions, it.channels, it.pixel_um,
                                  particles, self.channels_for(it), self.stats())
         z = 'MIP' if it.z == 'mip' else ('mid' if it.z == 'mid' else f'z {int(it.z) + 1}')
-        head = {'group': it.group} if any(i.group for i in self.win.items) else {}
+        head = {'group': it.group} if any(i.group for i in self.win.analysis_items()) else {}
         head |= {'image': it.label, 'image_id': it.image_id, 'source': it.source_name,
                 'timepoint': it.t + 1, 'plane': z}
         if particles is not None and particles.channel is not None:
@@ -367,7 +366,7 @@ class MeasureBox(QWidget):
     def stale_items(self) -> list:
         """Images measured before their ROIs or the settings changed."""
         out = []
-        for it in self.win.items:
+        for it in self.win.analysis_items():
             old = self._measured.get(it.image_id)
             if old is None or not self.has_rois(it):
                 continue
@@ -388,7 +387,7 @@ class MeasureBox(QWidget):
     def _merge(self, items, res):
         ids = {it.image_id for it in items}
         keep = [r for r in self.batch_rows if r.get('image_id') not in ids]
-        order = [it.image_id for it in self.win.items]
+        order = [it.image_id for it in self.win.analysis_items()]
         new = keep + [r for it in items for r in res.get(id(it), [])]
         self.batch_rows = sorted(new, key=lambda r: order.index(r.get('image_id'))
                                  if r.get('image_id') in order else len(order))
@@ -409,7 +408,7 @@ class MeasureBox(QWidget):
     def measure_current(self):
         it = self.win.current
         if it is None or not self.has_rois(it):
-            QMessageBox.information(self, self.title, '먼저 ROI를 검출하거나 그리세요.')
+            ui.information(self, self.title, '먼저 ROI를 검출하거나 그리세요.')
             return
         self.refresh(force=True)
         self._merge([it], {id(it): list(self.rows)})
@@ -418,7 +417,7 @@ class MeasureBox(QWidget):
 
     def regroup(self):
         """Give rows measured before a group change their image's new group."""
-        groups = {it.image_id: it.group for it in self.win.items}
+        groups = {it.image_id: it.group for it in self.win.analysis_items()}
         show = any(groups.values())
         for rows in (self.rows, self.batch_rows):
             for i, r in enumerate(rows):
@@ -449,7 +448,7 @@ class MeasureBox(QWidget):
                 w.deleteLater()
         stale = self.stale_items() if self.batch_rows else []
         n_img = len({r.get('image_id') for r in self.batch_rows})
-        total = sum(1 for it in self.win.items if self.has_rois(it))
+        total = sum(1 for it in self.win.analysis_items() if self.has_rois(it))
         for name, unit, rows in self.data_tables():
             w = QWidget()
             h = QHBoxLayout(w)
@@ -525,7 +524,7 @@ class MeasureBox(QWidget):
         out = {}
         if not total:
             return out
-        prog = QProgressDialog(f'{self.title} 중…', '취소', 0, total, self)
+        prog = ui.Progress(f'{self.title} 중…', '취소', 0, total, self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
         prog.setMinimumDuration(300)
         done = 0
@@ -555,9 +554,9 @@ class MeasureBox(QWidget):
         return out
 
     def _items(self):
-        items = [it for it in self.win.items if self.has_rois(it)]
+        items = [it for it in self.win.analysis_items() if self.has_rois(it)]
         if not items:
-            QMessageBox.information(self, self.title, 'ROI가 있는 이미지가 없습니다.')
+            ui.information(self, self.title, 'ROI가 있는 이미지가 없습니다.')
         return items
 
     def measure_all(self):
@@ -568,7 +567,7 @@ class MeasureBox(QWidget):
             res = self.measure_items(items)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '측정 실패', str(exc))
+            ui.warning(self, '측정 실패', str(exc))
             return
         self.batch_rows = [r for it in items for r in res.get(id(it), [])]
         self._measured = {}
@@ -606,7 +605,7 @@ class MeasureBox(QWidget):
     def save_current(self):
         it = self.win.current
         if it is None or not self.has_rois(it):
-            QMessageBox.information(self, self.title, '먼저 ROI를 검출하거나 그리세요.')
+            ui.information(self, self.title, '먼저 ROI를 검출하거나 그리세요.')
             return
         default = str(it.path.with_name(f'{item_stem(it)}_{self.suffix}.csv'))
         path, _ = QFileDialog.getSaveFileName(self, f'{self.title} CSV 저장', default, 'CSV (*.csv)')
@@ -622,7 +621,7 @@ class MeasureBox(QWidget):
                 self.save_companions(path, it)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
             return
         self.status(f'{self.title} {len(rows)}행 저장: {path}')
 
@@ -651,7 +650,7 @@ class MeasureBox(QWidget):
             res = self.measure_items(items)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '측정 실패', str(exc))
+            ui.warning(self, '측정 실패', str(exc))
             return
         rows, errors, n = [], [], 0
         for it in items:
@@ -682,4 +681,4 @@ class MeasureBox(QWidget):
         msg += f'\n{out}'
         if errors:
             msg += '\n\n실패:\n' + '\n'.join(errors)
-        QMessageBox.information(self, '저장 완료', msg)
+        ui.information(self, '저장 완료', msg)

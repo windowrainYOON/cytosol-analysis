@@ -17,6 +17,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .ui import prism
+
 CHARTS = {
     'xy': 'XY (선 / 점)',
     'bar': '막대 (평균 ± 에러바)',
@@ -47,8 +49,7 @@ LEGEND_LOCS = {'best': '자동 (빈 곳)', 'above': '그래프 위', 'right': '�
 TICK_DIRS = {'out': '바깥', 'in': '안쪽', 'inout': '양쪽'}
 ALIGNS = {'left': '왼쪽', 'center': '가운데', 'right': '오른쪽'}
 CMAPS = ['inferno', 'viridis', 'magma', 'plasma', 'gray', 'hot', 'Greens', 'Reds', 'Blues']
-PALETTE = ['#000000', '#d62728', '#1f77b4', '#2ca02c', '#9467bd', '#ff7f0e', '#8c564b',
-           '#e377c2', '#17becf', '#7f7f7f', '#bcbd22']
+PALETTE = list(prism.PALETTE)  # PrismStyle (design system exception, ui/prism.py)
 FORMAT = 'cytosol-viewer-graph'
 
 
@@ -170,17 +171,17 @@ class Series:
     legend: bool = True
     style: str = 'line+marker'
     color: str = '#000000'
-    line_width: float = 1.0
+    line_width: float = prism.LINE_W
     line_style: str = '-'
-    marker: str = 'o'
-    marker_size: float = 4.0
+    marker: str = prism.MARKER
+    marker_size: float = prism.MARKER_SIZE
     marker_fill: bool = True
-    marker_edge: float = 0.8
+    marker_edge: float = prism.MARKER_EDGE
     alpha: float = 1.0
     err_style: str = 'bar'
     err_color: str = ''  # '' = the series color
-    err_width: float = 0.8
-    capsize: float = 2.0
+    err_width: float = prism.ERR_W
+    capsize: float = prism.CAPSIZE
     # rows whose hide_col value is in hide are left out (그룹 not drawn)
     hide_col: str = ''
     hide: list = field(default_factory=list)
@@ -204,7 +205,7 @@ class Axis:
     step: float = 1.0
     log: bool = False
     minor: bool = False
-    tick_dir: str = 'out'
+    tick_dir: str = prism.TICK_DIR
     rotation: float = 0.0
     unit: str = ''       # shown after the name: 'Time (min)'
     scale: float = 1.0   # values are multiplied by this (unit change, e.g. s -> min = 1/60)
@@ -347,15 +348,15 @@ class GraphSpec:
     legend_x: float = 0.02  # lower left corner (axes fraction) when custom
     legend_y: float = 1.0
     legend_title: str = ''
-    legend_frame: bool = False
+    legend_frame: bool = prism.LEGEND_FRAME
     legend_ncol: int = 1
     font_family: str = ''  # '' = default sans-serif (with Korean fallback)
-    title_font: Font = field(default_factory=lambda: Font(11.0, True))
-    label_font: Font = field(default_factory=lambda: Font(9.0))
-    tick_font: Font = field(default_factory=lambda: Font(8.0))
-    legend_font: Font = field(default_factory=lambda: Font(8.0))
-    width_in: float = 5.0
-    height_in: float = 3.6
+    title_font: Font = field(default_factory=lambda: Font(prism.TITLE_PT, True))
+    label_font: Font = field(default_factory=lambda: Font(prism.LABEL_PT))
+    tick_font: Font = field(default_factory=lambda: Font(prism.TICK_PT))
+    legend_font: Font = field(default_factory=lambda: Font(prism.LEGEND_PT))
+    width_in: float = prism.SIZE_IN[0]
+    height_in: float = prism.SIZE_IN[1]
     # where the parts sit: automatic, or moved / resized on the graph
     plot_auto: bool = True   # plot area laid out automatically
     plot_x: float = 0.15     # plot area: left, bottom, width, height (figure fractions)
@@ -371,13 +372,13 @@ class GraphSpec:
     ylabel_auto: bool = True
     ylabel_x: float = -0.12
     ylabel_y: float = 0.5
-    dpi: int = 300
-    background: str = '#ffffff'
-    spine_top: bool = False
-    spine_right: bool = False
-    spine_width: float = 0.8
-    grid: bool = False
-    grid_color: str = '#d9d9d9'
+    dpi: int = prism.DPI
+    background: str = prism.BACKGROUND
+    spine_top: bool = prism.SPINE_TOP
+    spine_right: bool = prism.SPINE_RIGHT
+    spine_width: float = prism.SPINE_W
+    grid: bool = prism.GRID
+    grid_color: str = prism.GRID_COLOR
     bar_width: float = 0.7
     bar_err: str = 'sd'
     bar_points: bool = True

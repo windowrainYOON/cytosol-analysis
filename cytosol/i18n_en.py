@@ -3499,7 +3499,7 @@ EN = {'LUT 프리셋': 'LUT Presets',
  'threshold만': 'Threshold only',
  '세포 크기': 'Cell size',
  '핵 크기': 'Nucleus size',
- 'ROI 검출 (현재 이미지)': 'Detect ROIs (Current Image)',
+ 'ROI 검출 (현재 이미지)': 'Detect (This Image)',
  '크기 범위': 'Size range',
  ' 이미지별 크기 범위: ': ' Size range per image: ',
  '검출 실패': 'Detection failed',
@@ -4772,7 +4772,7 @@ EN.update({
  '세포마다 자동 threshold': 'Automatic threshold per cell',
  '수동 threshold는 그 값, 나머지 자동': 'Manual thresholds as set, the rest automatic',
  '켜면 세포마다 자기 ROI(+바깥 2 µm 띠) 안에서 LUT를 따로 늘리고 Otsu로 threshold를 따로 정합니다. 칸에는 선택한 세포에 쓰는(쓸) 값이 표시됩니다. 끄면 칸·슬라이더의 값이 선택한 세포의 threshold가 되고, 움직이면 그 세포의 핵이 바로 다시 그려집니다.': 'On: each cell stretches the LUT inside its own ROI (+ a 2 µm band outside) and gets its own Otsu threshold; the field shows the value used for the selected cell. Off: the field / slider value is the selected cell’s threshold, and moving it redraws that cell’s nucleus at once.',
- '핵 다시 찾기 (선택 세포)': 'Find Nuclei Again (Selected Cells)',
+ '핵 다시 찾기 (선택 세포)': 'Re-find Nuclei (Selected)',
  '핵 다시 찾기 (세포 ROI 안, 세포당 핵 1개)': 'Find Nuclei Again (inside cell ROIs, one per cell)',
  '핵 없음': 'no nucleus',
  '핵 채널을 먼저 정하세요 (채널 역할).': 'Set the nucleus channel first (channel roles).',
@@ -4986,4 +4986,32 @@ EN.update({
 TEMPLATES.update({
     'MIP · z 1–{}': 'MIP · z 1–{}',
     '{} · 꺼짐': '{} · off',
+})
+
+# v0.75: component library (cytosol/ui), crop view, crop analysis
+EN.update({
+    '다시 시도': 'Retry', '도움말': 'Help', '모두 아니요': 'No to All', '모두 예': 'Yes to All',
+    '모두 저장': 'Save All', '무시': 'Ignore', '아니요': 'No', '저장 안 함': 'Don’t Save',
+    '중단': 'Abort', '초기화': 'Reset', '이름을 입력하세요.': 'Enter a name.',
+    '노랑': 'Yellow', '빨강': 'Red', '자홍': 'Magenta', '청록': 'Cyan', '초록': 'Green',
+    '파랑': 'Blue', '회색': 'Grey', '흰색': 'White', '검정': 'Black', '색': 'Colour',
+    '▲ 끌기: Min / Max · ←→ 한 단계, ⇧ 열 단계': 'Drag ▲: Min / Max · ←→ one step, ⇧ ten steps',
+    'Crop 영역도 따로 분석': 'Also analyze crop regions separately',
+    'Crop 영역도 따로 분석: 끔': 'Analyze crop regions separately: off',
+    'Crop 영역도 따로 분석: 켬 (전체 이미지 검출 · 측정에 Crop 영역 포함)':
+        'Analyze crop regions separately: on (all-image detection · measurement include crops)',
+    '켜면 Crop 영역마다 결과 행이 따로 생깁니다 (이미지 이름 · Crop 1 …)':
+        'When on, each crop region gets its own result rows (image name · Crop 1 …)',
+    '켜면 Crop 영역마다 결과 행이 따로 생깁니다 (이미지 이름 · Crop 1 …).\n'
+    '전체 이미지 검출 · 측정이 Crop 영역도 이미지 하나처럼 다룹니다.':
+        'When on, each crop region gets its own result rows (image name · Crop 1 …).\n'
+        'All-image detection · measurement treat each crop like an image of its own.',
+    '재생 / 멈춤 (T)': 'Play / Pause (T)',
+    '마커 색': 'Marker Colour',
+})
+TEMPLATES.update({
+    'Crop {} · {}×{} px (x {}–{}, y {}–{}) · 파일 {}×{} px': 'Crop {} · {}×{} px (x {}–{}, y {}–{}) · file {}×{} px',
+    '{} · Crop {}': '{} · Crop {}',
+    '{} · 클릭: 색 고르기 · 오른쪽 클릭: 자동 (시리즈 색)': '{} · Click: pick a colour · Right-click: automatic (series colour)',
+    '{} · 클릭: 색 고르기': '{} · Click: pick a colour',
 })

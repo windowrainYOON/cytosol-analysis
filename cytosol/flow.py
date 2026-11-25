@@ -10,6 +10,7 @@ import shiboken6
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QRadioButton,
     QBoxLayout,
     QCheckBox,
     QFormLayout,
@@ -94,6 +95,9 @@ def _only_buttons(lay) -> list[QWidget] | None:
         w = it.widget()
         if w is None:
             continue  # stretch / spacing
+        if w.objectName() == 'hig_capsule':
+            widgets.append(w)  # an icon-button capsule wraps as one piece
+            continue
         if not isinstance(w, QAbstractButton):
             return None
         widgets.append(w)
@@ -102,6 +106,10 @@ def _only_buttons(lay) -> list[QWidget] | None:
 
 def _to_flow(lay, min_n=3) -> FlowLayout | None:
     widgets = _only_buttons(lay)
+    if widgets and len(widgets) >= 2 and all(isinstance(w, QRadioButton) for w in widgets):
+        min_n = 2  # one-of-several radios wrap as soon as the pane is narrow
+    if widgets and len(widgets) >= 2 and any(w.objectName() == 'hig_capsule' for w in widgets):
+        min_n = 2  # a toolbar row of capsules
     if not widgets or len(widgets) < min_n:
         return None
     if isinstance(lay, QGridLayout):  # keep the grid's reading order

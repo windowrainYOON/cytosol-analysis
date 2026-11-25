@@ -31,7 +31,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QMessageBox,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -41,6 +40,8 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
+from . import ui
+from .ui import overlay
 from . import tracking as tk
 from .flow import FlowLayout
 
@@ -278,7 +279,7 @@ class TrackPanel(QWidget):
     def _build_signal_card(self):
         from PySide6.QtWidgets import QSlider
 
-        from .app import Histogram
+        from .ui.histogram import Histogram
         box = QGroupBox('5  신호 기준 (긴 트랙)')
         v = QVBoxLayout(box)
         f = QFormLayout()
@@ -290,12 +291,14 @@ class TrackPanel(QWidget):
         self.sig_channel = QComboBox()
         f.addRow('채널', self.sig_channel)
         v.addLayout(f)
-        self.sig_hist = Histogram()
+        self.sig_hist = Histogram('threshold', editable=True)
         v.addWidget(self.sig_hist)
         scale = QHBoxLayout()
         scale.setContentsMargins(0, 0, 0, 0)
         self.sig_lo, self.sig_hi = QLabel(), QLabel()
         note = QLabel('데이터 범위 · 미리보기와 같이 바뀜')
+        note.setWordWrap(True)
+        note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         for w in (self.sig_lo, note, self.sig_hi):
             theme.hint(w)
         note.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -356,6 +359,7 @@ class TrackPanel(QWidget):
         self.sig_max_slider.valueChanged.connect(lambda x: self._sig_slider(self.sig_max, x))
         self.sig_min.valueChanged.connect(lambda _: self._sig_lut_edit())
         self.sig_max.valueChanged.connect(lambda _: self._sig_lut_edit())
+        self.sig_hist.rangeEdited.connect(lambda a, b: (self.sig_min.setValue(a), self.sig_max.setValue(b)))
         self.sig_auto.clicked.connect(lambda: self._sig_lut_button('auto'))
         self.sig_full.clicked.connect(lambda: self._sig_lut_button('full'))
         self.sig_all.clicked.connect(lambda: self._sig_lut_button('all'))
@@ -519,19 +523,14 @@ class TrackPanel(QWidget):
             on = vals.get((p['track_id'], p['frame']), np.nan) >= sg.thr
             r = 9.0
             e = QGraphicsEllipseItem(p['x'] + 0.5 - r, p['y'] + 0.5 - r, 2 * r, 2 * r)
-            pen = QPen(QColor(255, 214, 0))
-            pen.setCosmetic(True)
-            pen.setWidthF(1.8)
-            if not on:
-                pen.setStyle(Qt.PenStyle.DashLine)
-            e.setPen(pen)
+            e.setPen(overlay.pen('signal-ring' if on else 'signal-ring-off'))
             e.setZValue(15)
             sc.addItem(e)
             self._scene.append(e)
 
     def change_tables(self):
         sel, scores = [], []
-        for it in self.win.items:
+        for it in self.win.analysis_items():
             rows = self.change_rows(it, compute=False)
             if not rows:
                 continue
@@ -737,11 +736,7 @@ class TrackPanel(QWidget):
             n_lit += lit
             r = 9.0
             e = QGraphicsEllipseItem(p['x'] + 0.5 - r, p['y'] + 0.5 - r, 2 * r, 2 * r)
-            pen = QPen(QColor(60, 220, 90) if lit else QColor(255, 255, 255), 2.0)
-            if not lit:
-                pen.setStyle(Qt.PenStyle.DashLine)
-            pen.setCosmetic(True)
-            e.setPen(pen)
+            e.setPen(overlay.pen('change-ring' if lit else 'change-ring-off'))
             e.setZValue(16)
             sc.addItem(e)
             self._scene.append(e)
@@ -1058,7 +1053,7 @@ class TrackPanel(QWidget):
 
     def run_all(self):
         done = 0
-        for it in list(self.win.items):
+        for it in list(self.win.analysis_items()):
             if it.nt < 2:
                 continue
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -1117,7 +1112,7 @@ class TrackPanel(QWidget):
     def data_tables(self):
         """(name, 점 하나 =, rows) of every image with tracks."""
         pts, summ, cells = [], [], []
-        for it in self.win.items:
+        for it in self.win.analysis_items():
             st = it.tracks
             if st is None or not st.points:
                 continue
@@ -1211,7 +1206,7 @@ class TrackPanel(QWidget):
 
     def bar_status(self):
         """One line for the 측정 바."""
-        ok = [it for it in self.win.items if it.nt >= 2]
+        ok = [it for it in self.win.analysis_items() if it.nt >= 2]
         done = [it for it in ok if it.tracks is not None]
         if not ok:
             return '시간축이 있는 이미지가 없습니다.', None
@@ -1306,9 +1301,7 @@ class TrackPanel(QWidget):
             for p in tail[1:]:
                 path.lineTo(QPointF(p['x'] + 0.5, p['y'] + 0.5))
             item = QGraphicsPathItem(path)
-            pen = QPen(col)
-            pen.setCosmetic(True)
-            pen.setWidthF(2.6 if sel else 1.2)
+            pen = overlay.pen('track-selected' if sel else 'track', color=col)
             item.setPen(pen)
             item.setZValue(14)
             sc.addItem(item)
@@ -1348,7 +1341,7 @@ class TrackPanel(QWidget):
             n = self.load_pt(Path(path), it)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '트랙 불러오기 실패', str(exc))
+            ui.warning(self, '트랙 불러오기 실패', str(exc))
             return
         self.status(f'트랙 불러오기: {n}개 점 ({Path(path).name})')
 
@@ -1367,7 +1360,7 @@ class TrackPanel(QWidget):
             try:
                 d = json.loads(meta.read_text(encoding='utf-8'))
                 names = {str(v) for v in d.values() if isinstance(v, str)}
-                for it in self.win.items:
+                for it in self.win.analysis_items():
                     if it.image_id in names or str(it.path) in names or it.path.name in {Path(n).name for n in names}:
                         target = it
                         break

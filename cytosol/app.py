@@ -42,12 +42,10 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QGroupBox,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
-    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSlider,
@@ -57,6 +55,10 @@ from PySide6.QtWidgets import (
 )
 
 from . import glass, hig_widgets, theme
+from . import ui
+from .ui.color_well import ColorWell
+from .ui.scrubber import Scrubber
+from .ui import overlay
 from .lut import (
     ImageItem,
     apply_lut_to_all,
@@ -92,14 +94,14 @@ from .worklog import LoggingStatusBar, LogWindow, WorkLog
 from .version import __version__
 
 SUPPORTED = ('.tcf', '.czi', '.oir', '.tif', '.tiff')
-SLIDER_STEPS = 1000
+from .ui.lut_channel import SLIDER_STEPS, ChannelPanel, VisibilityRow  # noqa: E402,F401  (component library)
 # Cmd/Ctrl + drag zoom: e^(rate × pixels) at sensitivity 1 (×2 per ~170 px)
 ZOOM_DRAG_RATE = 0.004
 ZOOM_KEY_STEP = 1.25  # '[' / ']'
 # default widths of the side panes (the preview takes the rest) and the
 # narrowest tools pane; the image list stops at its buttons' width
 LEFT_W = 250
-RIGHT_W, RIGHT_MIN_W = 430, 320
+RIGHT_W, RIGHT_MIN_W, RIGHT_MAX_W = 360, 240, 360  # design system inspector 240–360
 MARKER_FORMAT = 'cytosol-viewer-markers'
 # what each feature menu's 불러오기 offers: (name, file dialog filter)
 IMPORT_KINDS = {
@@ -119,8 +121,7 @@ def to_qimage(rgb: np.ndarray) -> QImage:
     return QImage(arr.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
 
 
-def qcolor(rgb) -> QColor:
-    return QColor.fromRgbF(*[float(c) for c in rgb])
+from .ui.histogram import qcolor, Histogram  # noqa: E402,F401  (component library)
 
 
 def load_items(path: Path, align_tcf: bool = True) -> list[ImageItem]:
@@ -238,11 +239,7 @@ class Canvas(QGraphicsView):
         self.pix.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
         self.scene().addItem(self.pix)
         self.rect_item = QGraphicsRectItem()
-        pen = QPen(QColor(255, 220, 0), 0)
-        pen.setCosmetic(True)
-        pen.setWidth(2)
-        pen.setStyle(Qt.PenStyle.DashLine)
-        self.rect_item.setPen(pen)
+        self.rect_item.setPen(overlay.pen('crop-draw'))
         self.rect_item.setZValue(10)
         self.rect_item.hide()
         self.scene().addItem(self.rect_item)
@@ -297,11 +294,7 @@ class Canvas(QGraphicsView):
         self.zoom_mode = False
         self._zoom_origin = None
         self.zoom_item = QGraphicsRectItem()
-        zpen = QPen(QColor(255, 255, 255), 0)
-        zpen.setCosmetic(True)
-        zpen.setWidth(1)
-        zpen.setStyle(Qt.PenStyle.DashLine)
-        self.zoom_item.setPen(zpen)
+        self.zoom_item.setPen(overlay.pen('zoom'))
         self.zoom_item.setBrush(QColor(255, 255, 255, 30))
         self.zoom_item.setZValue(30)
         self.zoom_item.hide()
@@ -321,13 +314,14 @@ class Canvas(QGraphicsView):
         # a label over the ROI under the mouse (name and area)
         self.hover_info = None
         self._hover_key = None
-        self._hover_box = QGraphicsRectItem()
-        self._hover_box.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIgnoresTransformations)
-        self._hover_box.setBrush(QColor(0, 0, 0, 190))
-        self._hover_box.setPen(QPen(Qt.PenStyle.NoPen))
+        self._hover_box = QGraphicsPathItem()  # name label capsule (CanvasOverlay)
+        self._hover_box.setFlag(QGraphicsPathItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        self._hover_box.setBrush(QColor(*overlay.LABEL_FILL))
+        self._hover_box.setPen(QPen(QColor(0, 0, 0, 40), 0.5))
         self._hover_box.setZValue(40)
         self._hover_text = QGraphicsSimpleTextItem(self._hover_box)
-        self._hover_text.setBrush(QColor(255, 255, 255))
+        self._hover_text.setBrush(QColor(*overlay.LABEL_TEXT))
+        self._hover_text.setFont(overlay.label_font(self.font()))
         self._hover_box.hide()
         self.scene().addItem(self._hover_box)
         self.viewport().setMouseTracking(True)
@@ -398,10 +392,7 @@ class Canvas(QGraphicsView):
                 [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
             self._crop_pts.append(pts)
             sel = k == selected
-            pen = QPen(QColor(255, 220, 0) if sel else QColor(0, 220, 255))
-            pen.setCosmetic(True)
-            pen.setWidth(3 if sel else 2)
-            pen.setStyle(Qt.PenStyle.SolidLine if sel else Qt.PenStyle.DashLine)
+            pen = overlay.pen('crop', 'selected' if sel else 'normal')
             r = QGraphicsPathItem(polygon_path(np.asarray(pts, float)))
             r.setPen(pen)
             r.setZValue(10)
@@ -442,11 +433,8 @@ class Canvas(QGraphicsView):
         for i, p in enumerate(self._handle_points()):
             item = QGraphicsRectItem(QRectF(-4.5, -4.5, 9, 9))
             item.setFlag(QGraphicsRectItem.GraphicsItemFlag.ItemIgnoresTransformations)
-            pen = QPen(QColor(255, 220, 0))
-            pen.setCosmetic(True)
-            pen.setWidthF(1.5)
-            item.setPen(pen)
-            item.setBrush(QColor(30, 30, 30) if round_ else QColor(255, 255, 255))
+            item.setPen(overlay.pen('handle'))
+            item.setBrush(overlay.handle_brush(round_))
             item.setPos(p)
             item.setZValue(12)
             self.scene().addItem(item)
@@ -578,11 +566,10 @@ class Canvas(QGraphicsView):
         for label, xy, nxy, status, (cx, cy) in shapes:
             sel = label in selected
             col = QColor(255, 255, 0) if sel else CELL_COLORS[label % len(CELL_COLORS)]
-            pen = QPen(col)
-            pen.setCosmetic(True)
-            pen.setWidthF(3 if sel else 1.6)
-            if status != 'ok':
-                pen.setStyle(Qt.PenStyle.DashLine)
+            pen = overlay.pen('cell' if status == 'ok' else 'cell-unsure',
+                              'selected' if sel else 'normal', col)
+            if sel and status != 'ok':
+                pen.setDashPattern(overlay.DASH['dash'])
             item = QGraphicsPathItem(polygon_path(xy))
             item.setPen(pen)
             if sel:
@@ -592,10 +579,7 @@ class Canvas(QGraphicsView):
             item.setZValue(12)
             items = [item]
             if nxy is not None:
-                npen = QPen(QColor(255, 255, 255, 200 if sel else 140))
-                npen.setCosmetic(True)
-                npen.setWidthF(1.0)
-                npen.setStyle(Qt.PenStyle.DotLine)
+                npen = overlay.pen('nucleus', 'selected' if sel else 'normal')
                 n = QGraphicsPathItem(polygon_path(nxy))
                 n.setPen(npen)
                 n.setZValue(12)
@@ -621,9 +605,7 @@ class Canvas(QGraphicsView):
             self._particle_item = None
         if not len(loops):
             return
-        pen = QPen(QColor(255, 0, 255))
-        pen.setCosmetic(True)
-        pen.setWidthF(1.2)
+        pen = overlay.pen('particle')
         self._particle_item = QGraphicsPathItem(polygon_path(*loops))
         self._particle_item.setPen(pen)
         self._particle_item.setZValue(12.5)
@@ -636,9 +618,7 @@ class Canvas(QGraphicsView):
             self._contour_item = None
         if not len(loops):
             return
-        pen = QPen(QColor(255, 150, 0))
-        pen.setCosmetic(True)
-        pen.setWidthF(1.2)
+        pen = overlay.pen('contour')
         self._contour_item = QGraphicsPathItem(polygon_path(*loops))
         self._contour_item.setPen(pen)
         self._contour_item.setZValue(12.6)
@@ -651,9 +631,7 @@ class Canvas(QGraphicsView):
             self._logic_item = None
         if not len(loops):
             return
-        pen = QPen(QColor(0, 255, 255))
-        pen.setCosmetic(True)
-        pen.setWidthF(1.0)
+        pen = overlay.pen('region')
         path = polygon_path(*loops)
         path.setFillRule(Qt.FillRule.OddEvenFill)
         self._logic_item = QGraphicsPathItem(path)
@@ -680,19 +658,13 @@ class Canvas(QGraphicsView):
                 band.lineTo(px, py)
             band.closeSubpath()
             b = QGraphicsPathItem(band)
-            pen = QPen(QColor(255, 220, 0, 160))
-            pen.setCosmetic(True)
-            pen.setWidthF(1)
-            b.setPen(pen)
+            b.setPen(overlay.pen('line-band'))
             b.setBrush(QColor(255, 220, 0, 40))
             items.append(b)
         path = QPainterPath(QPointF(x0, y0))
         path.lineTo(x1, y1)
         ln = QGraphicsPathItem(path)
-        pen = QPen(QColor(255, 220, 0))
-        pen.setCosmetic(True)
-        pen.setWidthF(2)
-        ln.setPen(pen)
+        ln.setPen(overlay.pen('line'))
         items.append(ln)
         for it in items:
             it.setZValue(25)
@@ -707,9 +679,7 @@ class Canvas(QGraphicsView):
         self._frap = {}
         for name, xy, rgb in rois:
             col = QColor(*rgb)
-            pen = QPen(col)
-            pen.setCosmetic(True)
-            pen.setWidthF(2)
+            pen = overlay.pen('frap', color=col)
             r = QGraphicsPathItem(polygon_path(np.asarray(xy, float)))
             r.setPen(pen)
             fill = QColor(col)
@@ -920,9 +890,7 @@ class Canvas(QGraphicsView):
             self._lasso_tool = 'cut' if alt_cut else self.roi_tool
             self._lasso = [(pos.x(), pos.y())]
             col = LASSO_COLORS[self._lasso_tool]
-            pen = QPen(col)
-            pen.setCosmetic(True)
-            pen.setWidthF(2)
+            pen = overlay.pen('lasso', color=col)
             fill = QColor(col)
             fill.setAlpha(0 if self._lasso_tool in OPEN_LASSO else 60)
             self._lasso_item.setPen(pen)
@@ -961,11 +929,11 @@ class Canvas(QGraphicsView):
         text, (x, y) = info
         self._hover_text.setText(text)
         r = self._hover_text.boundingRect()
-        pad = 4
+        pad = overlay.LABEL_PAD[1]
         # centred above the anchor (screen pixels, the label does not scale)
-        self._hover_box.setRect(QRectF(-r.width() / 2 - pad, -r.height() - 2 * pad - 6,
-                                       r.width() + 2 * pad, r.height() + 2 * pad))
-        self._hover_text.setPos(-r.width() / 2, -r.height() - pad - 6)
+        tr = QRectF(-r.width() / 2, -r.height() - pad - 6, r.width(), r.height())
+        self._hover_box.setPath(overlay.label_capsule(tr))
+        self._hover_text.setPos(tr.topLeft())
         self._hover_box.setPos(x, y)
         self._hover_box.show()
 
@@ -1209,278 +1177,6 @@ class Canvas(QGraphicsView):
 # ---------------------------------------------------------------------------
 
 
-class Histogram(QWidget):
-    """Log histogram of a channel with the current LUT range drawn on top."""
-
-    def __init__(self):
-        super().__init__()
-        self.setMinimumHeight(60)
-        self.counts = None
-        self.lo = self.hi = 0.0
-        self.vmin = self.vmax = 0.0
-        self.color = (1, 1, 1)
-
-    def set_data(self, plane, lo, hi):
-        self.lo, self.hi = lo, hi
-        if plane.size > 1_000_000:  # a quarter of the pixels draws the same curve
-            plane = plane[::2, ::2]
-        counts, _ = np.histogram(plane, bins=128, range=(lo, hi))
-        self.counts = np.log1p(counts.astype(np.float64))
-        self.update()
-
-    def set_lut(self, vmin, vmax, color):
-        self.vmin, self.vmax, self.color = vmin, vmax, color
-        self.update()
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.fillRect(self.rect(), QColor(20, 20, 20))
-        if self.counts is None or self.counts.max() <= 0:
-            return
-        w, h = self.width(), self.height()
-        c = self.counts / self.counts.max()
-        path = QPainterPath(QPointF(0, h))
-        for i, v in enumerate(c):
-            path.lineTo(QPointF(i * w / len(c), h - v * (h - 4)))
-        path.lineTo(QPointF(w, h))
-        col = qcolor(self.color)
-        col.setAlpha(150)
-        p.fillPath(path, col)
-        span = max(self.hi - self.lo, 1e-12)
-        x0 = (self.vmin - self.lo) / span * w
-        x1 = (self.vmax - self.lo) / span * w
-        p.setPen(QPen(QColor(255, 255, 255), 1))
-        p.drawLine(QPointF(x0, h), QPointF(x1, 0))
-        p.setPen(QPen(QColor(255, 255, 255, 120), 1, Qt.PenStyle.DashLine))
-        p.drawLine(QPointF(x0, 0), QPointF(x0, h))
-        p.drawLine(QPointF(x1, 0), QPointF(x1, h))
-
-
-class ChannelPanel(QGroupBox):
-    """Visible / color / min / max / gamma for one channel."""
-
-    changed = Signal()
-    applyAll = Signal(int)
-
-    def __init__(self, index: int):
-        super().__init__()
-        self.index = index
-        self.item: ImageItem | None = None
-        self._busy = False
-        self.lo, self.hi = 0.0, 1.0
-        self.steps = SLIDER_STEPS
-
-        # placed in the shared row under the LUT section title (see visibility_row)
-        self.visible = theme.chip(QCheckBox())
-        self.visible.setToolTip('이 채널을 미리보기와 내보내기 합성 이미지에 표시')
-        self.color_btn = QPushButton()
-        self.color_btn.setFixedWidth(40)
-        self.auto_btn = QPushButton('Auto')
-        self.reset_btn = QPushButton('Min/Max')
-        self.reset_btn.setToolTip('현재 이미지 데이터의 최소값~최대값으로 설정')
-        self.all_btn = QPushButton('전체 이미지에 적용')
-        self.all_btn.setToolTip('이 채널의 LUT를 모든 이미지의 같은 채널에 적용')
-
-        self.hist = Histogram()
-        self.range_lo = QLabel()
-        self.range_hi = QLabel()
-        self.range_note = QLabel()
-        for lab in (self.range_lo, self.range_hi, self.range_note):
-            theme.hint(lab)
-        self.range_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.min_slider = QSlider(Qt.Orientation.Horizontal)
-        self.max_slider = QSlider(Qt.Orientation.Horizontal)
-        for s in (self.min_slider, self.max_slider):
-            s.setRange(0, SLIDER_STEPS)
-        self.min_spin = QDoubleSpinBox()
-        self.max_spin = QDoubleSpinBox()
-        for s in (self.min_spin, self.max_spin):
-            s.setDecimals(4)
-            s.setRange(-1e9, 1e9)
-            s.setKeyboardTracking(False)
-        self.gamma = QDoubleSpinBox()
-        self.gamma.setRange(0.1, 5.0)
-        self.gamma.setSingleStep(0.1)
-        self.gamma.setValue(1.0)
-
-        top = QHBoxLayout()
-        top.addWidget(self.color_btn)
-        top.addStretch()
-        top.addWidget(self.auto_btn)
-        top.addWidget(self.reset_btn)
-
-        form = QFormLayout()
-        form.addRow('Min', theme.slider_field(self.min_slider, self.min_spin))
-        form.addRow('Max', theme.slider_field(self.max_slider, self.max_spin))
-        form.addRow('Gamma', self.gamma)
-
-        lay = QVBoxLayout(self)
-        lay.addLayout(top)
-        lay.addWidget(self.hist)
-        scale = QHBoxLayout()
-        scale.setContentsMargins(0, 0, 0, 0)
-        scale.addWidget(self.range_lo)
-        scale.addWidget(self.range_note, 1)
-        scale.addWidget(self.range_hi)
-        lay.addLayout(scale)
-        lay.addLayout(form)
-        lay.addWidget(self.all_btn)
-
-        self.visible.toggled.connect(self._from_widgets)
-        self.min_slider.valueChanged.connect(lambda v: self._slider(self.min_spin, v))
-        self.max_slider.valueChanged.connect(lambda v: self._slider(self.max_spin, v))
-        self.min_spin.valueChanged.connect(self._from_widgets)
-        self.max_spin.valueChanged.connect(self._from_widgets)
-        self.gamma.valueChanged.connect(self._from_widgets)
-        self.color_btn.clicked.connect(self._pick_color)
-        self.auto_btn.clicked.connect(self._auto)
-        self.reset_btn.clicked.connect(self._full)
-        self.all_btn.clicked.connect(lambda: self.applyAll.emit(self.index))
-
-    @property
-    def lut(self):
-        return self.item.luts[self.index]
-
-    def bind(self, item: ImageItem):
-        self.item = item
-        plane = item.planes()[self.index]
-        self.lo, self.hi, note = item.value_range(self.index)
-        # integer data: one slider step per count when that is a sane number
-        integer = bool(note) and note != 'RI' and float(self.lo).is_integer() \
-            and float(self.hi).is_integer()
-        span = self.hi - self.lo
-        self.steps = int(span) if integer and 0 < span <= 1_000_000 else SLIDER_STEPS
-        self._busy = True
-        for s in (self.min_slider, self.max_slider):
-            s.setRange(0, self.steps)
-        for s in (self.min_spin, self.max_spin):
-            s.setDecimals(0 if integer else 4)
-            s.setRange(self.lo, self.hi)
-            s.setSingleStep(1 if integer else span / 100)
-        self._busy = False
-        fmt = (lambda v: f'{v:.0f}') if integer else (lambda v: f'{v:.4f}')
-        self.range_lo.setText(fmt(self.lo))
-        self.range_hi.setText(fmt(self.hi))
-        self.range_note.setText(f'파일 범위 ({note})' if note else '데이터 범위')
-        self.setTitle(item.channels[self.index])
-        self.visible.setText(item.channels[self.index])
-        self.hist.set_data(plane, self.lo, self.hi)
-        self.refresh()
-
-    def refresh(self):
-        """Push the LUT values into the widgets."""
-        self._busy = True
-        lut = self.lut
-        self.visible.setChecked(lut.visible)
-        self.min_spin.setValue(lut.vmin)
-        self.max_spin.setValue(lut.vmax)
-        self.min_slider.setValue(self._to_slider(lut.vmin))
-        self.max_slider.setValue(self._to_slider(lut.vmax))
-        self.gamma.setValue(lut.gamma)
-        color = qcolor(lut.color).name()
-        self.color_btn.setStyleSheet(f'background-color: {color};')
-        swatch = QPixmap(16, 16)
-        swatch.fill(QColor(color))
-        qp = QPainter(swatch)
-        qp.setPen(QPen(QColor('gray'), 1))
-        qp.drawRect(0, 0, 15, 15)  # white channels stay visible on a light background
-        qp.end()
-        self.visible.setIcon(QIcon(swatch))
-        self.hist.set_lut(lut.vmin, lut.vmax, lut.color)
-        self._busy = False
-
-    def _to_slider(self, v):
-        return int(round((v - self.lo) / (self.hi - self.lo) * self.steps))
-
-    def _from_slider(self, s):
-        return self.lo + s / self.steps * (self.hi - self.lo)
-
-    def _slider(self, spin, value):
-        if self._busy:
-            return
-        spin.setValue(self._from_slider(value))
-
-    def _from_widgets(self, *_):
-        if self._busy or self.item is None:
-            return
-        lut = self.lut
-        lut.visible = self.visible.isChecked()
-        lut.vmin = self.min_spin.value()
-        lut.vmax = self.max_spin.value()
-        lut.gamma = self.gamma.value()
-        self._busy = True
-        self.min_slider.setValue(self._to_slider(lut.vmin))
-        self.max_slider.setValue(self._to_slider(lut.vmax))
-        self._busy = False
-        self.hist.set_lut(lut.vmin, lut.vmax, lut.color)
-        self.changed.emit()
-
-    def _pick_color(self):
-        c = QColorDialog.getColor(qcolor(self.lut.color), self, '채널 색상')
-        if c.isValid():
-            self.lut.color = (c.redF(), c.greenF(), c.blueF())
-            self.refresh()
-            self.changed.emit()
-
-    def _auto(self):
-        self.item.auto_lut(self.index)
-        self.refresh()
-        self.changed.emit()
-
-    def _full(self):
-        plane = self.item.planes()[self.index]
-        lo, hi = float(np.nanmin(plane)), float(np.nanmax(plane))
-        self.lut.vmin, self.lut.vmax = lo, (hi if hi > lo else self.hi)
-        self.refresh()
-        self.changed.emit()
-
-
-class VisibilityRow(QWidget):
-    """The channel panels' 표시 checkboxes in one row, plus all on / all off."""
-
-    COLUMNS = 2
-
-    def __init__(self, boxed: bool = True):
-        super().__init__()
-        self.panels: list[ChannelPanel] = []
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        if boxed:
-            box = QGroupBox('채널 표시')
-            outer.addWidget(box)
-            lay = QVBoxLayout(box)
-        else:  # inside another box: a section header, never a box in a box
-            outer.addWidget(theme.section_header('채널 표시'))
-            lay = outer
-        self.boxes = QGridLayout()
-        lay.addLayout(self.boxes)
-        buttons = QHBoxLayout()
-        buttons.addStretch()
-        on = QPushButton('모두 켜기')
-        off = QPushButton('모두 끄기')
-        on.clicked.connect(lambda: self.set_all(True))
-        off.clicked.connect(lambda: self.set_all(False))
-        buttons.addWidget(on)
-        buttons.addWidget(off)
-        lay.addLayout(buttons)
-
-    def set_panels(self, panels):
-        for p in self.panels:
-            p.visible.setParent(None)
-            p.visible.deleteLater()
-        self.panels = list(panels)
-        for i, p in enumerate(self.panels):
-            self.boxes.addWidget(p.visible, i // self.COLUMNS, i % self.COLUMNS)
-
-    def set_all(self, on: bool):
-        if not self.panels or self.panels[0].item is None:
-            return
-        for p in self.panels:
-            p.lut.visible = on
-            p.refresh()
-        self.panels[0].changed.emit()  # one redraw for all channels
-
-
 # ---------------------------------------------------------------------------
 # main window
 # ---------------------------------------------------------------------------
@@ -1563,13 +1259,12 @@ class MainWindow(QMainWindow):
             '끄면 Crop 영역을 캔버스에 그리지 않습니다. 영역은 사이드바의 이미지 아래에 있습니다.',
             checkable=True)
         self.crop_btn.toggled.connect(self._crop_mode)
-        # '선택한 Crop만 보기': a check item of the Crop menus (state saved with the window)
-        self.show_crop_btn = QCheckBox('선택한 Crop만 보기')
-        self.show_crop_btn.toggled.connect(lambda _: self.update_preview(refit=True))
-        self.show_crop_act = QAction('선택한 Crop만 보기', self, checkable=True)
-        self.show_crop_act.toggled.connect(self.show_crop_btn.setChecked)
-        self.show_crop_btn.toggled.connect(self.show_crop_act.setChecked)
+        # crop view (owner request 2026-11-24, v0.75; replaces 「선택한 Crop만 보기」):
+        # a crop row picked in the sidebar fills the canvas with that crop (3D and
+        # sections too), its image row shows the whole image with the crop boxes
+        self._crop_view = False
         self.file_list.cropPicked.connect(self._crop_row_picked)
+        self.file_list.imagePicked.connect(self._image_row_picked)
         self.file_list.cropRemoveClicked.connect(self._crop_row_remove)
 
         # center: canvas + view controls
@@ -1667,12 +1362,9 @@ class MainWindow(QMainWindow):
         bar1.addWidget(capsule)
         self.view_capsule = hig_widgets.icon_group(*self.view_btns.values())
         bar1.addWidget(self.view_capsule)
-        self.t_row = QWidget()
-        tl = QHBoxLayout(self.t_row)
-        tl.setContentsMargins(0, 0, 0, 0)
-        tl.addWidget(QLabel('T'))
-        tl.addWidget(self.t_slider, 1)
-        tl.addWidget(self.t_label)
+        # Z / T capsules (Scrubber, design system hig-scrubber, v0.75)
+        self.t_row = Scrubber('T', self.t_slider, self.t_label, play=True)
+        self.t_row.step.connect(self._play_step)
         bar2 = QHBoxLayout()
         bar2.addStretch()
         bar2.addWidget(self.info)
@@ -1684,15 +1376,7 @@ class MainWindow(QMainWindow):
         cl.setContentsMargins(*theme.CONTENT_MARGINS)
         cl.setSpacing(12)
         cl.addLayout(bar1)
-        self.z_col = QWidget()
-        zl = QVBoxLayout(self.z_col)
-        zl.setContentsMargins(0, 0, 0, 0)
-        ztitle = QLabel('Z')
-        ztitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        zl.addWidget(ztitle)
-        zl.addWidget(self.z_label)
-        zl.addWidget(self.z_slider, 1, Qt.AlignmentFlag.AlignHCenter)
-        zl.addWidget(self.z_mip)
+        self.z_col = Scrubber('Z', self.z_slider, self.z_label, vertical=True, extra=[self.z_mip])
         view_row = QHBoxLayout()
         view_row.addWidget(self.z_col)
         from .canvas_views import SectionPane, View3DPane
@@ -1926,6 +1610,7 @@ class MainWindow(QMainWindow):
                                        self.cell_track_panel.bar_status),
         }
         inspector.setMinimumWidth(RIGHT_MIN_W)
+        inspector.setMaximumWidth(RIGHT_MAX_W)
 
         # the file list and the tools keep their widths; only the preview
         # grows or shrinks with the window.  Dragged widths are remembered.
@@ -2341,10 +2026,10 @@ class MainWindow(QMainWindow):
             data = fn()
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '그래프 편집 창', f'그래프 데이터를 만들지 못했습니다: {exc}')
+            ui.warning(self, '그래프 편집 창', f'그래프 데이터를 만들지 못했습니다: {exc}')
             return None
         if data is None:
-            QMessageBox.information(self, '그래프 편집 창', hint)
+            ui.information(self, '그래프 편집 창', hint)
             return None
         if doc is None:
             doc = gw.add_doc(key, title, fn, source=key)
@@ -2518,7 +2203,7 @@ class MainWindow(QMainWindow):
         """Before closing the work: True to go on (saved, or not wanted)."""
         if not self.dirty or not self.items:
             return True
-        r = QMessageBox.question(
+        r = ui.question(
             self, '저장하지 않은 변경', '프로젝트에 저장하지 않은 변경이 있습니다. 저장할까요?',
             QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Save)
@@ -2536,6 +2221,7 @@ class MainWindow(QMainWindow):
         """Side panes at their remembered (or default) widths, the preview
         taking the rest."""
         lw, rw = view_settings.pane_widths(LEFT_W, RIGHT_W)
+        rw = min(max(rw, RIGHT_MIN_W), RIGHT_MAX_W)
         total = max(sum(self.main_split.sizes()), lw + rw + 400)
         self.main_split.setSizes([lw, total - lw - rw, rw])
 
@@ -2579,7 +2265,7 @@ class MainWindow(QMainWindow):
         if not files:
             return
         if kind in ('crop', 'cell', 'particle', 'line', 'frap') and not self.items:
-            QMessageBox.information(self, f'{name} 불러오기', '먼저 이미지를 불러오세요.')
+            ui.information(self, f'{name} 불러오기', '먼저 이미지를 불러오세요.')
             return
         self.import_paths([Path(f) for f in files])
 
@@ -2630,14 +2316,14 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage(f'Mito Analyzer 결과: 세포 {n}개 ({p.name})')
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
-                QMessageBox.warning(self, '불러오기 실패', f'{p.name}: {exc}')
+                ui.warning(self, '불러오기 실패', f'{p.name}: {exc}')
         for p in tracks:  # ParticleTracker / 입자 추적 points CSV (v0.66)
             try:
                 n = self.track_panel.load_pt(p, self.current)
                 self.statusBar().showMessage(f'트랙 불러오기: {n}개 점 ({p.name})')
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
-                QMessageBox.warning(self, '트랙 불러오기 실패', f'{p.name}: {exc}')
+                ui.warning(self, '트랙 불러오기 실패', f'{p.name}: {exc}')
         self.file_list.rebuild(self.items)  # crop rows of every image
         self._refresh_crop_list(select=0)
         if self.current is not None:
@@ -2716,7 +2402,7 @@ class MainWindow(QMainWindow):
             'stack': self.stack_panel,
         }
 
-    _WINDOW_KEYS = ('copy_color', 'show_crop_btn', 'exp_full', 'exp_crops',
+    _WINDOW_KEYS = ('copy_color', 'exp_full', 'exp_crops',
                     'exp_composite', 'exp_channels', 'exp_raw', 'exp_all_t', 'exp_format',
                     'exp_fps', 'opt_per_image', 'opt_with_roi')
 
@@ -2751,7 +2437,7 @@ class MainWindow(QMainWindow):
             self.write_project_to(path)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '프로젝트 저장 실패', str(exc))
+            ui.warning(self, '프로젝트 저장 실패', str(exc))
             return False
         finally:
             QApplication.restoreOverrideCursor()
@@ -2905,20 +2591,14 @@ class MainWindow(QMainWindow):
     def open_project_dialog(self, path) -> bool:
         """Ask whether the whole project (images, ROIs, results) or only its
         settings (pipeline) are loaded."""
-        box = QMessageBox(self)
-        box.setWindowTitle('프로젝트 불러오기')
-        box.setText(f'{Path(path).name}에서 무엇을 불러올까요?')
-        box.setInformativeText(
-            '전체: 이미지, ROI, 분석 값과 설정을 모두 불러옵니다 (지금 작업은 닫힙니다).\n'
-            '설정만: 각 탭의 설정과 일괄 분석 구성(파이프라인)만 가져와 지금 열린 이미지에 씁니다.')
-        full = box.addButton('전체 (이미지 + 분석 값)', QMessageBox.ButtonRole.AcceptRole)
-        only = box.addButton('설정(파이프라인)만', QMessageBox.ButtonRole.ActionRole)
-        box.addButton(QMessageBox.StandardButton.Cancel)
-        box.setDefaultButton(full)
-        box.exec()
-        if box.clickedButton() is full:
+        pick = ui.choose(
+            self, '프로젝트 불러오기', f'{Path(path).name}에서 무엇을 불러올까요?',
+            ['설정(파이프라인)만', '전체 (이미지 + 분석 값)'], default=1,
+            info='전체: 이미지, ROI, 분석 값과 설정을 모두 불러옵니다 (지금 작업은 닫힙니다).\n'
+                 '설정만: 각 탭의 설정과 일괄 분석 구성(파이프라인)만 가져와 지금 열린 이미지에 씁니다.')
+        if pick == 1:
             return self.open_project(path)
-        if box.clickedButton() is only:
+        if pick == 0:
             return self.open_project(path, settings_only=True)
         return False
 
@@ -2943,7 +2623,7 @@ class MainWindow(QMainWindow):
         try:
             data, files = read_project(path)
         except Exception as exc:
-            QMessageBox.warning(self, '프로젝트 열기 실패', f'{path.name}: {exc}')
+            ui.warning(self, '프로젝트 열기 실패', f'{path.name}: {exc}')
             return False
         if settings_only:
             self._apply_project_settings(data)
@@ -2963,7 +2643,7 @@ class MainWindow(QMainWindow):
         if missing:
             names = '\n'.join(e['name'] for e in missing[:15])
             more = f'\n… 외 {len(missing) - 15}개' if len(missing) > 15 else ''
-            QMessageBox.information(
+            ui.information(
                 self, '이미지 찾기',
                 f'이미지 {len(missing)}개를 원래 위치에서 찾지 못했습니다:\n{names}{more}\n\n'
                 '이미지가 있는 폴더를 고르면 그 안(하위 폴더 포함)에서 같은 이름의 파일을 찾습니다.')
@@ -2972,7 +2652,7 @@ class MainWindow(QMainWindow):
             if folder:
                 found = [f if f is not None else resolve_image(e, base, [folder])
                          for e, f in zip(entries, found)]
-        prog = QProgressDialog('프로젝트 여는 중…', '취소', 0, len(entries), self)
+        prog = ui.Progress('프로젝트 여는 중…', '취소', 0, len(entries), self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
         errors, notes, loaded = [], [], []
         self.file_list.blockSignals(True)
@@ -3045,7 +2725,7 @@ class MainWindow(QMainWindow):
         msg = f'프로젝트 {path.name}: 이미지 {len(self.items)}개'
         self.statusBar().showMessage(msg, 8000)
         if errors or notes:
-            QMessageBox.warning(self, '프로젝트 열기', '\n'.join(errors + notes))
+            ui.warning(self, '프로젝트 열기', '\n'.join(errors + notes))
         return True
 
     def _restore_item(self, it, e, base, files, tmp, notes):
@@ -3124,6 +2804,20 @@ class MainWindow(QMainWindow):
         if folder:
             self.add_files(folder_files(Path(folder)), pair=True)
 
+    def analysis_items(self) -> list:
+        """The images that 전체 이미지 detection / measurement / data tables
+        use: every image, and with 「Crop 영역도 따로 분석」 on each crop as an
+        image of its own after its image (「이미지 · Crop n」, v0.75)."""
+        bar = getattr(self, 'measure_bar', None)
+        if bar is None or not bar.crops.isChecked():
+            return self.items
+        out = []
+        for it in self.items:
+            out.append(it)
+            if it.crops:
+                out.extend(it.crop_items())
+        return out
+
     def _add_item(self, item: ImageItem):
         self.items.append(item)
         self.file_list.rebuild(self.items)
@@ -3185,7 +2879,7 @@ class MainWindow(QMainWindow):
                 return 0
             if asked is not None:
                 if 'replace' not in asked:
-                    asked['replace'] = QMessageBox.question(
+                    asked['replace'] = ui.question(
                         self, '불러오기', '이미 세포 ROI가 있는 이미지는 불러온 ROI로 바꿀까요?'
                     ) == QMessageBox.StandardButton.Yes
                 if not asked['replace']:
@@ -3227,7 +2921,7 @@ class MainWindow(QMainWindow):
         rgb_sets = stacking.find_rgb_sets(plan['open'])
         in_sets = {p for st in rgb_sets for p in st}
         plan['open'] = [p for p in plan['open'] if p not in in_sets]
-        prog = QProgressDialog('불러오는 중…', '취소', 0, len(plan['open']) + len(plan['exports']),
+        prog = ui.Progress('불러오는 중…', '취소', 0, len(plan['open']) + len(plan['exports']),
                                self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
         errors, notes = [], []
@@ -3301,7 +2995,7 @@ class MainWindow(QMainWindow):
             self._update_tooltip(row)
 
         if errors:
-            QMessageBox.warning(self, '불러오기 실패', '\n'.join(errors))
+            ui.warning(self, '불러오기 실패', '\n'.join(errors))
         if self.current is None and self.items:
             self.file_list.setCurrentRow(0)
         elif self.current is not None:
@@ -3331,7 +3025,7 @@ class MainWindow(QMainWindow):
 
         items = [self.items[r] for r in self.file_list.selected_rows()]
         if len(items) < 2 or any(it.stack is not None for it in items):
-            QMessageBox.information(self, '이미지 묶기',
+            ui.information(self, '이미지 묶기',
                                     '목록에서 묶을 이미지를 2개 이상 고르세요 (묶음은 다시 묶지 않습니다).')
             return None
         others = [it.path for it in self.items if it not in items and it.stack is None]
@@ -3380,7 +3074,7 @@ class MainWindow(QMainWindow):
             names = ', '.join(it.label for it in made[:4]) + (' …' if len(made) > 4 else '')
             self.statusBar().showMessage(f'이미지 묶기: {names} ({len(made)}개). 묶음 풀기: 오른쪽 클릭')
         if errors:
-            QMessageBox.warning(self, '이미지 묶기', '\n'.join(errors))
+            ui.warning(self, '이미지 묶기', '\n'.join(errors))
         return made
 
     def unstack(self, stacks):
@@ -3447,13 +3141,13 @@ class MainWindow(QMainWindow):
     def assign_group(self):
         items = self._selected_items()
         if not items:
-            QMessageBox.information(self, '그룹 지정', '목록에서 이미지를 선택하세요.')
+            ui.information(self, '그룹 지정', '목록에서 이미지를 선택하세요.')
             return
         names = self.groups()
         # first choice: the name the selected images share (abc, abc_0001 -> abc)
         guess = suggest_name([it.label for it in items]) or f'Group {len(names) + 1}'
         choices = list(dict.fromkeys([guess] + names))
-        name, ok = QInputDialog.getItem(
+        name, ok = ui.get_item(
             self, '그룹 지정', f'선택한 이미지 {len(items)}개의 그룹 이름\n'
             '(파일 이름에서 추천한 이름입니다. 고치거나 있는 그룹을 고르세요):',
             choices, 0, True)
@@ -3464,15 +3158,15 @@ class MainWindow(QMainWindow):
     def rename_group(self):
         names = self.groups()
         if not names:
-            QMessageBox.information(self, '그룹 이름 변경', '아직 그룹이 없습니다. ‘그룹 지정…’으로 만드세요.')
+            ui.information(self, '그룹 이름 변경', '아직 그룹이 없습니다. ‘그룹 지정…’으로 만드세요.')
             return
         sel = self._selected_items()
         now = self.file_list.selected_group() or (sel[0].group if sel and sel[0].group else names[0])
-        old, ok = QInputDialog.getItem(self, '그룹 이름 변경', '바꿀 그룹:', names,
+        old, ok = ui.get_item(self, '그룹 이름 변경', '바꿀 그룹:', names,
                                        names.index(now), False)
         if not ok:
             return
-        new, ok = QInputDialog.getText(self, '그룹 이름 변경', f'‘{old}’의 새 이름:', text=old)
+        new, ok = ui.get_text(self, '그룹 이름 변경', f'‘{old}’의 새 이름:', text=old)
         new = new.strip()
         if ok and new and new != old:
             self.set_group([it for it in self.items if it.group == old], new)
@@ -3484,7 +3178,7 @@ class MainWindow(QMainWindow):
             items = self.items
         found = auto_groups([it.label for it in items])
         if not found:
-            QMessageBox.information(self, '자동 그룹', '끝의 번호만 다른 이름의 이미지가 없습니다.')
+            ui.information(self, '자동 그룹', '끝의 번호만 다른 이름의 이미지가 없습니다.')
             return
         plan = {}
         for i, name in found.items():
@@ -3496,7 +3190,7 @@ class MainWindow(QMainWindow):
             text += f'\n… 외 {len(lines) - 30}개'
         if moved:
             text += f'\n\n이미 다른 그룹에 있는 이미지 {moved}개도 옮겨집니다.'
-        if QMessageBox.question(self, '자동 그룹', text) != QMessageBox.StandardButton.Yes:
+        if ui.question(self, '자동 그룹', text) != QMessageBox.StandardButton.Yes:
             return
         self.apply_auto_groups(plan)
 
@@ -3542,7 +3236,6 @@ class MainWindow(QMainWindow):
         from .image_tree import CROP, GROUP  # noqa: PLC0415
 
         if item is not None and item.data(0, CROP) is not None:  # a crop row
-            m.addAction(self.show_crop_act)
             m.addAction('이 ROI 복사', self.copy_crop)
             a = m.addAction('복사한 ROI 붙여넣기', self.paste_crop)
             a.setEnabled(self._crop_clip is not None)
@@ -3680,6 +3373,8 @@ class MainWindow(QMainWindow):
         prev = self.current
         if prev is not None and prev is not self.items[row]:
             prev.image.release()  # a lazy (TCF) volume is read again when needed
+        if self.current is not self.items[row]:
+            self._crop_view = False  # another image: the whole image first
         self.current = self.items[row]
         it = self.current
         it.time_cache = self.tcache
@@ -3859,6 +3554,14 @@ class MainWindow(QMainWindow):
         if it is not None:
             self._t_changed(self.t_slider.value())
 
+    def _play_step(self):
+        """▶ in the T capsule: the next time point (from the end back to the first)."""
+        it = self.current
+        if it is None or it.nt < 2:
+            self.t_row.stop()
+            return
+        self._t_changed((it.t + 1) % it.nt)
+
     def _t_changed(self, t):
         it = self.current
         if it is None:
@@ -3875,7 +3578,7 @@ class MainWindow(QMainWindow):
                 it.planes()  # the exact plane
             except Exception as exc:
                 traceback.print_exc()
-                QMessageBox.warning(self, '시점 불러오기 실패', str(exc))
+                ui.warning(self, '시점 불러오기 실패', str(exc))
             finally:
                 if not cached:
                     QApplication.restoreOverrideCursor()
@@ -3953,7 +3656,7 @@ class MainWindow(QMainWindow):
                 p.bind(it)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, 'Z 불러오기 실패', str(exc))
+            ui.warning(self, 'Z 불러오기 실패', str(exc))
             return
         self.update_preview()
         if self.tab_current('frap_tab'):
@@ -4026,14 +3729,15 @@ class MainWindow(QMainWindow):
     def _view3d_preview(self):
         it = self.current
         st = self.view3d_settings()
-        sel = self._selected_crop()
-        region = it.crops[sel] if sel is not None else None
         self._t_preview_label(it.t)
-        self.view3d_pane.show_item(it, st, region, it.pixel_um)
+        self.view3d_pane.show_item(it, st, self.crop_region(), it.pixel_um)
 
     def _section_preview(self):
         from .vol3d import z_ratio
         it = self.current
+        if self.crop_region() is not None:  # crop view: the sections of that crop only
+            it, whole = it.crop_item(self._selected_crop()), it
+            it.luts, it.t = whole.luts, whole.t  # the LUT tab's values, shown frame
         st = self.view3d_settings()
         ss = self.section_settings()
         zr = z_ratio(it.image, st, it.pixel_um)
@@ -4256,7 +3960,7 @@ class MainWindow(QMainWindow):
             n = len(angles)
         else:
             n = it.nt if self.stack_panel.save_all_t.isChecked() and it.nt > 1 else 1
-        prog = QProgressDialog('투영 저장 중…', '취소', 0, n, self)
+        prog = ui.Progress('투영 저장 중…', '취소', 0, n, self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
 
         def progress(i, total):
@@ -4279,13 +3983,13 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
             if not ask:
                 raise
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
             return []
         finally:
             QApplication.restoreOverrideCursor()
             prog.setValue(n)
         if ask:
-            QMessageBox.information(self, '저장 완료', '\n'.join(files) or '저장한 파일이 없습니다.')
+            ui.information(self, '저장 완료', '\n'.join(files) or '저장한 파일이 없습니다.')
         self.update_preview()
         return files
 
@@ -4315,7 +4019,7 @@ class MainWindow(QMainWindow):
         self._last_shape = None
         self.canvas.set_view3d(False)
         sel = self._selected_crop()
-        only = self.show_crop_btn.isChecked() and sel is not None
+        only = self._crop_view and sel is not None
         if self.roi_panel.show_input() and not only:
             rgb = self.roi_panel.preview_rgb(it)
         else:
@@ -4348,7 +4052,7 @@ class MainWindow(QMainWindow):
         """Image-pixel origin of what the canvas shows (a crop when 'only crop' is on)."""
         it = self.current
         sel = self._selected_crop()
-        if it is not None and self.show_crop_btn.isChecked() and sel is not None:
+        if it is not None and self._crop_view and sel is not None:
             return it.crops[sel][:2]
         return 0, 0
 
@@ -4427,7 +4131,7 @@ class MainWindow(QMainWindow):
         """A click on a crop region on the canvas selects its row."""
         if k != self._crop_sel:
             self._refresh_crop_list(select=k, current=True)
-            self.update_preview(refit=self.show_crop_btn.isChecked())
+            self.update_preview(refit=self._crop_view)
 
     # ---- crop right-click menu (owner request 2026-11-05) ----
 
@@ -4512,11 +4216,36 @@ class MainWindow(QMainWindow):
         self.update_preview()
 
     def _crop_row_picked(self, row, k):
-        """A crop row in the sidebar: its image (already current) and the crop."""
-        if self.current is not self.items[row]:
+        """A crop row in the sidebar: its image (already current) and the crop,
+        which fills the canvas (2D, sections and 3D show only that region)."""
+        if not 0 <= row < len(self.items) or self.current is not self.items[row]:
+            return
+        it = self.current
+        if not 0 <= k < len(it.crops) or (self._crop_view and k == self._crop_sel):
             return
         self._crop_sel = k
-        self.update_preview(refit=self.show_crop_btn.isChecked())
+        self._crop_view = True
+        if self._crop_edit:
+            self.edit_crop(None)
+        x0, y0, x1, y1 = it.crops[k]
+        h, w = it.image.shape[2], it.image.shape[3]
+        self.statusBar().showMessage(
+            f'Crop {k + 1} · {x1 - x0}×{y1 - y0} px (x {x0}–{x1}, y {y0}–{y1}) · 파일 {w}×{h} px', 4000)
+        self.update_preview(refit=True)
+
+    def _image_row_picked(self, row):
+        """The image row itself: the whole image again (with the crop boxes)."""
+        if not self._crop_view or not 0 <= row < len(self.items) or self.current is not self.items[row]:
+            return
+        self._crop_view = False
+        self.update_preview(refit=True)
+
+    def crop_region(self):
+        """The crop the canvas shows (crop view), or None for the whole image."""
+        sel = self._selected_crop()
+        if self._crop_view and sel is not None and self.current is not None:
+            return tuple(int(v) for v in self.current.crops[sel])
+        return None
 
     def _crop_row_remove(self, row, k):
         self.file_list.setCurrentRow(row)
@@ -4704,7 +4433,7 @@ class MainWindow(QMainWindow):
 
     def batch_dialog(self):
         if not self.items:
-            QMessageBox.information(self, '일괄 분석', '먼저 이미지를 불러오세요.')
+            ui.information(self, '일괄 분석', '먼저 이미지를 불러오세요.')
             return
         if BatchDialog(self).exec():
             self.run_batch()
@@ -4715,14 +4444,14 @@ class MainWindow(QMainWindow):
         st = self.batch
         items = batch.items_of(self, st.groups) if detect else batch.ran_items(self, st)
         if not items or not st.steps:
-            QMessageBox.information(self, '일괄 분석', '실행할 이미지나 분석이 없습니다.')
+            ui.information(self, '일괄 분석', '실행할 이미지나 분석이 없습니다.')
             return
         t0 = time.perf_counter()
         try:
             errors = batch.run(self, st, items, detect=detect)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '일괄 분석 실패', str(exc))
+            ui.warning(self, '일괄 분석 실패', str(exc))
             return
         if detect:
             st.images = [it.label for it in items]
@@ -4744,7 +4473,7 @@ class MainWindow(QMainWindow):
 
     def save_batch_results(self, out=None):
         if not self.batch.ran_at or not batch.ran_items(self, self.batch):
-            QMessageBox.information(self, '일괄 분석', '저장할 일괄 분석 결과가 없습니다.')
+            ui.information(self, '일괄 분석', '저장할 일괄 분석 결과가 없습니다.')
             return None
         ask = out is None
         if ask:
@@ -4763,7 +4492,7 @@ class MainWindow(QMainWindow):
             msg = f'일괄 분석 결과 파일 {len(files)}개를 저장했습니다.\n{out}'
             if errors:
                 msg += '\n\n실패:\n' + '\n'.join(errors[:20])
-            QMessageBox.information(self, '저장 완료', msg)
+            ui.information(self, '저장 완료', msg)
         return files
 
     def save_batch_settings(self):
@@ -4785,7 +4514,7 @@ class MainWindow(QMainWindow):
             st = batch.load_settings(self, path)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '일괄 분석 설정', f'{Path(path).name}: {exc}')
+            ui.warning(self, '일괄 분석 설정', f'{Path(path).name}: {exc}')
             return
         if self.current is not None:
             self._select(self.items.index(self.current))

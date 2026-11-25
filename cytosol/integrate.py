@@ -125,7 +125,7 @@ class Integrator:
     # ---- helpers ----------------------------------------------------------------
 
     def _items(self):
-        return {it.image_id: it for it in self.win.items}
+        return {it.image_id: it for it in self.win.analysis_items()}
 
     @staticmethod
     def _head(it):
@@ -357,7 +357,7 @@ class Integrator:
                 'particles': particles, 'mito': frags, 'timepoints': times}
 
     def _order(self, iid):
-        ids = [it.image_id for it in self.win.items]
+        ids = [it.image_id for it in self.win.analysis_items()]
         return ids.index(iid) if iid in ids else len(ids)
 
     def _band_objects(self, items, bands, particles, frags):
@@ -444,7 +444,7 @@ class Integrator:
         for p in particles:
             npart[p['image_id']] += 1
         out = []
-        for it in self.win.items:
+        for it in self.win.analysis_items():
             rows = by.get(it.image_id, [])
             if not rows and it.image_id not in frap_img and not npart.get(it.image_id):
                 continue

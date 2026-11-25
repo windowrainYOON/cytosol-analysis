@@ -19,13 +19,13 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from . import theme
+from . import ui
 from .intensity import make_regions
 from .lut import item_stem
 from .measure_box import MeasureBox
@@ -242,7 +242,7 @@ class BandsPanel(QWidget):
     def save_plot(self):
         rows = self.bands_measure._rows_shown()[0]
         if not rows:
-            QMessageBox.information(self, '등거리 띠 그래프', '먼저 등거리 띠를 측정하세요.')
+            ui.information(self, '등거리 띠 그래프', '먼저 등거리 띠를 측정하세요.')
             return
         it = self.win.current
         default = str(it.path.with_name(f'{item_stem(it)}_bands.png')) if it is not None else 'bands.png'
@@ -256,6 +256,6 @@ class BandsPanel(QWidget):
             self.fig.savefig(path, dpi=300)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
             return
         self.win.statusBar().showMessage(f'등거리 띠 그래프 저장: {path}')

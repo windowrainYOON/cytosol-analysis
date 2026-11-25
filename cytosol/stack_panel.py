@@ -168,7 +168,7 @@ class StackPanel(QWidget):
         pull.clicked.connect(self._pull)
         ll.addWidget(self.linked)
         ll.addWidget(pull)
-        from .app import VisibilityRow  # noqa: PLC0415  (app imports this module)
+        from .ui.lut_channel import VisibilityRow  # noqa: PLC0415
 
         self.visibility = VisibilityRow(boxed=False)  # already inside the LUT box
         ll.addWidget(self.visibility)

@@ -23,8 +23,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QMessageBox,
-    QProgressDialog,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -34,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
+from . import ui
 from .coloc import REGRESSIONS, Coloc2Result, Coloc2Settings, ValueType, d2s, run_coloc2
 from .flow import FlowLayout
 from .lut import item_folder, item_stem
@@ -408,7 +407,7 @@ class ColocPanel(QWidget):
         total = sum(len(j) * len(ts) for _, _, j, ts in plan)
         if not total:
             return 0, []
-        prog = QProgressDialog('Coloc 2 계산 중…', '취소', 0, total, self)
+        prog = ui.Progress('Coloc 2 계산 중…', '취소', 0, total, self)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
         prog.setMinimumDuration(300)
         done, errors = 0, []
@@ -470,19 +469,19 @@ class ColocPanel(QWidget):
         self._run_and_report([it])
 
     def run_all(self):
-        items = [it for it in self.win.items
+        items = [it for it in self.win.analysis_items()
                  if (it.cells is not None and len(it.cells)) or self.whole.isChecked()]
         if not items:
-            QMessageBox.information(self, 'Coloc 2', 'ROI가 있는 이미지가 없습니다.')
+            ui.information(self, 'Coloc 2', 'ROI가 있는 이미지가 없습니다.')
             return
         self._run_and_report(items)
 
     def _check(self, it) -> bool:
         if self.ch1.currentData() == self.ch2.currentData():
-            QMessageBox.information(self, 'Coloc 2', '서로 다른 두 채널을 고르세요.')
+            ui.information(self, 'Coloc 2', '서로 다른 두 채널을 고르세요.')
             return False
         if not self._jobs(it):
-            QMessageBox.information(
+            ui.information(
                 self, 'Coloc 2', '계산할 ROI가 없습니다. 세포질 ROI 탭에서 ROI를 검출하거나 불러오고, '
                                  'ROI 종류(세포 전체/세포질/핵)를 하나 이상 고르세요.')
             return False
@@ -490,30 +489,30 @@ class ColocPanel(QWidget):
 
     def _run_and_report(self, items):
         if self.ch1.currentData() == self.ch2.currentData():
-            QMessageBox.information(self, 'Coloc 2', '서로 다른 두 채널을 고르세요.')
+            ui.information(self, 'Coloc 2', '서로 다른 두 채널을 고르세요.')
             return
         try:
             n, errors = self._run(items)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, 'Coloc 2 실패', str(exc))
+            ui.warning(self, 'Coloc 2 실패', str(exc))
             return
         self.bind(self.win.current)
         msg = f'Coloc 2: ROI {sum(len(it.coloc) for it in items)}개 계산'
         self.status(msg)
         if errors:
-            QMessageBox.warning(self, 'Coloc 2', '일부 ROI는 계산하지 못했습니다:\n' + '\n'.join(errors[:20]))
+            ui.warning(self, 'Coloc 2', '일부 ROI는 계산하지 못했습니다:\n' + '\n'.join(errors[:20]))
         self.win.update_preview()
 
     # ---- results ----------------------------------------------------------------
 
     def data_tables(self):
-        rows = [{'image_id': it.image_id, 'image': it.label} for it in self.win.items for _r in (it.coloc or [])]
+        rows = [{'image_id': it.image_id, 'image': it.label} for it in self.win.analysis_items() for _r in (it.coloc or [])]
         return [('Coloc 2 · ROI', 'ROI', rows)]
 
     def bar_status(self):
         """One line for the 측정 바."""
-        ok = [it for it in self.win.items if (it.cells is not None and len(it.cells)) or self.whole.isChecked()]
+        ok = [it for it in self.win.analysis_items() if (it.cells is not None and len(it.cells)) or self.whole.isChecked()]
         done = [it for it in ok if it.coloc]
         if not ok:
             return 'ROI가 있는 이미지가 없습니다.', None
@@ -603,7 +602,7 @@ class ColocPanel(QWidget):
     def save_csv(self):
         it = self.win.current
         if it is None or not it.coloc:
-            QMessageBox.information(self, 'Coloc 2', '저장할 결과가 없습니다. 먼저 계산하세요.')
+            ui.information(self, 'Coloc 2', '저장할 결과가 없습니다. 먼저 계산하세요.')
             return
         default = str(it.path.with_name(f'{item_stem(it)}_coloc2.csv'))
         path, _ = QFileDialog.getSaveFileName(self, 'Coloc 2 CSV 저장', default, 'CSV (*.csv)')
@@ -612,14 +611,14 @@ class ColocPanel(QWidget):
         try:
             n = write_coloc_csv(path, it.coloc)
         except Exception as exc:
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
             return
         self.status(f'Coloc 2 결과 {n}행 저장: {path}')
 
     def save_all(self):
-        items = [it for it in self.win.items if it.coloc]
+        items = [it for it in self.win.analysis_items() if it.coloc]
         if not items:
-            QMessageBox.information(self, 'Coloc 2', '저장할 결과가 없습니다. 먼저 계산하세요.')
+            ui.information(self, 'Coloc 2', '저장할 결과가 없습니다. 먼저 계산하세요.')
             return
         out = QFileDialog.getExistingDirectory(self, 'Coloc 2 결과를 저장할 폴더')
         if not out:
@@ -634,9 +633,9 @@ class ColocPanel(QWidget):
                 records += it.coloc
             n = write_coloc_csv(Path(out) / 'coloc2.csv', records)
         except Exception as exc:
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
             return
-        QMessageBox.information(self, '저장 완료',
+        ui.information(self, '저장 완료',
                                 f'이미지 {len(items)}개의 Coloc 2 결과 {n}행을 저장했습니다.\n{out}')
 
     def _default(self, rec, suffix):
@@ -648,7 +647,7 @@ class ColocPanel(QWidget):
         rec = self.current_record()
         data = self.view.currentData()
         if rec is None or data is None:
-            QMessageBox.information(self, 'Coloc 2', '저장할 그래프가 없습니다.')
+            ui.information(self, 'Coloc 2', '저장할 그래프가 없습니다.')
             return
         path, _ = QFileDialog.getSaveFileName(self, '그래프 저장', self._default(rec, '.png'),
                                               'PNG (*.png);;PDF (*.pdf);;SVG (*.svg);;TIFF (*.tif)')
@@ -663,12 +662,12 @@ class ColocPanel(QWidget):
         try:
             fig.savefig(path, dpi=300)
         except Exception as exc:
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
 
     def save_pdf(self):
         rec = self.current_record()
         if rec is None:
-            QMessageBox.information(self, 'Coloc 2', '저장할 결과가 없습니다.')
+            ui.information(self, 'Coloc 2', '저장할 결과가 없습니다.')
             return
         path, _ = QFileDialog.getSaveFileName(self, 'PDF 리포트 저장', self._default(rec, '.pdf'),
                                               'PDF (*.pdf)')
@@ -678,7 +677,7 @@ class ColocPanel(QWidget):
             save_pdf_report(path, rec)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
 
 
 def draw_result(ax, rec: ColocRecord, kind, obj):

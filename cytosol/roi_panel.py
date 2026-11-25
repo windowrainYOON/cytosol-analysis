@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QProgressDialog,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -40,6 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import hig_widgets, theme
+from . import ui
 from .cellroi import (
     CellRois,
     RoiParams,
@@ -106,54 +106,7 @@ def guess_roles(item: ImageItem) -> dict:
     return {'nuc': nuc, 'bg': others[0] if others else 0}
 
 
-class _ModePages(QWidget):
-    """The 자동 / threshold만 pages, one shown at a time (QStackedWidget API).
-    Unlike a QStackedWidget it is as tall as the page shown, whose rows come
-    and go with 검출 자동화 and 세부 설정."""
-
-    currentChanged = Signal(int)
-
-    def __init__(self):
-        super().__init__()
-        self._pages = []
-        self._cur = -1
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-
-    def addWidget(self, page):
-        self._pages.append(page)
-        self.layout().addWidget(page)
-        if self._cur < 0:
-            self._cur = 0
-        page.setVisible(len(self._pages) - 1 == self._cur)
-        return len(self._pages) - 1
-
-    def count(self):
-        return len(self._pages)
-
-    def widget(self, i):
-        return self._pages[i] if 0 <= i < len(self._pages) else None
-
-    def currentIndex(self):
-        return self._cur
-
-    def currentWidget(self):
-        return self.widget(self._cur)
-
-    def indexOf(self, page):
-        return self._pages.index(page) if page in self._pages else -1
-
-    def setCurrentIndex(self, i):
-        if not 0 <= i < len(self._pages) or i == self._cur:
-            return
-        self._cur = i
-        for k, p in enumerate(self._pages):
-            p.setVisible(k == i)
-        self.currentChanged.emit(i)
-
-    def setCurrentWidget(self, page):
-        self.setCurrentIndex(self.indexOf(page))
+from .ui.page_stack import _ModePages  # noqa: E402,F401  (component library)
 
 
 class RoiPanel(QWidget):
@@ -1100,7 +1053,7 @@ class RoiPanel(QWidget):
             it.cells = self._detect(it, self.roles())
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '검출 실패', str(exc))
+            ui.warning(self, '검출 실패', str(exc))
             return
         finally:
             QApplication.restoreOverrideCursor()
@@ -1295,7 +1248,7 @@ class RoiPanel(QWidget):
         """(image, roles) for every image with channels matching src's roles."""
         r = self.roles(src)
         jobs = []
-        for it in self.win.items:
+        for it in self.win.analysis_items():
             bg = match_channel(it, src.channels[r['bg']], r['bg'], like=src)
             nuc = None
             if r['nuc'] is not None:
@@ -1383,7 +1336,7 @@ class RoiPanel(QWidget):
         jobs = self._jobs(src)
         edited = [it for it, _ in jobs if it.cells is not None and it is not src]
         if edited:
-            q = QMessageBox.question(
+            q = ui.question(
                 self, 'ROI 다시 검출',
                 f'ROI가 이미 있는 이미지 {len(edited)}개도 새로 검출할까요?\n'
                 '아니오: ROI가 없는 이미지만 검출합니다.',
@@ -1400,7 +1353,7 @@ class RoiPanel(QWidget):
 
             def txt(r):
                 return f"{r[0]:g}–{r[1]:g} µm²" if r[1] else f"{r[0]:g} µm² 이상"
-            q = QMessageBox.question(
+            q = ui.question(
                 self, '크기 범위',
                 f'모든 이미지에 같은 크기 범위를 적용할까요?\n'
                 f'세포 {txt(fixed[0])}, 핵 {txt(fixed[1])}\n\n'
@@ -1413,7 +1366,7 @@ class RoiPanel(QWidget):
         else:
             per_image = self._any_size_auto()
         n, secs, ranges, errors = self.detect_jobs(jobs, per_image, sizes)
-        skipped = len(self.win.items) - len(jobs)
+        skipped = len(self.win.analysis_items()) - len(jobs)
         msg = f'이미지 {n}개에서 ROI를 검출했습니다' + (
             f' (이미지당 평균 {secs / n:.1f}초).' if n else '.')
         if skipped:
@@ -1425,7 +1378,7 @@ class RoiPanel(QWidget):
                                  if self._any_size_auto() else self._image_sizes(src, self.roles(src)))
         self.status(msg)
         if errors:
-            QMessageBox.warning(self, '검출 실패', '\n'.join(errors))
+            ui.warning(self, '검출 실패', '\n'.join(errors))
         self.selected = 0
         self.refresh_list()
         self.win.update_preview()
@@ -1434,7 +1387,7 @@ class RoiPanel(QWidget):
         """Detect the ROIs of (image, roles) jobs (also used by 일괄 분석).
         per_image: each image its own size range; else sizes (None = the
         fields). Returns (images done, seconds, size ranges used, errors)."""
-        prog = QProgressDialog('ROI 검출 중…', '취소', 0, len(jobs), self.win)
+        prog = ui.Progress('ROI 검출 중…', '취소', 0, len(jobs), self.win)
         prog.setWindowModality(Qt.WindowModality.WindowModal)
         errors, n, secs, ranges = [], 0, 0.0, []
         for i, (it, roles) in enumerate(jobs):
@@ -1907,7 +1860,7 @@ class RoiPanel(QWidget):
     def save_current(self):
         it = self.item
         if it is None or it.cells is None or not len(it.cells):
-            QMessageBox.information(self, 'ROI 저장', '저장할 ROI가 없습니다.')
+            ui.information(self, 'ROI 저장', '저장할 ROI가 없습니다.')
             return
         default = str(it.path.with_name(f'{self._stem(it)}_RoiSet.zip'))
         path, flt = QFileDialog.getSaveFileName(
@@ -1921,7 +1874,7 @@ class RoiPanel(QWidget):
             files = it.cells.save(path, **self._save_kwargs(it))
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '저장 실패', str(exc))
+            ui.warning(self, '저장 실패', str(exc))
             return
         self.status(f'ROI 파일 {len(files)}개 저장: {Path(files[0]).parent}')
 
@@ -1935,7 +1888,7 @@ class RoiPanel(QWidget):
             return
         other = {i for i in map(roi_id, files) if i and i != it.image_id}
         if other:
-            r = QMessageBox.question(
+            r = ui.question(
                 self, 'ROI 불러오기',
                 f'이 ROI는 다른 이미지(ID {", ".join(sorted(other))})에서 저장된 것입니다.\n'
                 f'현재 이미지 ID: {it.image_id}\n그래도 불러올까요?')
@@ -1947,7 +1900,7 @@ class RoiPanel(QWidget):
             self.load_into(it, files)
         except Exception as exc:
             traceback.print_exc()
-            QMessageBox.warning(self, '불러오기 실패', str(exc))
+            ui.warning(self, '불러오기 실패', str(exc))
             return
         self.status(f'세포 ROI {len(it.cells)}개 불러옴')
 
@@ -1965,9 +1918,9 @@ class RoiPanel(QWidget):
             self, 'ROI 불러오기', '현재 ROI를 불러온 ROI로 바꿀까요?', '바꾸기')
 
     def save_all(self):
-        items = [it for it in self.win.items if it.cells is not None and len(it.cells)]
+        items = [it for it in self.win.analysis_items() if it.cells is not None and len(it.cells)]
         if not items:
-            QMessageBox.information(self, 'ROI 저장', '저장할 ROI가 없습니다.')
+            ui.information(self, 'ROI 저장', '저장할 ROI가 없습니다.')
             return
         out = QFileDialog.getExistingDirectory(self, 'ROI를 저장할 폴더')
         if not out:
@@ -1990,7 +1943,7 @@ class RoiPanel(QWidget):
         msg = f'이미지 {len(items) - len(errors)}개의 ROI와 cell_rois.csv를 저장했습니다.\n{out}'
         if errors:
             msg += '\n\n실패:\n' + '\n'.join(errors)
-        QMessageBox.information(self, '저장 완료', msg)
+        ui.information(self, '저장 완료', msg)
 
 
 def write_csv(path, rows):

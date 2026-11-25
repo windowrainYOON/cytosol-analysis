@@ -39,7 +39,7 @@ class View3DSettings:
     auto_spacing: bool = True
     spacing_um: float = 1.0
     rotation: str = 'free'  # free (trackball) / axis (one axis, Y)
-    crop_only: bool = False
+    crop_only: bool = False  # unused since v0.75 (crop view from the sidebar); kept for old settings
     lut_link: bool = True
     memory_gb: float = 2.0
     surface_level: float = 0.35

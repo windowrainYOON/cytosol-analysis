@@ -291,31 +291,7 @@ class SectionView(QWidget):
         self.update()
 
 
-class _ModePane(QWidget):
-    """A view with a chip row above and a hint row below (as the mockups)."""
-
-    def __init__(self, view: QWidget, hint: str, parent=None):
-        super().__init__(parent)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(8)
-        self.top = top = QHBoxLayout()
-        self.status = theme.StatusLabel('', 'info')
-        self.status.setWordWrap(False)
-        self.right = theme.StatusLabel('', 'neutral')
-        self.right.setWordWrap(False)
-        top.addWidget(self.status)
-        top.addStretch()
-        top.addWidget(self.right)
-        lay.addLayout(top)
-        self.view = view
-        lay.addWidget(view, 1)
-        self.bottom = QHBoxLayout()
-        self.hint = QLabel(hint)
-        self.hint.setWordWrap(True)
-        theme.hint(self.hint)
-        self.bottom.addWidget(self.hint, 1)
-        lay.addLayout(self.bottom)
+from .ui.page_stack import _ModePane  # noqa: E402,F401  (component library)
 
 
 class SectionPane(_ModePane):
@@ -422,7 +398,7 @@ class View3DPane(_ModePane):
         zr = vol3d.z_ratio(it.image, settings, pixel_um)
         self._zr = zr
         c = self.cache(it)
-        c.start(it.t, it.luts, settings.resolution, zr, region if settings.crop_only else None,
+        c.start(it.t, it.luts, settings.resolution, zr, region,
                 settings.memory_gb, sync_first=False)
         self._shown = None
         self._timer.start()
